@@ -65,6 +65,11 @@ export async function* streamChat(
     signal?: AbortSignal;
   },
 ): AsyncGenerator<StreamEvent> {
+  // In Electrobun, route through the Bun process to avoid CORS preflight failure
+  if ((window as any).__electrobunBunBridge) {
+    return yield* streamChatViaBun(apiKey, { messages, tools, model, system, maxTokens, signal });
+  }
+
   const body: Record<string, unknown> = {
     model,
     max_tokens: maxTokens,
@@ -365,5 +370,87 @@ export async function* streamChatBackend(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+/**
+ * Stream chat through the Bun process via IPC.
+ * Used in Electrobun to avoid CORS preflight failures on DashScope API calls.
+ */
+async function* streamChatViaBun(
+  apiKey: string,
+  {
+    messages,
+    tools,
+    model,
+    system,
+    signal,
+  }: {
+    messages: Message[];
+    tools?: ToolDefinition[];
+    model: string;
+    system?: string;
+    signal?: AbortSignal;
+  },
+): AsyncGenerator<StreamEvent> {
+  const requestId = crypto.randomUUID();
+  const bridge = (window as any).__electrobunBunBridge;
+  if (!bridge) throw new Error("Not in Electrobun mode");
+
+  const queue: StreamEvent[] = [];
+  let queueResolve: (() => void) | null = null;
+  let done = false;
+  let streamError: Error | null = null;
+
+  const eb = (window as any).__electrobun;
+  const prevHandler = eb?.receiveMessageFromBun;
+
+  if (eb) {
+    eb.receiveMessageFromBun = (msg: unknown) => {
+      try {
+        const data = typeof msg === "string" ? JSON.parse(msg) : msg;
+        if (data?.requestId !== requestId) {
+          if (prevHandler) prevHandler(msg);
+          return;
+        }
+
+        if (data.type === "stream-chat-event") {
+          const event = data.event;
+          if (event.type === "error") {
+            streamError = new Error(event.message ?? "Stream error");
+            done = true;
+          } else {
+            queue.push(event as StreamEvent);
+          }
+        } else if (data.type === "stream-chat-end") {
+          done = true;
+        }
+
+        queueResolve?.();
+        queueResolve = null;
+      } catch {}
+    };
+  }
+
+  // Send init message to Bun process
+  const initBody: Record<string, unknown> = { requestId, model, apiKey, messages, tools, system };
+  bridge.postMessage(JSON.stringify({ type: "stream-chat-init", ...initBody }));
+
+  try {
+    while (!done && !signal?.aborted) {
+      if (queue.length > 0) {
+        const event = queue.shift()!;
+        if (event.type === "stop") done = true;
+        yield event;
+        continue;
+      }
+      await new Promise<void>((resolve) => { queueResolve = resolve; });
+    }
+
+    if (streamError) throw streamError;
+  } finally {
+    if (eb) {
+      eb.receiveMessageFromBun = prevHandler;
+    }
   }
 }

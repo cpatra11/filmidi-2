@@ -141,12 +141,132 @@ transport.registerHandler((msg: any) => {
     }
 
     case "sign-in": {
-      // The renderer sends { type: "sign-in", authUrl, state } and expects
-      // a "sign-in-browser-opened" ack so it can start polling the backend.
       if (typeof msg.authUrl === "string" && msg.authUrl.startsWith("https://")) {
         Electrobun.Utils.openExternal(msg.authUrl);
         transport.send({ type: "sign-in-browser-opened" });
       }
+      break;
+    }
+
+    case "stream-chat-init": {
+      const { requestId, model, messages, tools, system, apiKey } = msg;
+      if (!requestId || !apiKey) break;
+
+      (async () => {
+        try {
+          const body: Record<string, unknown> = {
+            model,
+            max_tokens: 8192,
+            stream: true,
+            messages,
+          };
+          if (system) body.system = system;
+          if (tools?.length) {
+            body.tools = tools;
+            const toolArr = body.tools as any[];
+            toolArr[toolArr.length - 1].cache_control = { type: "ephemeral" };
+          }
+
+          const res = await fetch("https://dashscope-intl.aliyuncs.com/apps/anthropic/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": apiKey,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            transport.send({ type: "stream-chat-event", requestId, event: { type: "error", message: `API ${res.status}: ${text}` } });
+            transport.send({ type: "stream-chat-end", requestId });
+            return;
+          }
+
+          const reader = res.body?.getReader();
+          if (!reader) throw new Error("No response body");
+
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let currentToolBlock: { id?: string; name?: string; input?: string } | null = null;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const data = line.slice(6).trim();
+              if (!data) continue;
+
+              let parsed: Record<string, unknown>;
+              try { parsed = JSON.parse(data); } catch { continue; }
+
+              const eventType = parsed.type as string;
+
+              if (eventType === "content_block_start") {
+                const block = parsed.content_block as Record<string, unknown>;
+                currentToolBlock = block.type === "tool_use"
+                  ? { id: block.id as string, name: block.name as string, input: "" }
+                  : null;
+                continue;
+              }
+
+              if (eventType === "content_block_delta") {
+                const delta = parsed.delta as Record<string, unknown>;
+                if (delta.type === "text_delta") {
+                  const text = delta.text as string;
+                  if (text) {
+                    transport.send({ type: "stream-chat-event", requestId, event: { type: "text_delta", text } });
+                  }
+                } else if (delta.type === "input_json_delta" && currentToolBlock) {
+                  currentToolBlock.input = (currentToolBlock.input ?? "") + (delta.partial_json as string);
+                }
+                continue;
+              }
+
+              if (eventType === "content_block_stop") {
+                if (currentToolBlock?.id && currentToolBlock?.name) {
+                  let input: Record<string, unknown> = {};
+                  try { input = JSON.parse(currentToolBlock.input ?? "{}"); } catch {}
+                  transport.send({
+                    type: "stream-chat-event",
+                    requestId,
+                    event: { type: "tool_use", id: currentToolBlock.id, name: currentToolBlock.name, input },
+                  });
+                }
+                currentToolBlock = null;
+                continue;
+              }
+
+              if (eventType === "message_delta") {
+                const delta = parsed.delta as Record<string, unknown> | undefined;
+                const usage = parsed.usage as Record<string, unknown> | undefined;
+                transport.send({
+                  type: "stream-chat-event",
+                  requestId,
+                  event: {
+                    type: "stop",
+                    stopReason: (delta?.stop_reason as string) ?? null,
+                    usage: { input_tokens: (usage?.input_tokens as number) ?? 0, output_tokens: (usage?.output_tokens as number) ?? 0 },
+                  },
+                });
+                continue;
+              }
+            }
+          }
+
+          transport.send({ type: "stream-chat-end", requestId });
+        } catch (err: any) {
+          transport.send({ type: "stream-chat-event", requestId, event: { type: "error", message: err?.message ?? String(err) } });
+          transport.send({ type: "stream-chat-end", requestId });
+        }
+      })();
       break;
     }
   }
