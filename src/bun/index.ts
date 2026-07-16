@@ -154,6 +154,9 @@ transport.registerHandler((msg: any) => {
 
       (async () => {
         try {
+          const controller = new AbortController();
+          const fetchTimeout = setTimeout(() => controller.abort(), 20000);
+
           const body: Record<string, unknown> = {
             model,
             max_tokens: 8192,
@@ -175,7 +178,9 @@ transport.registerHandler((msg: any) => {
               "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify(body),
+            signal: controller.signal,
           });
+          clearTimeout(fetchTimeout);
 
           if (!res.ok) {
             const text = await res.text().catch(() => "");
@@ -263,8 +268,13 @@ transport.registerHandler((msg: any) => {
 
           transport.send({ type: "stream-chat-end", requestId });
         } catch (err: any) {
-          transport.send({ type: "stream-chat-event", requestId, event: { type: "error", message: err?.message ?? String(err) } });
-          transport.send({ type: "stream-chat-end", requestId });
+          console.error("[stream-chat] Bun fetch error:", err?.message ?? err);
+          try {
+            transport.send({ type: "stream-chat-event", requestId, event: { type: "error", message: err?.message ?? String(err) } });
+            transport.send({ type: "stream-chat-end", requestId });
+          } catch (sendErr) {
+            console.error("[stream-chat] Failed to send error event:", sendErr);
+          }
         }
       })();
       break;

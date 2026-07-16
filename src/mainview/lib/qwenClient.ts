@@ -415,6 +415,7 @@ async function* streamChatViaBun(
         }
 
         if (data.type === "stream-chat-event") {
+          clearTimeout(firstEventTimeout);
           const event = data.event;
           if (event.type === "error") {
             streamError = new Error(event.message ?? "Stream error");
@@ -423,6 +424,7 @@ async function* streamChatViaBun(
             queue.push(event as StreamEvent);
           }
         } else if (data.type === "stream-chat-end") {
+          clearTimeout(firstEventTimeout);
           done = true;
         }
 
@@ -435,6 +437,15 @@ async function* streamChatViaBun(
   // Send init message to Bun process
   const initBody: Record<string, unknown> = { requestId, model, apiKey, messages, tools, system };
   bridge.postMessage(JSON.stringify({ type: "stream-chat-init", ...initBody }));
+
+  const firstEventTimeout = setTimeout(() => {
+    if (!done) {
+      done = true;
+      streamError = new Error("Agent timed out waiting for response from Qwen API. Check your API key and internet connection.");
+      queueResolve?.();
+      queueResolve = null;
+    }
+  }, 30000);
 
   try {
     while (!done && !signal?.aborted) {
@@ -452,5 +463,6 @@ async function* streamChatViaBun(
     if (eb) {
       eb.receiveMessageFromBun = prevHandler;
     }
+    clearTimeout(firstEventTimeout);
   }
 }
