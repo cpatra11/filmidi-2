@@ -693,7 +693,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 
-  // ─── AI GENERATION (6) ───────────────────────────────────────────
+      // ─── AI GENERATION (6) ───────────────────────────────────────────
   {
     name: "generate_video",
     description:

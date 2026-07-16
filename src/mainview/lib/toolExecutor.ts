@@ -4,6 +4,7 @@ import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { transcribeAudio } from "./cloudTranscription";
 import { getSecureApiKey } from "./secureApiKey";
+import { submitGeneration, waitForTask } from "./generationApi";
 import type { LayerJSON, VideoJSON } from "@videoflow/core";
 
 const {
@@ -1427,11 +1428,115 @@ export async function executeTool(
       }
 
       // ─── AI GENERATION ──────────────────────────────────────────
-      case "generate_video": return JSON.stringify({ error: "Video generation requires API integration (not yet available). Use import_media with a stock video URL instead." });
-      case "generate_image": return JSON.stringify({ error: "Image generation requires API integration (not yet available). Use import_media with a stock image URL instead." });
-      case "generate_audio": return JSON.stringify({ error: "Audio generation requires API integration (not yet available)." });
-      case "upscale_media": return JSON.stringify({ error: "Upscaling requires ML model. Not yet available in Electrobun build." });
-      case "list_models": return JSON.stringify({ models: [], note: "Model registry not yet connected." });
+      case "generate_video":
+      case "generate_image":
+      case "generate_audio": {
+        const apiKey = await getSecureApiKey();
+        if (!apiKey) {
+          return JSON.stringify({ error: "No API key configured. Add one in Settings > Agent, or sign in with Google." });
+        }
+
+        const prompt = input.prompt as string;
+        const model = (input.model as string) ?? "";
+        const duration = input.duration as number | undefined;
+        const aspectRatio = input.aspectRatio as string | undefined;
+        const resolution = input.resolution as string | undefined;
+        const voice = input.voice as string | undefined;
+
+        const type = name === "generate_video" ? "video" : name === "generate_image" ? "image" : "audio";
+
+        const params: Record<string, unknown> = {
+          prompt,
+          model,
+          duration,
+          aspectRatio,
+          resolution,
+          voice,
+        };
+
+        if (name === "generate_video") {
+          params.referenceImageUrls = input.referenceMediaRefs ?? input.referenceImageUrls;
+          params.startFrameUrl = input.startFrameMediaRef ?? input.startFrameUrl;
+          params.endFrameUrl = input.endFrameMediaRef ?? input.endFrameUrl;
+          params.sourceVideoUrl = input.sourceVideoUrl;
+          params.negativePrompt = input.negativePrompt;
+          params.seed = input.seed;
+        }
+
+        if (name === "generate_image") {
+          params.referenceImageUrls = input.referenceMediaRefs ?? input.referenceImageUrls;
+          params.negativePrompt = input.negativePrompt;
+          params.seed = input.seed;
+          params.numImages = 1;
+        }
+
+        if (name === "generate_audio") {
+          params.styleInstructions = input.styleInstructions;
+          params.lyrics = input.lyrics;
+          params.instrumental = input.instrumental;
+          params.videoUrl = input.videoSourceMediaRef as string | undefined;
+          params.segments = input.segments as string | undefined;
+        }
+
+        try {
+          const genResult = await submitGeneration(apiKey, type, params as any);
+
+          if (genResult.taskId) {
+            const pollResult = await waitForTask(apiKey, genResult.taskId);
+            if (pollResult.status === "succeeded" && pollResult.resultUrls?.length) {
+              const url = pollResult.resultUrls[0];
+              return JSON.stringify({
+                status: "succeeded",
+                resultUrl: url,
+                assetId: `gen-${Date.now()}`,
+                assetName: prompt.slice(0, 40).trim(),
+                note: `Generated asset ready at ${url}. Use import_media to add it to the library.`,
+              });
+            }
+            return JSON.stringify({
+              status: pollResult.status,
+              error: pollResult.errorMessage ?? "Generation task failed",
+            });
+          }
+
+          if (genResult.resultUrl) {
+            return JSON.stringify({
+              status: "succeeded",
+              resultUrl: genResult.resultUrl,
+              assetId: `gen-${Date.now()}`,
+              assetName: prompt.slice(0, 40).trim(),
+              note: `Generated asset ready at ${genResult.resultUrl}. Use import_media to add it to the library.`,
+            });
+          }
+
+          return JSON.stringify({ error: "Generation returned no result" });
+        } catch (e: any) {
+          return JSON.stringify({ error: `Generation failed: ${e.message}` });
+        }
+      }
+
+      case "upscale_media": return JSON.stringify({ error: "Upscaling requires HitPaw backend — not available with direct API key. Sign in with Google to use upscaling." });
+      case "list_models": return JSON.stringify({
+        models: [
+          { id: "qwen-image-2.0-pro", name: "Qwen-Image 2.0 Pro", type: "image", description: "High-quality image generation" },
+          { id: "qwen-image-2.0-turbo", name: "Qwen-Image 2.0 Turbo", type: "image", description: "Fast image generation" },
+          { id: "wan2.7-image-pro", name: "Wan 2.7 Image Pro", type: "image", description: "High-quality text-to-image" },
+          { id: "wan2.6-t2i", name: "Wan 2.6 T2I", type: "image", description: "Efficient text-to-image" },
+          { id: "wan2.7-t2v", name: "Wan 2.7 T2V", type: "video", description: "Text-to-video 5s" },
+          { id: "wan2.7-i2v", name: "Wan 2.7 I2V", type: "video", description: "Image-to-video 5s" },
+          { id: "wan2.7-r2v", name: "Wan 2.7 R2V", type: "video", description: "Reference-to-video 5s" },
+          { id: "wan2.7-videoedit", name: "Wan 2.7 Video Edit", type: "video", description: "Video-to-video editing" },
+          { id: "happyhorse-1.1-t2v", name: "HappyHorse 1.1 T2V", type: "video", description: "High-quality text-to-video" },
+          { id: "happyhorse-1.1-i2v", name: "HappyHorse 1.1 I2V", type: "video", description: "Image-to-video" },
+          { id: "happyhorse-1.1-r2v", name: "HappyHorse 1.1 R2V", type: "video", description: "Reference-to-video" },
+          { id: "qwen3-tts-flash", name: "Qwen3 TTS Flash", type: "audio", description: "Fast text-to-speech" },
+          { id: "qwen3-tts-instruct-flash", name: "Qwen3 TTS Instruct", type: "audio", description: "Instruction-following TTS" },
+          { id: "cosyvoice-v3-plus", name: "CosyVoice v3 Plus", type: "audio", description: "High-quality TTS" },
+          { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", type: "audio", description: "Fast TTS" },
+          { id: "fun-music-v1", name: "FunMusic v1", type: "audio", description: "Music generation" },
+          { id: "fun-music-preview", name: "FunMusic Preview", type: "audio", description: "Music generation preview" },
+        ],
+      });
 
       // ─── PROJECT ────────────────────────────────────────────────
       case "set_project_settings": {
