@@ -18,7 +18,7 @@ export function useKeyboardShortcuts() {
 
       const isMod = e.metaKey || e.ctrlKey;
 
-      if (isInput && !isMod) return;
+      if (isInput) return;
 
       // Space — play/pause
       if (e.code === "Space" && !isInput) {
