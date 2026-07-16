@@ -40,7 +40,7 @@ export function getSecureApiKey(): Promise<string | null> {
         if (prevHandler) prevHandler(msg);
       };
     }
-    bridge.postMessage({ type: "get-api-key" });
+    bridge.postMessage(JSON.stringify({ type: "get-api-key" }));
 
     // Timeout fallback — if Bun doesn't respond, try localStorage
     setTimeout(() => {
@@ -64,7 +64,7 @@ export function setSecureApiKey(key: string): void {
   cachedKey = key;
   const bridge = getBridge();
   if (bridge) {
-    bridge.postMessage({ type: "set-api-key", key });
+    bridge.postMessage(JSON.stringify({ type: "set-api-key", key }));
   } else {
     localStorage.setItem(STORAGE_KEY, key);
   }
@@ -77,7 +77,7 @@ export function clearSecureApiKey(): void {
   cachedKey = null;
   const bridge = getBridge();
   if (bridge) {
-    bridge.postMessage({ type: "set-api-key", key: "" });
+    bridge.postMessage(JSON.stringify({ type: "set-api-key", key: "" }));
   }
   localStorage.removeItem(STORAGE_KEY);
 }

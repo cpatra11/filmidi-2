@@ -44,7 +44,7 @@ export function useMCPHandler() {
                 result,
                 isError: false,
               };
-              bridge.postMessage(response);
+              bridge.postMessage(JSON.stringify(response));
             })
             .catch((error) => {
               const response: MCPToolResultMessage = {
@@ -53,7 +53,7 @@ export function useMCPHandler() {
                 result: error instanceof Error ? error.message : String(error),
                 isError: true,
               };
-              bridge.postMessage(response);
+              bridge.postMessage(JSON.stringify(response));
             });
 
           return; // handled
