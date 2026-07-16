@@ -479,6 +479,7 @@ function AgentPane() {
 
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [saved, setSaved] = useState(true);
+  const [savedIndicator, setSavedIndicator] = useState(false);
 
   // Load the API key from secure storage on mount
   useEffect(() => {
@@ -493,6 +494,8 @@ function AgentPane() {
   const handleSaveKey = () => {
     setSecureApiKey(apiKeyDraft.trim());
     setSaved(true);
+    setSavedIndicator(true);
+    setTimeout(() => setSavedIndicator(false), 2000);
   };
 
   return (
@@ -516,6 +519,11 @@ function AgentPane() {
           >
             Save
           </button>
+          <span
+            className={`text-[11px] text-green-400 font-medium transition-opacity duration-300 ${savedIndicator ? "opacity-100" : "opacity-0"}`}
+          >
+            ✓ Saved
+          </span>
         </div>
         <span className="text-[9px] text-[#555577]">
           Your own Qwen API key from dashscope.aliyuncs.com. Required for the AI agent and cloud features.
