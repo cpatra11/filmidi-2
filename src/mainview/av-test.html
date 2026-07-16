@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head><title>AV Test</title></head>
+<body>
+<h3>WKWebView A/V Test</h3>
+<div id="status">Testing...</div>
+<script>
+const testUrl = "http://localhost:5173/api/files/01fd2081-1677-438d-9258-a8a338e84b06.mp4";
+const log = (msg) => {
+  document.getElementById("status").innerHTML += "<br>" + msg;
+  console.log("[AVTEST] " + msg);
+};
+
+// Test 1: Can we fetch?
+log("Fetching " + testUrl);
+fetch(testUrl).then(r => {
+  log("Fetch status: " + r.status + " content-type: " + r.headers.get("content-type"));
+  return r.blob();
+}).then(blob => {
+  log("Blob size: " + blob.size);
+
+  // Test 2: Video element
+  const video = document.createElement("video");
+  video.preload = "auto";
+  video.muted = true;
+  return new Promise((resolve) => {
+    video.onloadedmetadata = () => {
+      log("VIDEO OK: " + video.duration + "s " + video.videoWidth + "x" + video.videoHeight);
+      resolve();
+    };
+    video.onerror = (e) => {
+      log("VIDEO ERROR: code=" + (video.error?.code) + " msg=" + video.error?.message);
+      resolve();
+    };
+    video.src = URL.createObjectURL(blob);
+    setTimeout(() => { log("VIDEO TIMEOUT"); resolve(); }, 5000);
+  });
+}).then(() => {
+  // Test 3: AudioContext
+  try {
+    const ctx = new AudioContext();
+    log("AudioContext state: " + ctx.state);
+    if (ctx.state === "suspended") ctx.resume();
+    log("AudioContext after resume: " + ctx.state);
+  } catch(e) {
+    log("AudioContext ERROR: " + e.message);
+  }
+  log("ALL TESTS DONE");
+}).catch(e => log("FETCH ERROR: " + e.message));
+</script>
+</body>
+</html>

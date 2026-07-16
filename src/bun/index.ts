@@ -1,0 +1,326 @@
+import { BrowserWindow, Updater } from "electrobun/bun";
+import Electrobun from "electrobun/bun";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+
+const DEV_SERVER_PORT = 5173;
+const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
+
+async function getMainViewUrl(): Promise<string> {
+  const channel = await Updater.localInfo.channel();
+  if (channel === "dev") {
+    try {
+      await fetch(DEV_SERVER_URL, { method: "HEAD" });
+      console.log(`HMR enabled: Using Vite dev server at ${DEV_SERVER_URL}`);
+      return DEV_SERVER_URL;
+    } catch {
+      console.log(
+        "Vite dev server not running. Run 'bun run dev:hmr' for HMR support.",
+      );
+    }
+  }
+  return "views://mainview/index.html";
+}
+
+const url = await getMainViewUrl();
+
+const mainWindow = new BrowserWindow({
+  title: "Filmidi Editor",
+  url,
+  frame: {
+    width: 1400,
+    height: 900,
+    x: 100,
+    y: 100,
+  },
+  titleBarStyle: "hiddenInset",
+  trafficLightOffset: { x: 12, y: 12 },
+});
+
+// ─── IPC Transport ──────────────────────────────────────────────
+
+const transport = mainWindow.webview.createTransport();
+let isMaximized = false;
+
+// ─── MCP pending request tracking
+interface PendingRequest {
+  resolve: (result: string) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+const mcpPendingRequests = new Map<string, PendingRequest>();
+
+// Secure in-memory storage for sensitive credentials
+const secureStore = new Map<string, string>();
+const CREDENTIALS_FILE = join(homedir(), "Library", "Application Support", "com.filmidi.editor", "credentials.json");
+
+function loadCredentials() {
+  try {
+    if (existsSync(CREDENTIALS_FILE)) {
+      const data = JSON.parse(readFileSync(CREDENTIALS_FILE, "utf-8"));
+      for (const [key, value] of Object.entries(data)) {
+        if (typeof value === "string") secureStore.set(key, value);
+      }
+    }
+  } catch {}
+}
+
+function saveCredentials() {
+  try {
+    const dir = dirname(CREDENTIALS_FILE);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const data: Record<string, string> = {};
+    secureStore.forEach((value, key) => { data[key] = value; });
+    writeFileSync(CREDENTIALS_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  } catch (err) {
+    console.error("[credentials] Failed to save:", err);
+  }
+}
+
+// Load existing credentials on startup
+loadCredentials();
+
+transport.registerHandler((msg: any) => {
+  if (!msg || typeof msg !== "object") return;
+
+  switch (msg.type) {
+    case "toggleMaximize":
+      if (isMaximized) {
+        mainWindow.unmaximize();
+        isMaximized = false;
+      } else {
+        mainWindow.maximize();
+        isMaximized = true;
+      }
+      break;
+
+    case "mcp-tool-result": {
+      const pending = mcpPendingRequests.get(msg.requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        mcpPendingRequests.delete(msg.requestId);
+        if (msg.isError) {
+          pending.reject(new Error(msg.result));
+        } else {
+          pending.resolve(msg.result);
+        }
+      }
+      break;
+    }
+
+    case "openExternal": {
+      if (typeof msg.url === "string" && msg.url.startsWith("https://")) {
+        Electrobun.Utils.openExternal(msg.url);
+      }
+      break;
+    }
+
+    case "set-api-key": {
+      if (typeof msg.key === "string") {
+        if (msg.key.length > 0) {
+          secureStore.set("qwen_api_key", msg.key);
+        } else {
+          secureStore.delete("qwen_api_key");
+        }
+        saveCredentials();
+        transport.send({ type: "api-key-saved" });
+      }
+      break;
+    }
+
+    case "get-api-key": {
+      // Check memory first, then try loading from file
+      let key: string | null = secureStore.get("qwen_api_key") ?? null;
+      if (!key) {
+        loadCredentials();
+        key = secureStore.get("qwen_api_key") ?? null;
+      }
+      transport.send({ type: "api-key-value", key });
+      break;
+    }
+
+    case "sign-in": {
+      // The renderer sends { type: "sign-in", authUrl, state } and expects
+      // a "sign-in-browser-opened" ack so it can start polling the backend.
+      if (typeof msg.authUrl === "string" && msg.authUrl.startsWith("https://")) {
+        Electrobun.Utils.openExternal(msg.authUrl);
+        transport.send({ type: "sign-in-browser-opened" });
+      }
+      break;
+    }
+  }
+});
+
+// ─── MCP Tool Call Bridge ───────────────────────────────────────
+
+function callToolOnRenderer(toolName: string, args: Record<string, unknown>): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => {
+      mcpPendingRequests.delete(requestId);
+      reject(new Error(`MCP tool call timed out: ${toolName}`));
+    }, 120_000);
+
+    mcpPendingRequests.set(requestId, { resolve, reject, timer });
+    transport.send({ type: "mcp-tool-call", requestId, toolName, args });
+  });
+}
+
+// Start the MCP server (disabled — Bun v1.3.13 C++ crash in Electrobun)
+// import { startMcpServer } from "./mcp/startMcpServer";
+// startMcpServer(callToolOnRenderer).catch((err) => {
+//   console.error("[MCP] Failed to start server:", err);
+// });
+
+// ─── Native Menu Bar ───
+
+const isMac = process.platform === "darwin";
+
+const menuTemplate: any[] = [
+  // ── App menu (macOS only) ──
+  ...(isMac
+    ? [
+        {
+          submenu: [
+            { label: "About Filmidi", role: "about" },
+            { type: "separator" as const },
+            {
+              label: "Settings",
+              accelerator: ",",
+              action: "open-settings",
+            },
+            { type: "separator" as const },
+            { label: "Hide Filmidi", role: "hide" },
+            { label: "Hide Others", role: "hideOthers" },
+            { label: "Show All", role: "showAll" },
+            { type: "separator" as const },
+            { label: "Quit Filmidi", role: "quit" },
+          ],
+        },
+      ]
+    : []),
+
+  // ── File ──
+  {
+    label: "File",
+    submenu: [
+      { label: "New Project", accelerator: "n", action: "new-project" },
+      { label: "Open Project", accelerator: "o", action: "open-project" },
+      { type: "separator" },
+      { label: "Save Project", accelerator: "s", action: "save-project" },
+      {
+        label: "Save As",
+        accelerator: "shift+s",
+        action: "save-as",
+      },
+      { type: "separator" },
+      { label: "Import Media", accelerator: "i", action: "import-media" },
+      { label: "Export", accelerator: "e", action: "export" },
+      ...(!isMac
+        ? [
+            { type: "separator" as const },
+            { label: "Settings", accelerator: ",", action: "open-settings" },
+            { type: "separator" as const },
+            { label: "Exit", role: "quit" },
+          ]
+        : []),
+    ],
+  },
+
+  // ── Edit ──
+  {
+    label: "Edit",
+    submenu: [
+      { label: "Undo", role: "undo" },
+      { label: "Redo", role: "redo" },
+      { type: "separator" },
+      { label: "Cut", role: "cut" },
+      { label: "Copy", role: "copy" },
+      { label: "Paste", role: "paste" },
+      { label: "Delete", role: "delete" },
+      { label: "Select All", role: "selectAll" },
+      { type: "separator" },
+      {
+        label: "Split at Playhead",
+        accelerator: "k",
+        action: "split-at-playhead",
+      },
+      { label: "Trim Start", accelerator: "q", action: "trim-start" },
+      { label: "Trim End", accelerator: "w", action: "trim-end" },
+    ],
+  },
+
+  // ── View ──
+  {
+    label: "View",
+    submenu: [
+      {
+        label: "Media Panel",
+        accelerator: "shift+0",
+        action: "toggle-media-panel",
+      },
+      {
+        label: "Inspector",
+        accelerator: "shift+alt+0",
+        action: "toggle-inspector",
+      },
+      {
+        label: "Agent Panel",
+        accelerator: "shift+alt+a",
+        action: "toggle-agent-panel",
+      },
+      { type: "separator" },
+      { label: "Zoom In", accelerator: "=", action: "zoom-in" },
+      { label: "Zoom Out", accelerator: "-", action: "zoom-out" },
+      { label: "Zoom to Fit", accelerator: "0", action: "zoom-fit" },
+      { label: "Zoom to 100%", accelerator: "1", action: "zoom-100" },
+      { type: "separator" },
+      { label: "Toggle Full Screen", role: "toggleFullScreen" },
+    ],
+  },
+
+  // ── Window ──
+  {
+    label: "Window",
+    submenu: [
+      { label: "Minimize", role: "minimize" },
+      { label: "Zoom", role: "zoom" },
+      ...(isMac
+        ? [
+            { type: "separator" as const },
+            { label: "Bring All to Front", role: "bringAllToFront" },
+          ]
+        : []),
+    ],
+  },
+
+  // ── Help ──
+  {
+    label: "Help",
+    submenu: [
+      {
+        label: "Keyboard Shortcuts",
+        accelerator: "/",
+        action: "open-help",
+      },
+      { label: "MCP Instructions", action: "open-mcp" },
+      { type: "separator" },
+      { label: "Send Feedback", action: "send-feedback" },
+    ],
+  },
+];
+
+Electrobun.ApplicationMenu.setApplicationMenu(menuTemplate);
+
+// ─── Forward menu clicks to the webview ───
+
+Electrobun.events.on("application-menu-clicked", (e) => {
+  const { action } = e.data;
+  if (!action) return;
+
+  // Forward to webview via RPC
+  transport.send({ type: "menu-action", action });
+});
+
+console.log("Filmidi Editor started!");

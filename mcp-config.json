@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "filmidi-editor": {
+      "url": "http://127.0.0.1:19790/mcp",
+      "description": "Filmidi video editor — timeline editing, clip operations, effects, AI generation, and more. Start the Filmidi Editor app first, then connect.",
+      "type": "streamable-http"
+    }
+  }
+}

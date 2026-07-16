@@ -1,0 +1,168 @@
+@import "@videoflow/react-video-editor/style.css";
+@import "tw-animate-css";
+@import "@fontsource-variable/geist";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* VideoFlow vars for use outside vf-editor (e.g. Layout playbar) */
+  --vf-bg: #050505;
+  --vf-panel: #0A0A0A;
+  --vf-panel-2: #111111;
+  --vf-panel-border: #1C1C1C;
+  --vf-surface: #141414;
+  --vf-text: #FFFFFF;
+  --vf-text-dim: #999999;
+  --vf-text-mute: #666666;
+  --vf-primary: #FFFFFF;
+  --vf-primary-hover: #E0E0E0;
+  --vf-primary-fg: #000000;
+  --vf-font-mono: 'Geist Mono', 'SF Mono', monospace;
+
+  /* shadcn/ui dark monochrome */
+  --background: oklch(0.07 0 0);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.10 0 0);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.10 0 0);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.98 0 0);
+  --primary-foreground: oklch(0.10 0 0);
+  --secondary: oklch(0.16 0 0);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.16 0 0);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.16 0 0);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.55 0.18 25);
+  --border: oklch(0.20 0 0);
+  --input: oklch(0.16 0 0);
+  --ring: oklch(0.40 0 0);
+  --radius: 6px;
+  --sidebar: oklch(0.07 0 0);
+  --sidebar-foreground: oklch(0.98 0 0);
+  --sidebar-primary: oklch(0.98 0 0);
+  --sidebar-primary-foreground: oklch(0.10 0 0);
+  --sidebar-accent: oklch(0.16 0 0);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(0.20 0 0);
+  --sidebar-ring: oklch(0.40 0 0);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #050505;
+  color: #FFFFFF;
+  font-family: 'Geist Variable', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* React Resizable Panels */
+[data-panel-resize-handle-id] {
+  position: relative;
+}
+
+[data-panel-resize-handle-id]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+
+/*
+ * VideoFlow vf-editor: remove min-height so it fits inside our layout.
+ * Override VideoFlow's design tokens at matching specificity (0,3,1).
+ */
+vf-editor[data-theme][data-theme][data-theme] {
+  min-height: unset !important;
+
+  /* Monochrome theme overrides */
+  --vf-bg: #050505;
+  --vf-panel: #0A0A0A;
+  --vf-panel-2: #111111;
+  --vf-panel-border: #1C1C1C;
+  --vf-surface: #141414;
+  --vf-surface-2: #1A1A1A;
+  --vf-surface-hover: #222222;
+  --vf-surface-active: #2A2A2A;
+
+  --vf-text: #FFFFFF;
+  --vf-text-dim: #999999;
+  --vf-text-mute: #666666;
+
+  --vf-primary: #FFFFFF;
+  --vf-primary-hover: #E0E0E0;
+  --vf-primary-fg: #000000;
+
+  --vf-accent: #FFFFFF;
+  --vf-selection: #FFFFFF;
+  --vf-selection-dim: rgba(255, 255, 255, 0.12);
+  --vf-selection-ring: rgba(255, 255, 255, 0.40);
+  --vf-playhead: #FFFFFF;
+  --vf-preview-bg: radial-gradient(circle at center, #111111 0%, #050505 100%);
+
+  --vf-input-bg: #141414;
+  --vf-font: 'Geist Variable', system-ui, -apple-system, sans-serif;
+  --vf-font-mono: 'Geist Mono', 'SF Mono', monospace;
+}
+
+/*
+ * VideoFlow custom elements need explicit sizing.
+ */
+vf-preview,
+vf-timeline,
+vf-sidebar {
+  width: 100%;
+  height: 100%;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.20);
+}
+
+/* Selection */
+::selection {
+  background: rgba(255, 255, 255, 0.20);
+}
+
+@layer base {
+  .theme {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  * {
+    border-color: var(--border);
+    outline-color: var(--ring);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+  html {
+    font-family: 'Geist Variable', system-ui, sans-serif;
+  }
+}
