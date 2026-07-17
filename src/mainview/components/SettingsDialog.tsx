@@ -478,24 +478,44 @@ function AgentPane() {
   } = useSettingsStore();
 
   const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [saved, setSaved] = useState(true);
+  const [hasKey, setHasKey] = useState(false);
+  const [showInput, setShowInput] = useState(false);
   const [savedIndicator, setSavedIndicator] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Load the API key from secure storage on mount
   useEffect(() => {
     getSecureApiKey().then((key) => {
       if (key) {
         setApiKeyDraft(key);
-        setSaved(true);
+        setHasKey(true);
+        setShowInput(false);
+      } else {
+        setShowInput(true);
       }
+      setLoading(false);
     });
   }, []);
 
   const handleSaveKey = () => {
-    setSecureApiKey(apiKeyDraft.trim());
-    setSaved(true);
+    const trimmed = apiKeyDraft.trim();
+    if (!trimmed) return;
+    setSecureApiKey(trimmed);
+    setHasKey(true);
+    setShowInput(false);
     setSavedIndicator(true);
     setTimeout(() => setSavedIndicator(false), 2000);
+  };
+
+  const handleChangeKey = () => {
+    setShowInput(true);
+  };
+
+  const handleRemoveKey = () => {
+    setSecureApiKey("");
+    setHasKey(false);
+    setShowInput(true);
+    setApiKeyDraft("");
   };
 
   return (
@@ -503,28 +523,68 @@ function AgentPane() {
       <SectionHeader title="API Connection" />
       <div className="flex flex-col gap-1.5">
         <span className="text-[10px] font-medium text-[#8888aa]">Qwen API Key</span>
-        <div className="flex items-center gap-2">
-          <input
-            type="password"
-            value={apiKeyDraft}
-            onChange={(e) => { setApiKeyDraft(e.target.value); setSaved(false); }}
-            onKeyDown={(e) => { if (e.key === "Enter" && apiKeyDraft.trim()) handleSaveKey(); }}
-            placeholder="Enter your Qwen API key..."
-            className="flex-1 bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-1.5 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
-          />
-          <button
-            onClick={handleSaveKey}
-            disabled={saved || !apiKeyDraft.trim()}
-            className="px-3 py-1.5 rounded-lg bg-white hover:bg-white/90 text-[11px] text-black font-medium cursor-pointer disabled:opacity-30 disabled:cursor-default transition-colors"
-          >
-            Save
-          </button>
-          <span
-            className={`text-[11px] text-green-400 font-medium transition-opacity duration-300 ${savedIndicator ? "opacity-100" : "opacity-0"}`}
-          >
-            ✓ Saved
-          </span>
-        </div>
+
+        {loading ? (
+          <div className="h-8 flex items-center">
+            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          </div>
+        ) : showInput ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              value={apiKeyDraft}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && apiKeyDraft.trim()) handleSaveKey(); }}
+              placeholder="Enter your Qwen API key..."
+              className="flex-1 bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-1.5 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
+            />
+            <button
+              onClick={handleSaveKey}
+              disabled={!apiKeyDraft.trim()}
+              className="px-3 py-1.5 rounded-lg bg-white hover:bg-white/90 text-[11px] text-black font-medium cursor-pointer disabled:opacity-30 disabled:cursor-default transition-colors"
+            >
+              Save
+            </button>
+            {hasKey && (
+              <button
+                onClick={() => { setShowInput(false); setApiKeyDraft(""); }}
+                className="px-3 py-1.5 rounded-lg border border-white/10 text-[11px] text-[#aaaacc] hover:text-[#e0e0ee] cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+            <span
+              className={`text-[11px] text-green-400 font-medium transition-opacity duration-300 ${savedIndicator ? "opacity-100" : "opacity-0"}`}
+            >
+              ✓ Saved
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 bg-[#141414] border border-[#1C1C1C] rounded-lg">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-[12px] text-[#8888aa]">API key is set</span>
+            </div>
+            <button
+              onClick={handleChangeKey}
+              className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/20 text-[11px] text-[#e0e0ee] hover:bg-white/15 cursor-pointer transition-colors"
+            >
+              Change
+            </button>
+            <button
+              onClick={handleRemoveKey}
+              className="px-3 py-1.5 rounded-lg border border-red-500/30 text-[11px] text-red-400 hover:bg-red-500/10 cursor-pointer transition-colors"
+            >
+              Remove
+            </button>
+            <span
+              className={`text-[11px] text-green-400 font-medium transition-opacity duration-300 ${savedIndicator ? "opacity-100" : "opacity-0"}`}
+            >
+              ✓ Saved
+            </span>
+          </div>
+        )}
+
         <span className="text-[9px] text-[#555577]">
           Your own Qwen API key from dashscope.aliyuncs.com. Required for the AI agent and cloud features.
         </span>

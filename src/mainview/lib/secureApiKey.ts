@@ -61,12 +61,17 @@ export function getSecureApiKey(): Promise<string | null> {
  * Also keeps a local cache, but does NOT write to localStorage.
  */
 export function setSecureApiKey(key: string): void {
-  cachedKey = key;
+  cachedKey = key || null;
+  fetchPromise = null; // cancel any in-flight fetch so the new value wins
   const bridge = getBridge();
   if (bridge) {
     bridge.postMessage(JSON.stringify({ type: "set-api-key", key }));
   } else {
-    localStorage.setItem(STORAGE_KEY, key);
+    if (key) {
+      localStorage.setItem(STORAGE_KEY, key);
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }
 }
 

@@ -193,7 +193,8 @@ transport.registerHandler((msg: any) => {
 
           const decoder = new TextDecoder();
           let buffer = "";
-          let currentToolBlock: { id?: string; name?: string; input?: string } | null = null;
+          // Track current block: text or tool_use (thinking blocks are skipped)
+          let currentBlock: { type: "text" | "tool_use"; id?: string; name?: string; input?: string } | null = null;
           const events: Record<string, unknown>[] = [];
 
           while (true) {
@@ -205,8 +206,9 @@ transport.registerHandler((msg: any) => {
             buffer = lines.pop() ?? "";
 
             for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const data = line.slice(6).trim();
+              // DashScope sends `data:{...}` with no space — accept both forms
+              if (!line.startsWith("data:")) continue;
+              const data = line.slice(5).trim();
               if (!data) continue;
 
               let parsed: Record<string, unknown>;
@@ -216,30 +218,35 @@ transport.registerHandler((msg: any) => {
 
               if (eventType === "content_block_start") {
                 const block = parsed.content_block as Record<string, unknown>;
-                currentToolBlock = block.type === "tool_use"
-                  ? { id: block.id as string, name: block.name as string, input: "" }
-                  : null;
+                if (block.type === "tool_use") {
+                  currentBlock = { type: "tool_use", id: block.id as string, name: block.name as string, input: "" };
+                } else if (block.type === "text") {
+                  currentBlock = { type: "text" };
+                } else {
+                  // thinking or unknown — skip
+                  currentBlock = null;
+                }
                 continue;
               }
 
               if (eventType === "content_block_delta") {
                 const delta = parsed.delta as Record<string, unknown>;
-                if (delta.type === "text_delta") {
+                if (delta.type === "text_delta" && currentBlock?.type === "text") {
                   const text = delta.text as string;
                   if (text) events.push({ type: "text_delta", text });
-                } else if (delta.type === "input_json_delta" && currentToolBlock) {
-                  currentToolBlock.input = (currentToolBlock.input ?? "") + (delta.partial_json as string);
+                } else if (delta.type === "input_json_delta" && currentBlock?.type === "tool_use") {
+                  currentBlock.input = (currentBlock.input ?? "") + (delta.partial_json as string);
                 }
                 continue;
               }
 
               if (eventType === "content_block_stop") {
-                if (currentToolBlock?.id && currentToolBlock?.name) {
+                if (currentBlock?.type === "tool_use" && currentBlock.id && currentBlock.name) {
                   let input: Record<string, unknown> = {};
-                  try { input = JSON.parse(currentToolBlock.input ?? "{}"); } catch {}
-                  events.push({ type: "tool_use", id: currentToolBlock.id, name: currentToolBlock.name, input });
+                  try { input = JSON.parse(currentBlock.input ?? "{}"); } catch {}
+                  events.push({ type: "tool_use", id: currentBlock.id, name: currentBlock.name, input });
                 }
-                currentToolBlock = null;
+                currentBlock = null;
                 continue;
               }
 

@@ -125,8 +125,9 @@ export async function* streamChat(
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
+        // DashScope sends `data:{...}` (no space). Accept both.
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
         if (!data) continue;
 
         let parsed: Record<string, unknown>;
@@ -156,6 +157,9 @@ export async function* streamChat(
               name: block.name as string,
               input: "",
             };
+          } else {
+            // Unknown/thinking block — reset so we don't contaminate the next block
+            currentBlock = null;
           }
           continue;
         }
@@ -284,8 +288,9 @@ export async function* streamChatBackend(
       buffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
+        // DashScope sends `data:{...}` (no space). Accept both `data: ` and `data:`.
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
         if (!data) continue;
 
         let parsed: Record<string, unknown>;
@@ -312,6 +317,9 @@ export async function* streamChatBackend(
               name: block.name as string,
               input: "",
             };
+          } else {
+            // Unknown/thinking block — reset so we don't contaminate the next block
+            currentBlock = null;
           }
           continue;
         }

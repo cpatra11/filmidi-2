@@ -77,24 +77,24 @@ function makeId() {
 }
 
 const MODEL_MAP: Record<string, string> = {
-  "qwen-plus": "qwen3.6-plus",
-  "qwen-max": "qwen3.7-max",
-  "qwen-3.7-max": "qwen3.7-max",
-  "qwen-3.7-plus": "qwen3.7-plus",
-  "qwen-3.6-plus": "qwen3.6-plus",
-  "qwen-3.6-flash": "qwen3.6-flash",
-  "qwen-turbo": "qwen-turbo",
+  "qwen-max":    "qwen3.7-max",
+  "qwen-plus":   "qwen3.7-plus",
+  "qwen-flash":  "qwen3.6-flash",
+  "qwen-turbo":  "qwen3.6-flash",  // qwen-turbo is invalid on Anthropic endpoint — fallback to flash
+  // Pass canonical ids through unchanged
+  "qwen3.7-max":   "qwen3.7-max",
+  "qwen3.7-plus":  "qwen3.7-plus",
+  "qwen3.6-plus":  "qwen3.6-plus",
+  "qwen3.6-flash": "qwen3.6-flash",
 };
 
 const AVAILABLE_MODELS = [
-  { id: "qwen-max", name: "Qwen Max" },
-  { id: "qwen-3.7-max", name: "Qwen 3.7 Max" },
-  { id: "qwen-3.7-plus", name: "Qwen 3.7 Plus" },
-  { id: "qwen-plus", name: "Qwen Plus" },
-  { id: "qwen-3.6-plus", name: "Qwen 3.6 Plus" },
-  { id: "qwen-3.6-flash", name: "Qwen 3.6 Flash" },
-  { id: "qwen-turbo", name: "Qwen Turbo" },
+  { id: "qwen3.7-max",   name: "Qwen 3.7 Max (Best)" },
+  { id: "qwen3.7-plus",  name: "Qwen 3.7 Plus" },
+  { id: "qwen3.6-plus",  name: "Qwen 3.6 Plus" },
+  { id: "qwen3.6-flash", name: "Qwen 3.6 Flash (Fast)" },
 ];
+
 
 async function getApiKey(): Promise<string | null> {
   return getSecureApiKey();
@@ -291,7 +291,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   draft: "",
   isStreaming: false,
   streamError: null,
-  model: localStorage.getItem("filmidi_agent_model") ?? "qwen-plus",
+  model: localStorage.getItem("filmidi_agent_model") ?? "qwen3.7-plus",
   agentEditHistory: [],
   agentTurn: 0,
 
