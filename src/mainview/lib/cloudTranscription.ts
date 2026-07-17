@@ -130,7 +130,7 @@ async function transcribeViaDashScope(
   const input: Record<string, unknown> = {};
 
   if (audioUrl.startsWith("blob:")) {
-    // Blob URLs don't exist outside the renderer — convert to inline base64
+    // Blob URLs don't exist outside the renderer — embed the audio inline
     const resp = await fetch(audioUrl);
     const blob = await resp.blob();
     const dataUrl: string = await new Promise((resolve, reject) => {
@@ -139,9 +139,9 @@ async function transcribeViaDashScope(
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
-    input.file_urls = [dataUrl];
+    input.file_url = dataUrl; // "data:audio/wav;base64,..."
   } else {
-    input.file_urls = [audioUrl];
+    input.file_url = audioUrl;
   }
 
   if (options?.diarization !== false) {

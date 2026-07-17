@@ -684,6 +684,7 @@ export async function executeTool(
         const { getCachedTranscript, setCachedTranscript } = await import("./transcriptCache");
 
         let totalCaptions = 0;
+        let transcribeErrors = 0;
 
         for (const layer of captionTargets) {
           const source = layer.settings?.source as string;
@@ -696,6 +697,7 @@ export async function executeTool(
               await setCachedTranscript(source, transcript, language);
             } catch (e) {
               console.warn("[add_captions] Transcription failed for", source.slice(0, 60), e instanceof Error ? e.message : e);
+              transcribeErrors++;
               continue;
             }
           }
@@ -745,6 +747,9 @@ export async function executeTool(
         }
 
         refreshPreview();
+        if (totalCaptions === 0 && transcribeErrors > 0) {
+          return JSON.stringify({ error: `Transcription failed for ${transcribeErrors} clip(s). Check the API key and ensure clips have audible audio.` });
+        }
         return JSON.stringify({ added: totalCaptions, note: `Added ${totalCaptions} captions.` });
       }
 
