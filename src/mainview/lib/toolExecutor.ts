@@ -694,7 +694,10 @@ export async function executeTool(
             try {
               transcript = await transcribeAudio(source, apiKey || "", { language });
               await setCachedTranscript(source, transcript, language);
-            } catch { continue; }
+            } catch (e) {
+              console.warn("[add_captions] Transcription failed for", source.slice(0, 60), e instanceof Error ? e.message : e);
+              continue;
+            }
           }
 
           const clipStartFrame = Math.round((layer.settings?.startTime ?? 0) * fps);

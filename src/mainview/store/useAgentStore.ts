@@ -656,13 +656,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
             .sessions.find((s) => s.id === sessionId)
             ?.messages.find((m) => m.id === assistantMsgId);
 
-          const hasPendingTools =
-            msg?.toolUse?.some((t) => !t.result) ?? false;
-
-          if (!hasPendingTools) {
+          if (!msg?.toolUse?.length) {
             persistSessions(get().sessions);
             break;
           }
+          // Tools were executed — continue the loop so the model can respond to their results
         } else {
           break;
         }
