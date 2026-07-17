@@ -159,7 +159,7 @@ transport.registerHandler((msg: any) => {
 
           const body: Record<string, unknown> = {
             model,
-            max_tokens: 8192,
+            max_tokens: msg.maxTokens ?? 8192,
             stream: true,
             messages,
           };

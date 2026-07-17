@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { transcribeAudio } from "@/lib/cloudTranscription";
 import { getSecureApiKey } from "@/lib/secureApiKey";
 import { useSettingsStore } from "@/store/useSettingsStore";
+import { useAccountStore } from "@/store/useAccountStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 
 interface Speaker {
@@ -37,16 +38,19 @@ export function SpeechTab() {
     setIsIdentifying(true);
     setIdentifyError(null);
 
-    const settings = useSettingsStore.getState();
-    if (settings.audioProcessingMode !== "cloud") {
+    const settingsMode = useSettingsStore.getState().audioProcessingMode;
+    const apiKey = await getSecureApiKey();
+    const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+    const effectiveMode = hasCloudAccess ? "cloud" : settingsMode;
+
+    if (effectiveMode !== "cloud") {
       setIdentifyError("Switch to Cloud mode in Settings > Audio Processing to identify speakers.");
       setIsIdentifying(false);
       return;
     }
 
-    const apiKey = await getSecureApiKey();
-    if (!apiKey) {
-      setIdentifyError("No API key set. Configure it in the Agent panel first.");
+    if (!hasCloudAccess) {
+      setIdentifyError("No API key set and not signed in. Configure in the Agent panel first.");
       setIsIdentifying(false);
       return;
     }

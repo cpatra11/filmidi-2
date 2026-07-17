@@ -392,12 +392,14 @@ async function* streamChatViaBun(
     tools,
     model,
     system,
+    maxTokens,
     signal,
   }: {
     messages: Message[];
     tools?: ToolDefinition[];
     model: string;
     system?: string;
+    maxTokens?: number;
     signal?: AbortSignal;
   },
 ): AsyncGenerator<StreamEvent> {
@@ -408,7 +410,7 @@ async function* streamChatViaBun(
   const eb = (window as any).__electrobun;
 
   // Send init message to Bun process
-  const initBody: Record<string, unknown> = { requestId, model, apiKey, messages, tools, system };
+  const initBody: Record<string, unknown> = { requestId, model, apiKey, messages, tools, system, maxTokens };
   bridge.postMessage(JSON.stringify({ type: "stream-chat-init", ...initBody }));
 
   // Wait for the batch result from Bun
@@ -474,10 +476,10 @@ async function* streamChatViaBun(
     }
 
     if (event.type === "stop") {
-      yield event as StopEvent;
+      yield event as unknown as StopEvent;
       return;
     }
 
-    yield event as StreamEvent;
+    yield event as unknown as StreamEvent;
   }
 }

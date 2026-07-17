@@ -2,6 +2,7 @@ import { useEditorStore } from "@videoflow/react-video-editor";
 import { commands } from "@videoflow/react-video-editor";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
+import { useAccountStore } from "@/store/useAccountStore";
 import { transcribeAudio } from "./cloudTranscription";
 import { getSecureApiKey } from "./secureApiKey";
 import { submitGeneration, waitForTask } from "./generationApi";
@@ -646,7 +647,7 @@ export async function executeTool(
         const textCase = (input.textCase as string) ?? "auto";
         const animation = input.animation as string | undefined;
         const highlightColor = input.highlightColor as string | undefined;
-        const mode = (input.mode as string) ?? useSettingsStore.getState().audioProcessingMode ?? "local";
+        const settingsMode = (input.mode as string) ?? useSettingsStore.getState().audioProcessingMode ?? "local";
 
         // Build caption style
         const captionProps: Record<string, unknown> = {};
@@ -669,14 +670,13 @@ export async function executeTool(
           return JSON.stringify({ error: "No audio/video clips found for captioning." });
         }
 
-        if (mode === "local") {
-          return JSON.stringify({ error: "Local caption generation is not available. Switch to Cloud mode (Qwen API key required) in Settings > Audio Processing." });
-        }
-
-        // Get API key
+        // Get API key or backend status — if either is present, cloud mode is available
         const apiKey = (await getSecureApiKey());
-        if (!apiKey) {
-          return JSON.stringify({ error: "Qwen API key required for transcription." });
+        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+        const mode = hasCloudAccess ? "cloud" : settingsMode;
+
+        if (mode === "local" || !hasCloudAccess) {
+          return JSON.stringify({ error: "A Qwen API key or Filmidi Pro account is required for captions. Add a key in Settings > Agent." });
         }
 
 
@@ -692,7 +692,7 @@ export async function executeTool(
           let transcript = await getCachedTranscript(source, language);
           if (!transcript) {
             try {
-              transcript = await transcribeAudio(source, apiKey, { language });
+              transcript = await transcribeAudio(source, apiKey || "", { language });
               await setCachedTranscript(source, transcript, language);
             } catch { continue; }
           }
@@ -704,14 +704,13 @@ export async function executeTool(
           const visibleStart = clipSourceStart;
           const visibleEnd = clipSourceStart + clipDuration * clipSpeed;
 
-          const toTimeline = (sourceFrame: number) =>
-            Math.round(clipStartFrame + (sourceFrame - visibleStart) / Math.max(clipSpeed, 0.0001));
+          const toTimeline = (sourceSeconds: number) =>
+            Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / Math.max(clipSpeed, 0.0001));
 
-          // Group words into caption phrases
           const visibleWords = transcript.words.filter((w) => {
             if (w.start === undefined || w.end === undefined) return false;
-            const midFrame = ((w.start + w.end) / 2) * fps;
-            return midFrame >= visibleStart && midFrame <= visibleEnd;
+            const midSec = (w.start + w.end) / 2;
+            return midSec >= visibleStart && midSec <= visibleEnd;
           });
 
           // Split into phrases of maxWords
@@ -725,8 +724,8 @@ export async function executeTool(
             if (textCase === "upper") displayText = text.toUpperCase();
             else if (textCase === "lower") displayText = text.toLowerCase();
 
-            const startFrame = toTimeline((phrase[0].start ?? 0) * fps);
-            const endFrame = toTimeline((phrase[phrase.length - 1].end ?? phrase[0].end ?? 1) * fps);
+            const startFrame = toTimeline(phrase[0].start ?? 0);
+            const endFrame = toTimeline(phrase[phrase.length - 1].end ?? phrase[0].end ?? 1);
             const durationSeconds = Math.max(0.5, (endFrame - startFrame) / fps);
 
             await addLayerCommand(commit, {
@@ -755,7 +754,8 @@ export async function executeTool(
 
         // First, get the transcript to resolve word indices
         const apiKey = (await getSecureApiKey());
-        if (!apiKey) return JSON.stringify({ error: "Qwen API key required for transcription." });
+        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+        if (!hasCloudAccess) return JSON.stringify({ error: "Qwen API key or Filmidi Pro account required for transcription." });
 
 
 
@@ -777,7 +777,7 @@ export async function executeTool(
           let transcript = await getCachedTranscript(source);
           if (!transcript) {
             try {
-              transcript = await transcribeAudio(source, apiKey);
+              transcript = await transcribeAudio(source, apiKey || "");
               await setCachedTranscript(source, transcript);
             } catch { continue; }
           }
@@ -790,16 +790,16 @@ export async function executeTool(
           const visibleEnd = clipSourceStart + clipDuration * clipSpeed;
           const clipEndFrame = clipStartFrame + Math.round(clipDuration * fps);
 
-          const toTimeline = (sourceFrame: number) =>
-            Math.round(clipStartFrame + (sourceFrame - visibleStart) / Math.max(clipSpeed, 0.0001));
+          const toTimeline = (sourceSeconds: number) =>
+            Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / Math.max(clipSpeed, 0.0001));
 
           for (const word of transcript.words) {
             if (word.start === undefined || word.end === undefined) continue;
-            const wordMidFrame = ((word.start + word.end) / 2) * fps;
-            if (wordMidFrame < visibleStart || wordMidFrame > visibleEnd) continue;
+            const wordMidSec = (word.start + word.end) / 2;
+            if (wordMidSec < visibleStart || wordMidSec > visibleEnd) continue;
 
-            const timelineStart = toTimeline(word.start * fps);
-            const timelineEnd = toTimeline(word.end * fps);
+            const timelineStart = toTimeline(word.start);
+            const timelineEnd = toTimeline(word.end);
             allWords.push({
               clipId: layer.id,
               text: word.text,
@@ -1159,7 +1159,7 @@ export async function executeTool(
         const language = input.language as string | undefined;
         const startFrame = input.startFrame as number | undefined;
         const endFrame = input.endFrame as number | undefined;
-        const mode = (input.mode as string) ?? useSettingsStore.getState().audioProcessingMode ?? "local";
+        const settingsMode = (input.mode as string) ?? useSettingsStore.getState().audioProcessingMode ?? "local";
 
         // Get clips to transcribe
         const layers = editor.video.layers ?? [];
@@ -1171,14 +1171,13 @@ export async function executeTool(
           return JSON.stringify({ error: "No audio/video clips found to transcribe." });
         }
 
-        if (mode === "local") {
-          return JSON.stringify({ error: "Local transcription is not available. Switch to Cloud mode (Qwen API key required) in Settings > Audio Processing." });
-        }
-
-        // Get API key
+        // Get API key or backend status — if either is present, cloud mode is available
         const apiKey = (await getSecureApiKey());
-        if (!apiKey) {
-          return JSON.stringify({ error: "Qwen API key not configured. Set it in the agent panel footer or settings." });
+        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+        const mode = hasCloudAccess ? "cloud" : settingsMode;
+
+        if (mode === "local" || !hasCloudAccess) {
+          return JSON.stringify({ error: "A Qwen API key or Filmidi Pro account is required for transcription. Add a key in Settings > Agent." });
         }
 
 
@@ -1198,7 +1197,7 @@ export async function executeTool(
           if (!transcript) {
             // Transcribe via cloud ASR
             try {
-              transcript = await transcribeAudio(source, apiKey, { language });
+              transcript = await transcribeAudio(source, apiKey || "", { language });
               await setCachedTranscript(source, transcript, language);
             } catch (e) {
               continue; // skip this clip
@@ -1213,18 +1212,18 @@ export async function executeTool(
           const visibleStart = clipSourceStart;
           const visibleEnd = clipSourceStart + clipDuration * clipSpeed;
 
-          const toTimeline = (sourceFrame: number): number => {
-            return Math.round(clipStartFrame + (sourceFrame - visibleStart) / Math.max(clipSpeed, MIN_SPEED));
+          const toTimeline = (sourceSeconds: number): number => {
+            return Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / Math.max(clipSpeed, MIN_SPEED));
           };
 
           const clipWords: Array<[number, string, number, number]> = [];
           for (const word of transcript.words) {
             if (word.start === undefined || word.end === undefined) continue;
-            const wordMidFrame = ((word.start + word.end) / 2) * fps;
-            if (wordMidFrame < visibleStart || wordMidFrame > visibleEnd) continue;
+            const wordMidSec = (word.start + word.end) / 2;
+            if (wordMidSec < visibleStart || wordMidSec > visibleEnd) continue;
 
-            const timelineStart = toTimeline(word.start * fps);
-            const timelineEnd = toTimeline(word.end * fps);
+            const timelineStart = toTimeline(word.start);
+            const timelineEnd = toTimeline(word.end);
 
             // Apply window filter
             if (startFrame !== undefined && timelineEnd < startFrame) continue;
@@ -1432,7 +1431,8 @@ export async function executeTool(
       case "generate_image":
       case "generate_audio": {
         const apiKey = await getSecureApiKey();
-        if (!apiKey) {
+        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+        if (!hasCloudAccess) {
           return JSON.stringify({ error: "No API key configured. Add one in Settings > Agent, or sign in with Google." });
         }
 
@@ -1479,10 +1479,10 @@ export async function executeTool(
         }
 
         try {
-          const genResult = await submitGeneration(apiKey, type, params as any);
+          const genResult = await submitGeneration(apiKey || "", type, params as any);
 
           if (genResult.taskId) {
-            const pollResult = await waitForTask(apiKey, genResult.taskId);
+            const pollResult = await waitForTask(apiKey || "", genResult.taskId);
             if (pollResult.status === "succeeded" && pollResult.resultUrls?.length) {
               const url = pollResult.resultUrls[0];
               return JSON.stringify({

@@ -440,6 +440,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
               (e) => `  [Turn ${e.turn}] ${e.tool}: ${e.summary}`,
             ).join("\n")
           : "";
+        
+        const effectiveAudioMode = (apiKey || isBackendUser) 
+          ? "cloud" 
+          : useSettingsStore.getState().audioProcessingMode;
+          
         const systemMsg = `You are a creative AI assistant connected to Filmidi, an AI-native video editor. Help the user build and edit their project by calling the tools available to you.
 
 # Core model
@@ -467,7 +472,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - All generation tools return a placeholder asset ID immediately and run in the background. Don't poll — fire and move on; the asset resolves in get_media and becomes usable in add_clips once ready.
 
 # Audio Processing
-- Audio processing mode is set to "${useSettingsStore.getState().audioProcessingMode}". In "local" mode, transcription and captions are unavailable — tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
+- Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable — tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
 
 # Export
 - When the user asks to export/render/save, call export_project. Default mode is video. Use mode=xml for timeline XML and mode=filmidi for a self-contained .filmidi package.
