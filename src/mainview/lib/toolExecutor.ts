@@ -390,6 +390,15 @@ export async function executeTool(
             sourceDuration,
             startTime: startTime || startFrame / fps,
           });
+          // Separate video+audio tracks for video assets
+          if (asset.type === "video") {
+            await addLayerCommand(commit, {
+              type: "audio",
+              source: asset.url,
+              sourceDuration,
+              startTime: startTime || startFrame / fps,
+            });
+          }
           results.push({ layerId, mediaRef, startTime: startTime || startFrame / fps, sourceDuration });
         }
         refreshPreview();
@@ -422,6 +431,15 @@ export async function executeTool(
             sourceDuration,
             startTime,
           });
+          // Separate video+audio tracks for video assets
+          if (asset.type === "video") {
+            await addLayerCommand(commit, {
+              type: "audio",
+              source: asset.url,
+              sourceDuration,
+              startTime,
+            });
+          }
         }
         refreshPreview();
         return JSON.stringify({ inserted: entries.length, shifted: toShift.length });

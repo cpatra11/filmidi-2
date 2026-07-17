@@ -286,6 +286,9 @@ export function Layout() {
         mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         if (editor.mediaImporter) editor.mediaImporter([file], {});
         await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+        if (type === "video") {
+          await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+        }
       }
       mediaStore.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
       // Seek to refresh preview
@@ -309,6 +312,14 @@ export function Layout() {
         sourceDuration: data.duration || 5,
         startTime,
       });
+      if (data.type === "video") {
+        await addLayerCommand(editor.commit, {
+          type: "audio",
+          source: data.url,
+          sourceDuration: data.duration || 5,
+          startTime,
+        });
+      }
       // Seek to refresh preview
       const s = useEditorStore.getState();
       s.bridge?.seek(s.currentFrame);
@@ -381,6 +392,9 @@ export function Layout() {
                               store.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
                               if (editor.mediaImporter) editor.mediaImporter([file], {});
                               await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+                              if (type === "video") {
+                                await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                              }
                             }
                             store.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
                             const s = useEditorStore.getState();
