@@ -184,8 +184,7 @@ transport.registerHandler((msg: any) => {
 
           if (!res.ok) {
             const text = await res.text().catch(() => "");
-            transport.send({ type: "stream-chat-event", requestId, event: { type: "error", message: `API ${res.status}: ${text}` } });
-            transport.send({ type: "stream-chat-end", requestId });
+            transport.send({ type: "stream-chat-result", requestId, events: [{ type: "error", message: `API ${res.status}: ${text}` }] });
             return;
           }
 
@@ -195,6 +194,7 @@ transport.registerHandler((msg: any) => {
           const decoder = new TextDecoder();
           let buffer = "";
           let currentToolBlock: { id?: string; name?: string; input?: string } | null = null;
+          const events: Record<string, unknown>[] = [];
 
           while (true) {
             const { done, value } = await reader.read();
@@ -226,9 +226,7 @@ transport.registerHandler((msg: any) => {
                 const delta = parsed.delta as Record<string, unknown>;
                 if (delta.type === "text_delta") {
                   const text = delta.text as string;
-                  if (text) {
-                    transport.send({ type: "stream-chat-event", requestId, event: { type: "text_delta", text } });
-                  }
+                  if (text) events.push({ type: "text_delta", text });
                 } else if (delta.type === "input_json_delta" && currentToolBlock) {
                   currentToolBlock.input = (currentToolBlock.input ?? "") + (delta.partial_json as string);
                 }
@@ -239,11 +237,7 @@ transport.registerHandler((msg: any) => {
                 if (currentToolBlock?.id && currentToolBlock?.name) {
                   let input: Record<string, unknown> = {};
                   try { input = JSON.parse(currentToolBlock.input ?? "{}"); } catch {}
-                  transport.send({
-                    type: "stream-chat-event",
-                    requestId,
-                    event: { type: "tool_use", id: currentToolBlock.id, name: currentToolBlock.name, input },
-                  });
+                  events.push({ type: "tool_use", id: currentToolBlock.id, name: currentToolBlock.name, input });
                 }
                 currentToolBlock = null;
                 continue;
@@ -252,26 +246,21 @@ transport.registerHandler((msg: any) => {
               if (eventType === "message_delta") {
                 const delta = parsed.delta as Record<string, unknown> | undefined;
                 const usage = parsed.usage as Record<string, unknown> | undefined;
-                transport.send({
-                  type: "stream-chat-event",
-                  requestId,
-                  event: {
-                    type: "stop",
-                    stopReason: (delta?.stop_reason as string) ?? null,
-                    usage: { input_tokens: (usage?.input_tokens as number) ?? 0, output_tokens: (usage?.output_tokens as number) ?? 0 },
-                  },
+                events.push({
+                  type: "stop",
+                  stopReason: (delta?.stop_reason as string) ?? null,
+                  usage: { input_tokens: (usage?.input_tokens as number) ?? 0, output_tokens: (usage?.output_tokens as number) ?? 0 },
                 });
                 continue;
               }
             }
           }
 
-          transport.send({ type: "stream-chat-end", requestId });
+          transport.send({ type: "stream-chat-result", requestId, events });
         } catch (err: any) {
           console.error("[stream-chat] Bun fetch error:", err?.message ?? err);
           try {
-            transport.send({ type: "stream-chat-event", requestId, event: { type: "error", message: err?.message ?? String(err) } });
-            transport.send({ type: "stream-chat-end", requestId });
+            transport.send({ type: "stream-chat-result", requestId, events: [{ type: "error", message: err?.message ?? String(err) }] });
           } catch (sendErr) {
             console.error("[stream-chat] Failed to send error event:", sendErr);
           }

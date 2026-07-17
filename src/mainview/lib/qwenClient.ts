@@ -397,72 +397,79 @@ async function* streamChatViaBun(
   const bridge = (window as any).__electrobunBunBridge;
   if (!bridge) throw new Error("Not in Electrobun mode");
 
-  const queue: StreamEvent[] = [];
-  let queueResolve: (() => void) | null = null;
-  let done = false;
-  let streamError: Error | null = null;
-
   const eb = (window as any).__electrobun;
-  const prevHandler = eb?.receiveMessageFromBun;
-
-  if (eb) {
-    eb.receiveMessageFromBun = (msg: unknown) => {
-      try {
-        const data = typeof msg === "string" ? JSON.parse(msg) : msg;
-        if (data?.requestId !== requestId) {
-          if (prevHandler) prevHandler(msg);
-          return;
-        }
-
-        if (data.type === "stream-chat-event") {
-          clearTimeout(firstEventTimeout);
-          const event = data.event;
-          if (event.type === "error") {
-            streamError = new Error(event.message ?? "Stream error");
-            done = true;
-          } else {
-            queue.push(event as StreamEvent);
-          }
-        } else if (data.type === "stream-chat-end") {
-          clearTimeout(firstEventTimeout);
-          done = true;
-        }
-
-        queueResolve?.();
-        queueResolve = null;
-      } catch {}
-    };
-  }
 
   // Send init message to Bun process
   const initBody: Record<string, unknown> = { requestId, model, apiKey, messages, tools, system };
   bridge.postMessage(JSON.stringify({ type: "stream-chat-init", ...initBody }));
 
-  const firstEventTimeout = setTimeout(() => {
-    if (!done) {
-      done = true;
-      streamError = new Error("Agent timed out waiting for response from Qwen API. Check your API key and internet connection.");
-      queueResolve?.();
-      queueResolve = null;
-    }
-  }, 30000);
+  // Wait for the batch result from Bun
+  const events = await new Promise<Record<string, unknown>[]>((resolve, reject) => {
+    const prevHandler = eb?.receiveMessageFromBun;
+    let cleanedUp = false;
 
-  try {
-    while (!done && !signal?.aborted) {
-      if (queue.length > 0) {
-        const event = queue.shift()!;
-        if (event.type === "stop") done = true;
-        yield event;
-        continue;
-      }
-      await new Promise<void>((resolve) => { queueResolve = resolve; });
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (eb) eb.receiveMessageFromBun = prevHandler;
+    };
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Agent timed out waiting for response from Qwen API. Check your API key and internet connection."));
+    }, 60000);
+
+    if (signal) {
+      signal.addEventListener("abort", () => {
+        cleanup();
+        clearTimeout(timeout);
+        resolve([]);
+      }, { once: true });
     }
 
-    if (streamError) throw streamError;
-  } finally {
     if (eb) {
-      eb.receiveMessageFromBun = prevHandler;
+      eb.receiveMessageFromBun = (msg: unknown) => {
+        try {
+          const data = typeof msg === "string" ? JSON.parse(msg) : msg;
+          if (data?.requestId !== requestId) {
+            if (prevHandler) prevHandler(msg);
+            return;
+          }
+        } catch {
+          if (prevHandler) prevHandler(msg);
+          return;
+        }
+
+        clearTimeout(timeout);
+        cleanup();
+
+        const data = typeof msg === "string" ? JSON.parse(msg) : msg;
+
+        if (data.type === "stream-chat-result") {
+          resolve(data.events as Record<string, unknown>[]);
+        } else {
+          reject(new Error("Unexpected response from Bun: " + (data.type ?? "unknown")));
+        }
+      };
+    } else {
+      reject(new Error("Electrobun bridge not available"));
     }
-    clearTimeout(firstEventTimeout);
+  });
+
+  if (signal?.aborted) return;
+
+  for (const event of events) {
+    if (signal?.aborted) return;
+
+    if (event.type === "error") {
+      throw new Error((event as any).message ?? "Stream error");
+    }
+
+    if (event.type === "stop") {
+      yield event as StopEvent;
+      return;
+    }
+
+    yield event as StreamEvent;
   }
 }
