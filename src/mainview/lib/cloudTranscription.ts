@@ -127,10 +127,30 @@ async function transcribeViaDashScope(
     diarization?: boolean;
   },
 ): Promise<TranscriptionResult> {
-  // Submit transcription task
+  const input: Record<string, unknown> = {};
+
+  if (audioUrl.startsWith("blob:")) {
+    // Blob URLs don't exist outside the renderer — convert to inline base64
+    const resp = await fetch(audioUrl);
+    const blob = await resp.blob();
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    input.file_urls = [dataUrl];
+  } else {
+    input.file_urls = [audioUrl];
+  }
+
+  if (options?.diarization !== false) {
+    input.diarization = { enable: true };
+  }
+
   const submitBody: Record<string, unknown> = {
     model: ASR_MODEL,
-    input: { file_url: audioUrl, diarization: options?.diarization ?? true },
+    input,
   };
 
   const submitResp = await fetch(`${DASHSCOPE_BASE}/api/v1/services/asr/transcription/asr-task`, {
