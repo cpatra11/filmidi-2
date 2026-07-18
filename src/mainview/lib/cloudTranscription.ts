@@ -31,7 +31,7 @@ export interface TranscriptionResult {
 
 const DASHSCOPE_BASE = "https://dashscope-intl.aliyuncs.com";
 const BACKEND_URL = "http://localhost:3000";
-const ASR_MODEL = "paraformer-realtime-v2";
+const ASR_MODEL = "qwen3-asr-flash-realtime";
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 150; // 5 minutes max
 
@@ -148,7 +148,7 @@ async function transcribeViaDashScope(
   const input: Record<string, unknown> = {};
 
   // Blob URLs should already be resolved to public URLs by transcribeAudio()
-  input.file_url = audioUrl;
+  input.audio_url = audioUrl;
 
   if (options?.diarization !== false) {
     input.diarization = { enable: true };
