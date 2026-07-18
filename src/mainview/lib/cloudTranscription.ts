@@ -31,7 +31,7 @@ export interface TranscriptionResult {
 
 const DASHSCOPE_BASE = "https://dashscope-intl.aliyuncs.com";
 const BACKEND_URL = "http://localhost:3000";
-const ASR_MODEL = "qwen3-asr-flash-realtime";
+const ASR_MODEL = "paraformer-realtime-v2";
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 150; // 5 minutes max
 
@@ -62,17 +62,9 @@ export async function transcribeAudio(
       reader.readAsDataURL(audioBlob);
     });
 
-    // Try to get a public URL via Bun (backend UploadThing or tempfile.org)
+    // Upload WAV to tempfile.org via Bun IPC → public HTTPS URL for DashScope
     const [header, base64] = dataUrl.split(",");
-    const mimeType = "audio/wav";
-    const uploadResult = await uploadAudioForASR(base64, mimeType);
-
-    if (uploadResult.startsWith("file://")) {
-      // DashScope can't access local files — use data URL instead (inline audio)
-      resolvedUrl = dataUrl;
-    } else {
-      resolvedUrl = uploadResult;
-    }
+    resolvedUrl = await uploadAudioForASR(base64, "audio/wav");
   }
 
   const account = useAccountStore.getState();

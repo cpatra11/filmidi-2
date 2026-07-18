@@ -156,8 +156,8 @@ transport.registerHandler((msg: any) => {
     }
 
     case "upload-audio-for-asr": {
-      // Write audio blob to a public URL for ASR.
-      // First tries file:// (matching Swift DirectTranscriptionBackend), then fallbacks.
+      // Upload audio blob to a public URL for ASR.
+      // Tries tempfile.org first (public HTTPS URL), then fallbacks.
       (async () => {
         try {
           const { base64Data, mimeType, requestId } = msg;
@@ -170,20 +170,7 @@ transport.registerHandler((msg: any) => {
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
           const fileName = `filmidi-audio-${Date.now()}${ext}`;
 
-          // 1. Write to local temp file — DashScope accepts file:// URLs
-          //    (matching Swift DirectTranscriptionBackend approach)
-          try {
-            const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
-            mkdirSync(tempDir, { recursive: true });
-            const filePath = join(tempDir, fileName);
-            writeFileSync(filePath, buffer);
-            transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
-            return;
-          } catch (_) {
-            // File write failed — fall through
-          }
-
-          // 2. Try tempfile.org (free, no auth)
+          // 1. Try tempfile.org (public HTTPS URL — DashScope can access it)
           try {
             const formData = new FormData();
             formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
@@ -202,7 +189,7 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          // 3. Try backend upload (UploadThing)
+          // 2. Try backend upload (UploadThing)
           try {
             const formData = new FormData();
             formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
@@ -219,7 +206,12 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          transport.send({ type: "upload-audio-result", requestId, error: "All upload methods failed" });
+          // 3. Last resort: file:// URL
+          const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
+          mkdirSync(tempDir, { recursive: true });
+          const filePath = join(tempDir, fileName);
+          writeFileSync(filePath, buffer);
+          transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
         } catch (err: any) {
           transport.send({ type: "upload-audio-result", requestId: msg.requestId, error: err?.message ?? String(err) });
         }
