@@ -93,3 +93,25 @@ export function clearSecureApiKey(): void {
 export function hasCachedApiKey(): boolean {
   return cachedKey !== null;
 }
+
+/**
+ * Validate an API key by making a test request to DashScope.
+ * Returns null if valid, or an error message string if invalid.
+ */
+export async function validateApiKey(key: string): Promise<string | null> {
+  try {
+    const resp = await fetch("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models", {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (resp.ok) return null;
+    if (resp.status === 401) return "Invalid API key — check your key at qwencloud.com";
+    if (resp.status === 403) {
+      const text = await resp.text().catch(() => "");
+      if (text.includes("quota")) return "API key has no quota — add credits in DashScope console";
+      return "API key is not authorized for this service";
+    }
+    return `API key validation failed (HTTP ${resp.status})`;
+  } catch (e) {
+    return `Could not validate API key: ${e instanceof Error ? e.message : "network error"}`;
+  }
+}

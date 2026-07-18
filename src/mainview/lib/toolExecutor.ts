@@ -1650,17 +1650,17 @@ export async function executeTool(
         const folderId = input.folderId as string;
         const newName = input.name as string;
         const store = useMediaPanelStore.getState();
-        const folders = ((store as Record<string, unknown>).folders as Array<Record<string, unknown>>) ?? [];
-        const folder = folders.find((f) => f.id === folderId);
-        if (!folder) return JSON.stringify({ error: `Folder not found: ${folderId}` });
-        folder.name = newName;
+        const updatedFolders = store.folders.map((f: any) =>
+          f.id === folderId ? { ...f, name: newName } : f
+        );
+        store.setFolders(updatedFolders);
         return JSON.stringify({ renamed: folderId, name: newName });
       }
       case "delete_media": {
         const assetIds = input.assetIds as string[];
         const store = useMediaPanelStore.getState();
         const idSet = new Set(assetIds);
-        (store as Record<string, unknown>).assets = store.assets.filter((a) => !idSet.has(a.id));
+        store.setAssets(store.assets.filter((a) => !idSet.has(a.id)));
         return JSON.stringify({ deleted: assetIds.length });
       }
       case "delete_folder": {

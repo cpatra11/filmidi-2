@@ -5,6 +5,24 @@ import { commands } from "@videoflow/react-video-editor";
 
 const { addLayerCommand } = commands;
 
+function nudgeSelectedClips(direction: "left" | "right", frames: number) {
+  const s = useEditorStore.getState();
+  const ids = s.selection.layerIds;
+  if (ids.length === 0) return;
+  const fps = s.video.fps || 30;
+  const delta = direction === "left" ? -frames : frames;
+  const updates = ids.map((id) => {
+    const layer = s.video.layers?.find((l: any) => l.id === id);
+    if (!layer) return null;
+    const newTime = Math.max(0, (layer.settings?.startTime ?? 0) + delta / fps);
+    return { id, startTime: newTime };
+  }).filter(Boolean) as Array<{ id: string; startTime: number }>;
+  if (updates.length > 0) {
+    commands.moveLayersCommand(s.commit, updates);
+    s.bridge?.seek(s.currentFrame);
+  }
+}
+
 export function useKeyboardShortcuts() {
   const { setToolMode, toggleCropEditing } = useAppStore();
 
@@ -69,6 +87,32 @@ export function useKeyboardShortcuts() {
             e.preventDefault();
             fitPreview();
             return;
+          // J/K/L shuttle speeds
+          case "j": {
+            e.preventDefault();
+            const jState = useEditorStore.getState();
+            const jFps = jState.video.fps || 30;
+            const jFrame = Math.max(0, jState.currentFrame - jFps * 2);
+            jState.setCurrentFrame(jFrame);
+            jState.bridge?.seek(jFrame);
+            return;
+          }
+          case "k": {
+            e.preventDefault();
+            const kState = useEditorStore.getState();
+            if (kState.isPlaying) { kState.bridge?.stop(); kState.setPlaying(false); }
+            return;
+          }
+          case "l": {
+            e.preventDefault();
+            const lState = useEditorStore.getState();
+            const lFps = lState.video.fps || 30;
+            const lMax = Math.max(0, Math.floor(lState.video.duration * lFps) - 1);
+            const lFrame = Math.min(lMax, lState.currentFrame + lFps * 2);
+            lState.setCurrentFrame(lFrame);
+            lState.bridge?.seek(lFrame);
+            return;
+          }
         }
 
         if (e.key === "ArrowLeft") {
@@ -131,6 +175,14 @@ export function useKeyboardShortcuts() {
           s.bridge?.seek(f);
           return;
         }
+      }
+
+      // Alt+Arrow — nudge selected clips by 1 frame
+      if (e.altKey && !isMod && !isInput) {
+        if (e.key === "ArrowLeft") { e.preventDefault(); nudgeSelectedClips("left", 1); return; }
+        if (e.key === "ArrowRight") { e.preventDefault(); nudgeSelectedClips("right", 1); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); nudgeSelectedClips("left", 1); return; }
+        if (e.key === "ArrowDown") { e.preventDefault(); nudgeSelectedClips("right", 1); return; }
       }
 
       // Cmd/Ctrl shortcuts — only intercept keys we actually handle,

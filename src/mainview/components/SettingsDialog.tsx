@@ -5,8 +5,9 @@ import { useState, useEffect } from "react";
 import { X, Settings, Monitor, Cpu, Bot, HardDrive, Bell, ChevronDown, Check, User } from "lucide-react";
 import { useSettingsStore, type SettingsTab } from "@/store/useSettingsStore";
 import { useAccountStore } from "@/store/useAccountStore";
+import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { THIRD_PARTY_MODELS } from "@/store/useGenerationStore";
-import { getSecureApiKey, setSecureApiKey } from "@/lib/secureApiKey";
+import { getSecureApiKey, setSecureApiKey, validateApiKey } from "@/lib/secureApiKey";
 
 /* ------------------------------------------------------------------ */
 /*  Model catalog (matches useGenerationStore)                         */
@@ -497,9 +498,15 @@ function AgentPane() {
     });
   }, []);
 
-  const handleSaveKey = () => {
+  const handleSaveKey = async () => {
     const trimmed = apiKeyDraft.trim();
     if (!trimmed) return;
+    // Validate before saving
+    const validationError = await validateApiKey(trimmed);
+    if (validationError) {
+      useMediaPanelStore.getState().showToast(validationError, "warning");
+      return;
+    }
     setSecureApiKey(trimmed);
     setHasKey(true);
     setShowInput(false);
