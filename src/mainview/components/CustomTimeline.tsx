@@ -173,6 +173,7 @@ function TimelineClip({
   const width = Math.max(6, (end - start) * scale);
   const linkId = getLayerLinkId(layer);
   const hasLink = !!linkId;
+  const isLocked = (layer.settings as any)?.locked === true;
   const isAudio = layer.type === "audio";
   const isVideo = layer.type === "video";
 
@@ -182,6 +183,7 @@ function TimelineClip({
       data-selected={isSelected || undefined}
       data-type={layer.type}
       data-linked={hasLink || undefined}
+      data-locked={isLocked || undefined}
       data-disabled={!layer.settings.enabled || undefined}
       style={{ left, width }}
       onPointerDown={(e) => onPointerDown(e, layer)}
@@ -197,6 +199,7 @@ function TimelineClip({
         }}
       />
       <div className="ct-clip-label">
+        {isLocked && <span className="ct-clip-lock-icon">🔒</span>}
         {hasLink && <span className="ct-chain-icon">🔗</span>}
         <span
           className="ct-clip-type-badge"
@@ -577,6 +580,9 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     (e: React.PointerEvent, layer: LayerJSON) => {
       e.stopPropagation();
 
+      // Block interaction on locked clips
+      if ((layer.settings as any)?.locked) return;
+
       // Razor/blade tool: split clip at click position
       const toolMode = useAppStore.getState().toolMode;
       if (toolMode === "razor") {
@@ -734,6 +740,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       edge: "start" | "end",
     ) => {
       e.stopPropagation();
+      // Block trim on locked clips
+      if ((layer.settings as any)?.locked) return;
       const editor = useEditorStore.getState();
       const startClientX = e.clientX;
       const bounds = layerTimelineBounds(layer);

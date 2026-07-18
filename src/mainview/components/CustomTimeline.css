@@ -607,3 +607,21 @@
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.15);
 }
+
+/* ─── Clip locked state ──────────────────────────────────────── */
+
+.ct-clip[data-locked="true"] {
+  opacity: 0.75;
+  cursor: default;
+  border-color: #f59e0b;
+}
+
+.ct-clip[data-locked="true"] .ct-clip-handle {
+  display: none;
+}
+
+.ct-clip-lock-icon {
+  font-size: 10px;
+  margin-right: 3px;
+  opacity: 0.7;
+}

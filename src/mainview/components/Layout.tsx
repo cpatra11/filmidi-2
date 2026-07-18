@@ -335,6 +335,20 @@ export function Layout() {
           } else {
             useMediaPanelStore.getState().showToast("Select 2+ tracks to link");
           }
+        } else if (action === "lock") {
+          const { commands: cmds } = await import("@videoflow/react-video-editor");
+          const sel = useEditorStore.getState();
+          for (const id of sel.selection.layerIds) {
+            await cmds.setPropertyCommand(sel.commit, id, "locked", true);
+          }
+          useMediaPanelStore.getState().showToast("Clip(s) locked");
+        } else if (action === "unlock") {
+          const { commands: cmds } = await import("@videoflow/react-video-editor");
+          const sel = useEditorStore.getState();
+          for (const id of sel.selection.layerIds) {
+            await cmds.setPropertyCommand(sel.commit, id, "locked", false);
+          }
+          useMediaPanelStore.getState().showToast("Clip(s) unlocked");
         } else if (action.startsWith("ai-") || action.startsWith("detect") || action.startsWith("show-beat") || action.startsWith("snap-to") || action.startsWith("sync-")) {
           useMediaPanelStore.getState().showToast(`${action}: coming soon`);
         }

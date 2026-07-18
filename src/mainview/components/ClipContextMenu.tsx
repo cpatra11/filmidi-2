@@ -3,6 +3,8 @@ import {
   Copy,
   Clipboard,
   Trash2,
+  Lock,
+  Unlock as UnlockIcon,
   Wand2,
   Crop,
   Maximize,
@@ -10,8 +12,6 @@ import {
   Sparkles,
   Music,
   AudioLines,
-  Lock,
-  Unlock,
   Zap,
   Eye,
   EyeOff,
@@ -112,37 +112,45 @@ export function ClipContextMenu({ children, contextTarget, onAction }: ClipConte
                   Link Tracks
                 </ContextMenuItem>
                 <ContextMenuItem onClick={handle("unlink")}>
-                  <Unlock size={14} />
-                  Unlink Tracks
-                </ContextMenuItem>
-              </ContextMenuSubContent>
-            </ContextMenuSub>
-
-            <ContextMenuSeparator />
-
-            {/* Standard editing */}
-            <ContextMenuItem onClick={handle("cut")}>
-              <Scissors size={14} />
-              Cut
-              <ContextMenuShortcut>⌘X</ContextMenuShortcut>
+              <UnlockIcon size={14} />
+              Unlink Tracks
             </ContextMenuItem>
-            <ContextMenuItem onClick={handle("copy")}>
-              <Copy size={14} />
-              Copy
-              <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-            </ContextMenuItem>
-            <ContextMenuItem onClick={handle("paste")}>
-              <Clipboard size={14} />
-              Paste
-              <ContextMenuShortcut>⌘V</ContextMenuShortcut>
-            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
 
-            <ContextMenuSeparator />
+        <ContextMenuSeparator />
 
-            <ContextMenuItem onClick={handle("split")}>
-              <Scissors size={14} />
-              Split at Playhead
-              <ContextMenuShortcut>S</ContextMenuShortcut>
+        {/* Standard editing */}
+        <ContextMenuItem onClick={handle("cut")}>
+          <Scissors size={14} />
+          Cut
+          <ContextMenuShortcut>⌘X</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handle("copy")}>
+          <Copy size={14} />
+          Copy
+          <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handle("paste")}>
+          <Clipboard size={14} />
+          Paste
+          <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+        </ContextMenuItem>
+
+        <ContextMenuSeparator />
+
+        <ContextMenuItem onClick={handle("split")}>
+          <Scissors size={14} />
+          Split at Playhead
+          <ContextMenuShortcut>S</ContextMenuShortcut>
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handle("lock")}>
+          <Lock size={14} />
+          Lock Clip
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handle("unlock")}>
+          <UnlockIcon size={14} />
+              Unlock Clip
             </ContextMenuItem>
             <ContextMenuItem onClick={handle("delete")} variant="destructive">
               <Trash2 size={14} />
