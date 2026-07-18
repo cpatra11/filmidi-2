@@ -1,0 +1,541 @@
+/* ─── Custom Timeline — NLE-style layout ─────────────────────── */
+
+.ct-timeline {
+  display: grid;
+  grid-template-columns: var(--vf-timeline-header-width) 1fr;
+  grid-template-rows: var(--vf-ruler-height) 1fr;
+  background: var(--vf-panel);
+  border-radius: var(--vf-radius-lg);
+  overflow: hidden;
+  min-height: 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* ─── Corner (timecode) ────────────────────────────────────── */
+
+.ct-corner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  background: var(--vf-panel-2);
+  border-right: 1px solid var(--vf-panel-border);
+  border-bottom: 1px solid var(--vf-panel-border);
+}
+
+.ct-timecode {
+  font-family: var(--vf-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vf-text);
+  user-select: none;
+}
+
+/* ─── Ruler ─────────────────────────────────────────────────── */
+
+.ct-ruler {
+  display: block;
+  position: relative;
+  background: var(--vf-panel-2);
+  border-bottom: 1px solid var(--vf-panel-border);
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.ct-ruler-inner {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  will-change: transform;
+}
+
+.ct-ruler-tick {
+  display: block;
+  position: absolute;
+  top: 14px;
+  bottom: 0;
+  width: 1px;
+  background: var(--vf-panel-border);
+  pointer-events: none;
+}
+
+.ct-ruler-tick[data-major="true"] {
+  top: 8px;
+  background: var(--vf-text-mute);
+}
+
+.ct-ruler-label {
+  display: block;
+  position: absolute;
+  top: 4px;
+  color: var(--vf-text-dim);
+  font-size: 10px;
+  font-family: var(--vf-font-mono, ui-monospace, monospace);
+  pointer-events: none;
+  transform: translateX(3px);
+  white-space: nowrap;
+}
+
+/* ─── Body (scrollable) ────────────────────────────────────── */
+
+.ct-body {
+  display: flex;
+  align-items: flex-start;
+  grid-column: 1 / -1;
+  overflow: auto;
+  position: relative;
+  background: var(--vf-panel);
+}
+
+.ct-body::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.ct-body::-webkit-scrollbar-track {
+  background: var(--vf-panel-2);
+}
+.ct-body::-webkit-scrollbar-thumb {
+  background: var(--vf-surface);
+  border: 2px solid var(--vf-panel-2);
+  border-radius: 5px;
+}
+.ct-body::-webkit-scrollbar-thumb:hover {
+  background: var(--vf-surface-hover);
+}
+.ct-body::-webkit-scrollbar-corner {
+  background: var(--vf-panel-2);
+}
+
+/* ─── Headers (sticky left) ────────────────────────────────── */
+
+.ct-headers {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: var(--vf-panel-2);
+  border-right: 1px solid var(--vf-panel-border);
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: none;
+  width: var(--vf-timeline-header-width);
+  min-height: 100%;
+}
+
+/* ─── Track Header ──────────────────────────────────────────── */
+
+.ct-track-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 6px;
+  height: var(--vf-track-height);
+  color: var(--vf-text-dim);
+  font-size: 11px;
+  background: var(--vf-panel);
+  border-left: 3px solid transparent;
+}
+
+.ct-track-header:nth-child(even) {
+  background: var(--vf-panel-2);
+}
+
+.ct-track-header[data-disabled="true"] {
+  opacity: 0.45;
+}
+
+.ct-track-header-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+.ct-track-header-label {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.ct-track-header-label input {
+  display: block;
+  width: 100%;
+  padding: 2px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--vf-text);
+  font: inherit;
+  font-weight: 500;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.ct-track-header-label input:hover {
+  border-color: var(--vf-panel-border);
+}
+
+.ct-track-header-label input:focus {
+  border-color: var(--vf-accent);
+  background: var(--vf-panel);
+}
+
+.ct-track-header-toggles {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.ct-track-header-toggles button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--vf-text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ct-track-header-toggles button:hover {
+  background: var(--vf-surface);
+  color: var(--vf-text);
+}
+
+.ct-track-header-toggles button[data-active="false"] {
+  color: var(--vf-text-mute);
+}
+
+.ct-track-header-toggles button[data-active="true"] {
+  color: var(--vf-accent);
+}
+
+/* ─── Track separator (between header sections) ────────────── */
+
+.ct-track-separator {
+  height: 2px;
+  background: var(--vf-primary);
+  opacity: 0.25;
+  flex-shrink: 0;
+}
+
+/* ─── Tracks inner (scrollable content) ────────────────────── */
+
+.ct-tracks-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  position: relative;
+  flex-grow: 1;
+  min-height: 100%;
+}
+
+/* ─── Track row ─────────────────────────────────────────────── */
+
+.ct-track-row {
+  display: block;
+  position: relative;
+  height: var(--vf-track-height);
+  background: var(--vf-panel);
+}
+
+.ct-track-row:nth-child(even) {
+  background: var(--vf-panel-2);
+}
+
+.ct-track-row[data-disabled="true"] {
+  opacity: 0.45;
+}
+
+/* ─── Section separator (between video and audio track rows) ─ */
+
+.ct-section-separator {
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--vf-primary) 0%,
+    var(--vf-primary) 50%,
+    transparent 50%,
+    transparent 51%,
+    var(--vf-accent) 51%,
+    var(--vf-accent) 100%
+  );
+  opacity: 0.3;
+  flex-shrink: 0;
+  margin: 1px 0;
+}
+
+/* ─── Clip ──────────────────────────────────────────────────── */
+
+.ct-clip {
+  display: flex;
+  align-items: center;
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  background: linear-gradient(180deg, var(--vf-surface-2), var(--vf-surface));
+  border: 1px solid var(--vf-panel-border);
+  border-radius: var(--vf-radius);
+  padding: 0 8px;
+  cursor: grab;
+  color: var(--vf-text);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: border-color 0.12s, box-shadow 0.12s;
+  min-width: 6px;
+}
+
+.ct-clip:hover {
+  border-color: var(--vf-surface-active);
+}
+
+.ct-clip[data-selected="true"] {
+  border-color: var(--vf-selection);
+  background: linear-gradient(180deg, var(--vf-selection-dim), var(--vf-surface));
+  box-shadow: 0 0 0 1px var(--vf-selection-ring);
+  z-index: 2;
+}
+
+.ct-clip[data-disabled="true"] {
+  opacity: 0.45;
+}
+
+.ct-clip:active {
+  cursor: grabbing;
+}
+
+/* Type-specific clip colors */
+.ct-clip[data-type="video"] {
+  border-left: 3px solid #4A90E2;
+}
+
+.ct-clip[data-type="audio"] {
+  border-left: 3px solid #4CAF50;
+}
+
+.ct-clip[data-type="text"],
+.ct-clip[data-type="captions"] {
+  border-left: 3px solid #9B59B6;
+}
+
+.ct-clip[data-type="image"] {
+  border-left: 3px solid #E67E22;
+}
+
+/* Linked clip indicator */
+.ct-clip[data-linked="true"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vf-primary);
+  opacity: 0.6;
+}
+
+/* ─── Clip handle (trim) ───────────────────────────────────── */
+
+.ct-clip-handle {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 3;
+}
+
+.ct-clip-handle[data-edge="start"] {
+  left: 0;
+}
+
+.ct-clip-handle[data-edge="end"] {
+  right: 0;
+}
+
+.ct-clip-handle:hover {
+  background: var(--vf-primary);
+}
+
+/* ─── Clip label ────────────────────────────────────────────── */
+
+.ct-clip-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-chain-icon {
+  font-size: 10px;
+  flex-shrink: 0;
+  opacity: 0.6;
+  filter: grayscale(0.3);
+}
+
+.ct-clip-type-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 8px;
+  text-transform: uppercase;
+  border-radius: 3px;
+  color: var(--vf-text-dim);
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.ct-clip-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Clip keyframes ────────────────────────────────────────── */
+
+.ct-clip-keyframes {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.ct-clip-keyframe {
+  display: block;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8px;
+  color: var(--vf-primary);
+  line-height: 1;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* ─── Clip transition ───────────────────────────────────────── */
+
+.ct-clip-transition {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ct-clip-transition::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: default;
+  background: rgba(0, 0, 0, 0.28);
+  transition: background 0.1s;
+}
+
+.ct-transition-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.75;
+  top: -5px;
+  pointer-events: auto;
+  cursor: ew-resize;
+  transition: opacity 0.1s, transform 0.1s;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  z-index: 1;
+}
+
+.ct-clip-transition[data-edge="start"] {
+  left: 0;
+}
+
+.ct-clip-transition[data-edge="start"]::before {
+  clip-path: polygon(0% 0%, 100% 0%, 0% 100%);
+}
+
+.ct-clip-transition[data-edge="start"] .ct-transition-handle {
+  right: -5px;
+}
+
+.ct-clip-transition[data-edge="end"] {
+  right: 0;
+}
+
+.ct-clip-transition[data-edge="end"]::before {
+  clip-path: polygon(0% 0%, 100% 0%, 100% 100%);
+}
+
+.ct-clip-transition[data-edge="end"] .ct-transition-handle {
+  left: -5px;
+}
+
+.ct-clip-transition:hover::before {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.ct-clip-transition:hover .ct-transition-handle,
+.ct-transition-handle:hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+/* ─── Playhead ──────────────────────────────────────────────── */
+
+.ct-playhead {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--vf-playhead);
+  pointer-events: none;
+  z-index: 1;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+/* ─── End marker ────────────────────────────────────────────── */
+
+.ct-end-marker {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--vf-text-mute);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+}

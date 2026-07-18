@@ -1,7 +1,6 @@
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   Preview,
-  Timeline,
   useEditorStore,
   useVideo,
   usePlayhead,
@@ -9,6 +8,7 @@ import {
   formatTime,
   commands,
 } from "@videoflow/react-video-editor";
+import { CustomTimeline } from "./CustomTimeline";
 import { InspectorSidebar } from "./InspectorSidebar";
 const { addLayerCommand } = commands;
 import { TitleBar } from "./TitleBar";
@@ -511,7 +511,7 @@ export function Layout() {
                     <ClipContextMenu onAction={handleClipAction}>
                       <TimelineContextMenu onAction={handleTimelineAction}>
                         <vf-editor data-theme="dark" style={{ display: "contents" }}>
-                          <Timeline />
+                          <CustomTimeline />
                         </vf-editor>
                       </TimelineContextMenu>
                     </ClipContextMenu>
