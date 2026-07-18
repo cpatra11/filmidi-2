@@ -49,14 +49,31 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
+  // Convert blob URLs to public URLs before routing — both backend and direct paths need accessible URLs
+  let resolvedUrl = audioUrl;
+  if (audioUrl.startsWith("blob:")) {
+    const { uploadAudioForASR } = await import("@/lib/agentIPC");
+    const resp = await fetch(audioUrl);
+    const blob = await resp.blob();
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const [header, base64] = dataUrl.split(",");
+    const mimeType = header.match(/data:(.*?);/)?.[1] || "audio/wav";
+    resolvedUrl = await uploadAudioForASR(base64, mimeType);
+  }
+
   const account = useAccountStore.getState();
   const isBackendUser = account.isSignedIn();
 
   if (isBackendUser && account.sessionToken) {
-    return transcribeViaBackend(audioUrl, account.sessionToken, options);
+    return transcribeViaBackend(resolvedUrl, account.sessionToken, options);
   }
 
-  return transcribeViaDashScope(audioUrl, apiKey, options);
+  return transcribeViaDashScope(resolvedUrl, apiKey, options);
 }
 
 async function transcribeViaBackend(
@@ -129,25 +146,8 @@ async function transcribeViaDashScope(
 ): Promise<TranscriptionResult> {
   const input: Record<string, unknown> = {};
 
-  if (audioUrl.startsWith("blob:")) {
-    // Blob URLs can't be accessed by DashScope — upload via Bun IPC to get a public URL
-    const { uploadAudioForASR } = await import("@/lib/agentIPC");
-    const resp = await fetch(audioUrl);
-    const blob = await resp.blob();
-    const dataUrl: string = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    // Extract base64 data and mime type from data URL
-    const [header, base64] = dataUrl.split(",");
-    const mimeType = header.match(/data:(.*?);/)?.[1] || "audio/wav";
-    const publicUrl = await uploadAudioForASR(base64, mimeType);
-    input.file_url = publicUrl;
-  } else {
-    input.file_url = audioUrl;
-  }
+  // Blob URLs should already be resolved to public URLs by transcribeAudio()
+  input.file_url = audioUrl;
 
   if (options?.diarization !== false) {
     input.diarization = { enable: true };

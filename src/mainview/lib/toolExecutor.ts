@@ -788,6 +788,7 @@ export async function executeTool(
 
         let totalCaptions = 0;
         let transcribeErrors = 0;
+        const transcribeErrorMessages: string[] = [];
 
         for (const layer of captionTargets) {
           const source = layer.settings?.source as string;
@@ -799,7 +800,9 @@ export async function executeTool(
               transcript = await transcribeAudio(source, apiKey || "", { language });
               await setCachedTranscript(source, transcript, language);
             } catch (e) {
-              console.warn("[add_captions] Transcription failed for", source.slice(0, 60), e instanceof Error ? e.message : e);
+              const errMsg = e instanceof Error ? e.message : String(e);
+              console.warn("[add_captions] Transcription failed for", source.slice(0, 60), errMsg);
+              transcribeErrorMessages.push(errMsg);
               transcribeErrors++;
               continue;
             }
@@ -851,7 +854,10 @@ export async function executeTool(
 
         refreshPreview();
         if (totalCaptions === 0 && transcribeErrors > 0) {
-          return JSON.stringify({ error: `Transcription failed for ${transcribeErrors} clip(s). Check the API key and ensure clips have audible audio.` });
+          const details = transcribeErrorMessages.length > 0
+            ? ` Errors: ${transcribeErrorMessages.slice(0, 3).join("; ")}`
+            : "";
+          return JSON.stringify({ error: `Transcription failed for ${transcribeErrors} clip(s).${details}` });
         }
         return JSON.stringify({ added: totalCaptions, note: `Added ${totalCaptions} captions.` });
       }
