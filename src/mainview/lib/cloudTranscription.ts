@@ -162,8 +162,9 @@ function parseTranscriptionResult(
 
   for (const t of transcripts) {
     const text = (t.text as string) ?? "";
-    const start = (t.start_time as number) ?? (t.begin_time as number) ?? (t.start as number) ?? 0;
-    const end = (t.end_time as number) ?? (t.end as number) ?? 0;
+    // ASR returns timestamps in milliseconds — convert to seconds
+    const start = ((t.start_time as number) ?? (t.begin_time as number) ?? (t.start as number) ?? 0) / 1000;
+    const end = ((t.end_time as number) ?? (t.end as number) ?? 0) / 1000;
     const speaker = (t.speaker as string) ?? (t.speaker_id as string) ?? undefined;
 
     // Words may be at transcript level or nested inside sentences (Fun-ASR format)
@@ -177,12 +178,11 @@ function parseTranscriptionResult(
         const sWords = s.words as Array<Record<string, unknown>> | undefined;
         if (sWords) sentenceWords.push(...sWords);
       }
-      // If sentences exist but have no words, use sentence as a word
       if (sentenceWords.length === 0) {
         for (const s of sentences) {
           const sText = (s.text as string) ?? "";
-          const sStart = (s.begin_time as number) ?? (s.start_time as number) ?? 0;
-          const sEnd = (s.end_time as number) ?? 0;
+          const sStart = ((s.begin_time as number) ?? (s.start_time as number) ?? 0) / 1000;
+          const sEnd = ((s.end_time as number) ?? 0) / 1000;
           if (sText) {
             sentenceWords.push({ text: sText, begin_time: sStart, end_time: sEnd });
           }
@@ -191,23 +191,17 @@ function parseTranscriptionResult(
     }
     for (const w of sentenceWords) {
       const wText = (w.text as string) ?? "";
-      const wStart = (w.start_time as number) ?? (w.begin_time as number) ?? (w.start as number) ?? start;
-      const wEnd = (w.end_time as number) ?? (w.end as number) ?? end;
+      // Convert milliseconds to seconds
+      const wStart = ((w.start_time as number) ?? (w.begin_time as number) ?? (w.start as number) ?? start * 1000) / 1000;
+      const wEnd = ((w.end_time as number) ?? (w.end as number) ?? end * 1000) / 1000;
       const wSpeaker = (w.speaker as string) ?? (w.speaker_id as string) ?? speaker;
 
-      // Apply time window filter
       if (options?.startSeconds !== undefined && wEnd < options.startSeconds) continue;
       if (options?.endSeconds !== undefined && wStart > options.endSeconds) continue;
 
-      words.push({
-        text: wText,
-        start: wStart,
-        end: wEnd,
-        speaker: wSpeaker,
-      });
+      words.push({ text: wText, start: wStart, end: wEnd, speaker: wSpeaker });
     }
 
-    // Apply time window to segments
     if (options?.startSeconds !== undefined && end < options.startSeconds) continue;
     if (options?.endSeconds !== undefined && start > options.endSeconds) continue;
 
