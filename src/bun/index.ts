@@ -291,9 +291,15 @@ transport.registerHandler((msg: any) => {
               const status = pollData?.output?.task_status;
 
               if (status === "SUCCEEDED") {
-                const resultUrl = pollData?.output?.results?.[0]?.transcription_url;
+                // Try multiple result URL paths (different models use different formats)
+                const resultUrl =
+                  pollData?.output?.results?.[0]?.transcription_url ||
+                  pollData?.output?.result?.transcription_url ||
+                  pollData?.output?.transcription_url ||
+                  (typeof pollData?.output?.results?.[0]?.url === "string" ? pollData.output.results[0].url : null);
                 if (!resultUrl) {
-                  transport.send({ type: "transcription-result", requestId, error: "No transcription_url in result" });
+                  // Send back raw poll data for debugging
+                  transport.send({ type: "transcription-result", requestId, error: `No transcription URL. Poll data: ${JSON.stringify(pollData.output)}` });
                   return;
                 }
                 const resultResp = await fetch(resultUrl);
