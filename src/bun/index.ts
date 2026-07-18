@@ -156,8 +156,8 @@ transport.registerHandler((msg: any) => {
     }
 
     case "upload-audio-for-asr": {
-      // Upload audio blob to a public URL for ASR.
-      // Tries tempfile.org first (no auth, free), then falls back to file://
+      // Write audio blob to a public URL for ASR.
+      // First tries file:// (matching Swift DirectTranscriptionBackend), then fallbacks.
       (async () => {
         try {
           const { base64Data, mimeType, requestId } = msg;
@@ -170,7 +170,20 @@ transport.registerHandler((msg: any) => {
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
           const fileName = `filmidi-audio-${Date.now()}${ext}`;
 
-          // 1. Try tempfile.org (field name must be "files" per API docs)
+          // 1. Write to local temp file — DashScope accepts file:// URLs
+          //    (matching Swift DirectTranscriptionBackend approach)
+          try {
+            const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
+            mkdirSync(tempDir, { recursive: true });
+            const filePath = join(tempDir, fileName);
+            writeFileSync(filePath, buffer);
+            transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
+            return;
+          } catch (_) {
+            // File write failed — fall through
+          }
+
+          // 2. Try tempfile.org (free, no auth)
           try {
             const formData = new FormData();
             formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
@@ -182,17 +195,14 @@ transport.registerHandler((msg: any) => {
             if (resp.ok) {
               const data = await resp.json() as any;
               if (data?.success && data?.files?.[0]?.id) {
-                // tempfile.org returns the info page URL — we need the direct download URL
                 const fileId = data.files[0].id;
                 transport.send({ type: "upload-audio-result", requestId, url: `https://tempfile.org/${fileId}/download` });
                 return;
               }
             }
-          } catch (_) {
-            // tempfile.org not available — fall through
-          }
+          } catch (_) {}
 
-          // 2. Try backend upload (UploadThing)
+          // 3. Try backend upload (UploadThing)
           try {
             const formData = new FormData();
             formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
@@ -207,16 +217,9 @@ transport.registerHandler((msg: any) => {
                 return;
               }
             }
-          } catch (_) {
-            // Backend not available — fall through
-          }
+          } catch (_) {}
 
-          // 3. Fallback: write to local temp file (DashScope accepts file:// URLs)
-          const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
-          mkdirSync(tempDir, { recursive: true });
-          const filePath = join(tempDir, fileName);
-          writeFileSync(filePath, buffer);
-          transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
+          transport.send({ type: "upload-audio-result", requestId, error: "All upload methods failed" });
         } catch (err: any) {
           transport.send({ type: "upload-audio-result", requestId: msg.requestId, error: err?.message ?? String(err) });
         }
