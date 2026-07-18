@@ -756,13 +756,12 @@ export async function executeTool(
             const { setLayerLinkId } = await import("@/lib/linkUtils");
             const { commands: cmds } = await import("@videoflow/react-video-editor");
             const setSettingCommand = cmds.setSettingCommand;
-            await addLayerCommand(commit, {
+            const newAudioId = await addLayerCommand(commit, {
               type: "audio",
               source: publicUrl,
               sourceDuration: layer.settings?.sourceDuration ?? 5,
               startTime: layer.settings?.startTime ?? 0,
             });
-            const newAudioId = editor.video.layers.at(-1)?.id;
             if (newAudioId) await setLayerLinkId(commit, newAudioId, linkId, setSettingCommand);
             await setLayerLinkId(commit, layer.id, linkId, setSettingCommand);
             await cmds.setPropertyCommand(commit, layer.id, "mute", true);

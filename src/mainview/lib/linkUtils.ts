@@ -70,20 +70,12 @@ export async function unlinkLayers(
   setSettingCommand: (commit: any, id: string, name: string, value: unknown) => Promise<void>,
 ): Promise<string | null> {
   const partner = findLinkedPartner(layerId);
-  const linkId = getLayerLinkId(partner ?? findLinkedPartnerBySearching(layerId));
+  const linkId = getLayerLinkId(partner ?? findLinkedPartner(layerId));
 
-  // Clear linkId from both
   await setSettingCommand(commit, layerId, "linkId", undefined);
   if (partner) {
     await setSettingCommand(commit, partner.id, "linkId", undefined);
   }
 
   return linkId ?? null;
-}
-
-/** Internal helper to find partner by searching layers directly. */
-function findLinkedPartnerBySearching(layerId: string): any | undefined {
-  const editor = useEditorStore.getState();
-  const layers = editor.video.layers ?? [];
-  return findLinkedPartnerIn(layers, layerId);
 }

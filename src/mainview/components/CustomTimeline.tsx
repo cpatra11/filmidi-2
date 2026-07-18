@@ -612,7 +612,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     [selection, video, scale, playheadTime, availableDuration],
   );
 
-  // ─── Trim/resize handle ──────────────────────────────────────
+  // ─── Trim/resize handle — also trims linked partner ──────────
   const handleHandlePointerDown = useCallback(
     (
       e: React.PointerEvent,
@@ -629,12 +629,21 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       const initialSourceDuration = layer.settings.sourceDuration ?? 0;
       const speed = Math.abs(layer.settings.speed ?? 1);
 
+      // Find linked partner
+      const allLayers = video.layers ?? [];
+      const partner = findLinkedPartnerIn(allLayers, layer.id);
+      const partnerBounds = partner ? layerTimelineBounds(partner) : null;
+      const partnerInitialStart = partnerBounds?.start ?? initialStart;
+      const partnerInitialEnd = partnerBounds?.end ?? initialEnd;
+      const partnerSourceStart = partner?.settings.sourceStart ?? 0;
+      const partnerSourceDuration = partner?.settings.sourceDuration ?? 0;
+      const partnerSpeed = Math.abs(partner?.settings.speed ?? 1);
+
       const onMove = (ev: PointerEvent) => {
         const dx = ev.clientX - startClientX;
         const deltaTime = dx / scale;
 
         // Snap
-        const allLayers = video.layers ?? [];
         const magnets = computeMagnets(
           allLayers,
           new Set([layer.id]),
@@ -651,13 +660,16 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           const newStartTime = initialStart + shift;
           const newSourceDuration = initialSourceDuration - shift * speed;
           if (newSourceDuration > 0.01) {
-            commands.trimStartCommand(
-              editor.commit,
-              layer.id,
-              newSourceStart,
-              newStartTime,
-              newSourceDuration,
-            );
+            commands.trimStartCommand(editor.commit, layer.id, newSourceStart, newStartTime, newSourceDuration);
+          }
+          // Trim linked partner by same delta
+          if (partner) {
+            const pNewSourceStart = partnerSourceStart + shift * partnerSpeed;
+            const pNewStartTime = partnerInitialStart + shift;
+            const pNewSourceDuration = partnerSourceDuration - shift * partnerSpeed;
+            if (pNewSourceDuration > 0.01) {
+              commands.trimStartCommand(editor.commit, partner.id, pNewSourceStart, pNewStartTime, pNewSourceDuration);
+            }
           }
         } else {
           let newEnd = initialEnd + deltaTime;
@@ -665,11 +677,13 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           if (snap) newEnd = snap.time;
           const newDuration = Math.max(0.01, newEnd - initialStart);
           const newSourceDuration = newDuration * speed;
-          commands.resizeLayerCommand(
-            editor.commit,
-            layer.id,
-            newSourceDuration,
-          );
+          commands.resizeLayerCommand(editor.commit, layer.id, newSourceDuration);
+          // Trim linked partner end by same delta
+          if (partner) {
+            const pNewDuration = Math.max(0.01, partnerInitialEnd + deltaTime - partnerInitialStart);
+            const pNewSourceDuration = pNewDuration * partnerSpeed;
+            commands.resizeLayerCommand(editor.commit, partner.id, pNewSourceDuration);
+          }
         }
       };
 
