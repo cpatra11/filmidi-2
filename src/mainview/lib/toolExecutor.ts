@@ -1930,6 +1930,10 @@ export async function executeTool(
         }
       }
 
+      case "cancel_generation": {
+        return JSON.stringify({ status: "cancelled", note: "Generation cancellation not implemented yet — the task will complete in the background." });
+      }
+
       case "upscale_media": return JSON.stringify({ error: "Upscaling requires HitPaw backend — not available with direct API key. Sign in with Google to use upscaling." });
       case "list_models": return JSON.stringify({
         models: [
@@ -1958,6 +1962,17 @@ export async function executeTool(
           { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", type: "audio", description: "Fast TTS" },
           { id: "fun-music-v1", name: "FunMusic v1", type: "audio", description: "Music generation" },
           { id: "fun-music-preview", name: "FunMusic Preview", type: "audio", description: "Music generation preview" },
+          { id: "sonilo-v1.1-text-to-music", name: "Sonilo Text→Music", type: "audio", description: "Text-to-music generation" },
+          { id: "sonilo-v1.1-video-to-music", name: "Sonilo Video→Music", type: "audio", description: "Video-to-music generation" },
+          { id: "mirelo-sfx-v1.5-text-to-sfx", name: "Mirelo Text→SFX", type: "audio", description: "Text-to-sound effect" },
+          { id: "mirelo-sfx-v1.5-video-to-audio", name: "Mirelo Video→SFX", type: "audio", description: "Video-to-sound effect" },
+          // Transcription
+          { id: "fun-asr", name: "Fun ASR", type: "transcription", description: "Batch file transcription with speaker diarization" },
+          { id: "fun-asr-realtime", name: "Fun ASR Realtime", type: "transcription", description: "Real-time ASR with hotwords" },
+          { id: "qwen3-asr-flash-realtime", name: "Qwen3 ASR Flash", type: "transcription", description: "Real-time ASR with emotion recognition" },
+          { id: "qwen3-asr-flash-filetrans", name: "Qwen3 ASR File", type: "transcription", description: "Batch file transcription" },
+          // Upscale
+          { id: "hitpaw-upscaler-v2", name: "HitPaw Upscaler v2", type: "upscale", description: "AI upscaling" },
         ],
       });
 

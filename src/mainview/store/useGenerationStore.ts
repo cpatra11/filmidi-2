@@ -120,6 +120,17 @@ const AUDIO_MODELS = [
   { id: "mirelo-sfx-v1.5-video-to-audio", name: "Mirelo Video→SFX", type: "audio" as const },
 ];
 
+const TRANSCRIPTION_MODELS = [
+  { id: "fun-asr", name: "Fun ASR", type: "transcription" as const },
+  { id: "fun-asr-realtime", name: "Fun ASR Realtime", type: "transcription" as const },
+  { id: "qwen3-asr-flash-realtime", name: "Qwen3 ASR Flash Realtime", type: "transcription" as const },
+  { id: "qwen3-asr-flash-filetrans", name: "Qwen3 ASR File", type: "transcription" as const },
+];
+
+const UPSCALE_MODELS = [
+  { id: "hitpaw-upscaler-v2", name: "HitPaw Upscaler v2", type: "upscale" as const },
+];
+
 const THIRD_PARTY_MODELS = new Set([
   "sonilo-v1.1-text-to-music",
   "sonilo-v1.1-video-to-music",

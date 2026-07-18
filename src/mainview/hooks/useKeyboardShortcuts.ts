@@ -199,7 +199,7 @@ function splitAtPlayhead() {
               duration: (layer.duration || layer.sourceDuration || 5) - splitOffset,
             });
             layer.duration = splitOffset;
-            layer.sourceDuration = (layer.sourceDuration || layer.duration || 5) - splitOffset;
+            layer.sourceDuration = splitOffset;
           }
         } else if (layer.type === "group" && Array.isArray(layer.children)) {
           processLayers(layer.children);

@@ -861,6 +861,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: [],
     },
   },
+  {
+    name: "cancel_generation",
+    description: "Attempt to cancel a running generation task. May not work for all model types.",
+    input_schema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task ID from generation response." },
+      },
+      required: ["taskId"],
+    },
+  },
 
   // ─── PROJECT SETTINGS (1) ────────────────────────────────────────
   {

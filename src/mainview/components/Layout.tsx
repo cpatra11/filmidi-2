@@ -25,7 +25,7 @@ import { TourOverlay } from "./TourOverlay";
 import { useAppStore } from "@/store/useAppStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { getMediaDuration } from "@/lib/mediaDuration";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
 import type { ContextTarget } from "./ClipContextMenu";
@@ -296,7 +296,7 @@ export function Layout() {
                       duration: origDur - splitOffset,
                     });
                     layer.duration = splitOffset;
-                    layer.sourceDuration = origDur - splitOffset;
+                    layer.sourceDuration = splitOffset;
                   }
                 } else if (layer.type === "group" && Array.isArray(layer.children)) {
                   processLayers(layer.children);
@@ -629,6 +629,18 @@ function EditorPlaybar() {
   const timeStr = formatTime(currentFrame / fps, fps);
   const selection = useEditorStore((s) => s.selection);
   const [volume, setVolume] = useState(1);
+
+  // Sync volume slider with selected layer's volume
+  useEffect(() => {
+    if (selection.layerIds.length === 1) {
+      const s = useEditorStore.getState();
+      const selLayer = s.video.layers?.find((l: any) => l.id === selection.layerIds[0]);
+      if (selLayer) {
+        const v = (selLayer.settings as any)?.volume;
+        if (typeof v === "number") setVolume(v);
+      }
+    }
+  }, [selection.layerIds.join(",")]);
 
   const togglePlay = () => {
     const s = useEditorStore.getState();
