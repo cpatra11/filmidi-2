@@ -512,6 +512,19 @@
   transform: scale(1.2);
 }
 
+/* ─── Snap guide ─────────────────────────────────────────────── */
+
+.ct-snap-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--vf-primary, #888);
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 3;
+}
+
 /* ─── Playhead ──────────────────────────────────────────────── */
 
 .ct-playhead {
@@ -524,6 +537,32 @@
   pointer-events: none;
   z-index: 1;
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+/* ─── Empty state ────────────────────────────────────────────── */
+
+.ct-empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ct-empty-state p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--vf-text-mute);
+  opacity: 0.5;
+}
+
+.ct-empty-state-hint {
+  font-size: 11px;
+  margin-top: 6px !important;
+  opacity: 0.35 !important;
 }
 
 /* ─── End marker ────────────────────────────────────────────── */

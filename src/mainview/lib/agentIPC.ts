@@ -110,6 +110,10 @@ export function sendAgentMessage(params: {
 
 export function cancelAgentStream() {
   currentListeners = null;
+  const bridge = (window as any).__electrobunBunBridge;
+  if (bridge) {
+    bridge.postMessage(JSON.stringify({ type: "cancel-agent" }));
+  }
 }
 
 let asrPendingResolvers = new Map<string, { resolve: (url: string) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>();

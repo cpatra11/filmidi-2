@@ -19,6 +19,7 @@ import {
   type Magnet,
 } from "@videoflow/react-video-editor";
 import { getLayerLinkId, findLinkedPartnerIn } from "@/lib/linkUtils";
+import { useAppStore } from "@/store/useAppStore";
 import "./CustomTimeline.css";
 
 const TRACK_HEIGHT = 40;
@@ -264,6 +265,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const rulerRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef<HTMLDivElement>(null);
   const scrollLeftRef = useRef(0);
+  const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
 
   const { fps, duration: videoDuration } = video;
   const scale = viewport.timelineScale;
@@ -517,10 +519,57 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     [],
   );
 
-  // ─── Clip selection ──────────────────────────────────────────
+  // ─── Clip selection — also handles razor/blade tool ──────────
   const handleClipPointerDown = useCallback(
     (e: React.PointerEvent, layer: LayerJSON) => {
       e.stopPropagation();
+
+      // Razor/blade tool: split clip at click position
+      const toolMode = useAppStore.getState().toolMode;
+      if (toolMode === "razor") {
+        const bounds = layerTimelineBounds(layer);
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const clickTime = (e.clientX - rect.left) / scale + bounds.start;
+        const frame = Math.round(clickTime * fps);
+        const startFrame = Math.round(bounds.start * fps);
+        const endFrame = Math.round(bounds.end * fps);
+        if (frame > startFrame + 1 && frame < endFrame - 1) {
+          const splitDur = (frame - startFrame) / fps;
+          const remainDur = (endFrame - frame) / fps;
+          const linkId = getLayerLinkId(layer);
+          const partner = findLinkedPartnerIn(video.layers ?? [], layer.id);
+          const razorEditor = useEditorStore.getState();
+          commands.resizeLayerCommand(razorEditor.commit, layer.id, splitDur);
+          // Fire-and-forget the rest (async addLayerCommand calls)
+          (async () => {
+            const { addLayerCommand: addCmd } = commands;
+            const newId = await addCmd(razorEditor.commit, {
+              type: layer.type, source: layer.settings?.source as string,
+              sourceDuration: remainDur, startTime: bounds.start + splitDur,
+            });
+            if (linkId && newId) {
+              const { commands: cmds } = await import("@videoflow/react-video-editor");
+              await cmds.setSettingCommand(razorEditor.commit, newId, "linkId", linkId);
+            }
+            if (partner) {
+              const pBounds = layerTimelineBounds(partner);
+              const pSplitDur = frame / fps - pBounds.start;
+              const pRemainDur = pBounds.end - frame / fps;
+              commands.resizeLayerCommand(razorEditor.commit, partner.id, pSplitDur);
+              const pNewId = await addCmd(razorEditor.commit, {
+                type: partner.type, source: partner.settings?.source as string,
+                sourceDuration: pRemainDur, startTime: pBounds.start + pSplitDur,
+              });
+              if (linkId && pNewId) {
+                const { commands: cmds } = await import("@videoflow/react-video-editor");
+                await cmds.setSettingCommand(razorEditor.commit, pNewId, "linkId", linkId);
+              }
+            }
+          })();
+        }
+        return;
+      }
+
       const editor = useEditorStore.getState();
       const isSelected = selection.layerIds.includes(layer.id);
 
@@ -584,7 +633,12 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           if (!initial) continue;
           let newTime = initial.startTime + deltaTime;
           const snap = snapTime(newTime, magnets, scale, DEFAULT_SNAP_PIXELS);
-          if (snap) newTime = snap.time;
+          if (snap) {
+            newTime = snap.time;
+            setSnapGuideTime(snap.time);
+          } else {
+            setSnapGuideTime(null);
+          }
           newTime = Math.max(0, Math.min(availableDuration, newTime));
           const newTrack = Math.max(0, initial.track + deltaTrack);
           newPositions.push({ id, startTime: newTime, track: newTrack });
@@ -601,9 +655,11 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         }, { label: "move", mergeKey: `move:${moveIdArray.sort().join(",")}` });
       };
 
+      // Clear snap guide when pointer comes up
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        setSnapGuideTime(null);
       };
 
       window.addEventListener("pointermove", onMove);
@@ -919,6 +975,14 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
             );
           })}
 
+          {/* Snap guide line */}
+          {snapGuideTime !== null && (
+            <div
+              className="ct-snap-guide"
+              style={{ left: snapGuideTime * scale }}
+            />
+          )}
+
           {/* End marker */}
           <div
             className="ct-end-marker"
@@ -930,6 +994,14 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
             className="ct-playhead"
             style={{ left: playheadLeft }}
           />
+
+          {/* Empty timeline state */}
+          {totalTrackCount === 0 && (
+            <div className="ct-empty-state">
+              <p>No clips on timeline</p>
+              <p className="ct-empty-state-hint">Drag media here or use the Media panel to add clips</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -82,6 +82,9 @@ function saveCredentials() {
 // Load existing credentials on startup
 loadCredentials();
 
+// ─── Agent cancellation support ──────────────────────────────────
+let currentAgentController: AbortController | null = null;
+
 transport.registerHandler((msg: any) => {
   if (!msg || typeof msg !== "object") return;
 
@@ -327,7 +330,13 @@ transport.registerHandler((msg: any) => {
     }
 
     case "agent-message": {
-      // Run the AI SDK agent loop in Bun
+      // Cancel any previous agent run
+      if (currentAgentController) {
+        currentAgentController.abort();
+        currentAgentController = null;
+      }
+      const controller = new AbortController();
+      currentAgentController = controller;
       const apiKey = secureStore.get("qwen_api_key");
       if (!apiKey) {
         transport.send({
@@ -347,7 +356,15 @@ transport.registerHandler((msg: any) => {
         modelId: msg.modelId,
         apiKey,
         send: (m: any) => transport.send(m),
-      });
+      }, controller.signal);
+      break;
+    }
+
+    case "cancel-agent": {
+      if (currentAgentController) {
+        currentAgentController.abort();
+        currentAgentController = null;
+      }
       break;
     }
 

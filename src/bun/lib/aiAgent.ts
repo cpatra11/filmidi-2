@@ -263,7 +263,7 @@ export interface AgentLoopParams {
   send: (msg: any) => void;
 }
 
-export async function runAgentLoop(params: AgentLoopParams) {
+export async function runAgentLoop(params: AgentLoopParams, signal?: AbortSignal) {
   const {
     requestId,
     sessionMessages,
@@ -294,6 +294,7 @@ export async function runAgentLoop(params: AgentLoopParams) {
       tools,
       stopWhen: isStepCount(10),
       maxOutputTokens: 8192,
+      abortSignal: signal,
     });
 
     let finalText = "";
