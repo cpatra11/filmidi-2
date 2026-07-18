@@ -49,20 +49,20 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
-  // Convert blob URLs to public URLs before routing — both backend and direct paths need accessible URLs
+  // Convert blob URLs to public WAV URLs before routing — both backend and direct paths need accessible URLs
   let resolvedUrl = audioUrl;
   if (audioUrl.startsWith("blob:")) {
     const { uploadAudioForASR } = await import("@/lib/agentIPC");
-    const resp = await fetch(audioUrl);
-    const blob = await resp.blob();
+    // Extract audio track from video blob (DashScope ASR needs pure audio, not video containers)
+    const audioBlob = await extractAudioTrack(audioUrl);
     const dataUrl: string = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
       reader.onerror = reject;
-      reader.readAsDataURL(blob);
+      reader.readAsDataURL(audioBlob);
     });
     const [header, base64] = dataUrl.split(",");
-    const mimeType = header.match(/data:(.*?);/)?.[1] || "audio/wav";
+    const mimeType = "audio/wav";
     resolvedUrl = await uploadAudioForASR(base64, mimeType);
   }
 
@@ -259,6 +259,65 @@ function parseTranscriptionResult(
     words,
     segments,
   };
+}
+
+/**
+ * Extract audio track from a video blob URL into a 16kHz mono WAV blob.
+ * DashScope ASR needs pure audio (WAV/MP3), not video containers.
+ */
+async function extractAudioTrack(blobUrl: string): Promise<Blob> {
+  const resp = await fetch(blobUrl);
+  const blob = await resp.blob();
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioCtx = new AudioContext();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  await audioCtx.close();
+
+  const numChannels = 1;
+  const targetRate = 16000;
+  const srcRate = audioBuffer.sampleRate;
+  const srcLen = audioBuffer.length;
+  const dstLen = Math.round(srcLen * targetRate / srcRate);
+  const srcData = audioBuffer.getChannelData(0);
+
+  // Resample to target rate
+  const dstData = new Float32Array(dstLen);
+  for (let i = 0; i < dstLen; i++) {
+    const idx = i * srcRate / targetRate;
+    const lo = Math.floor(idx);
+    const hi = Math.min(lo + 1, srcLen - 1);
+    const frac = idx - lo;
+    dstData[i] = srcData[lo] * (1 - frac) + srcData[hi] * frac;
+  }
+
+  // 16-bit PCM
+  const pcm = new Int16Array(dstLen);
+  for (let i = 0; i < dstLen; i++) {
+    const s = Math.max(-1, Math.min(1, dstData[i]));
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+
+  // WAV header
+  const dataSize = pcm.length * 2;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(buf);
+  const w = (off: number, str: string) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+  w(0, "RIFF");
+  v.setUint32(4, 36 + dataSize, true);
+  w(8, "WAVE");
+  w(12, "fmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, numChannels, true);
+  v.setUint32(24, targetRate, true);
+  v.setUint32(28, targetRate * numChannels * 2, true);
+  v.setUint16(32, numChannels * 2, true);
+  v.setUint16(34, 16, true);
+  w(36, "data");
+  v.setUint32(40, dataSize, true);
+  new Int16Array(buf, 44).set(pcm);
+
+  return new Blob([buf], { type: "audio/wav" });
 }
 
 /**
