@@ -166,8 +166,29 @@ function parseTranscriptionResult(
     const end = (t.end_time as number) ?? (t.end as number) ?? 0;
     const speaker = (t.speaker as string) ?? (t.speaker_id as string) ?? undefined;
 
-    // Parse words from transcript
-    const sentenceWords = (t.words ?? []) as Array<Record<string, unknown>>;
+    // Words may be at transcript level or nested inside sentences (Fun-ASR format)
+    let sentenceWords: Array<Record<string, unknown>> = [];
+    const topWords = t.words as Array<Record<string, unknown>> | undefined;
+    const sentences = t.sentences as Array<Record<string, unknown>> | undefined;
+    if (topWords) {
+      sentenceWords = topWords;
+    } else if (sentences) {
+      for (const s of sentences) {
+        const sWords = s.words as Array<Record<string, unknown>> | undefined;
+        if (sWords) sentenceWords.push(...sWords);
+      }
+      // If sentences exist but have no words, use sentence as a word
+      if (sentenceWords.length === 0) {
+        for (const s of sentences) {
+          const sText = (s.text as string) ?? "";
+          const sStart = (s.begin_time as number) ?? (s.start_time as number) ?? 0;
+          const sEnd = (s.end_time as number) ?? 0;
+          if (sText) {
+            sentenceWords.push({ text: sText, begin_time: sStart, end_time: sEnd });
+          }
+        }
+      }
+    }
     for (const w of sentenceWords) {
       const wText = (w.text as string) ?? "";
       const wStart = (w.start_time as number) ?? (w.begin_time as number) ?? (w.start as number) ?? start;
@@ -200,66 +221,6 @@ function parseTranscriptionResult(
     segments,
   };
 }
-
-/**
- * Extract audio track from a video blob URL into a 16kHz mono WAV blob.
- * DashScope ASR needs pure audio (WAV/MP3), not video containers.
- */
-async function extractAudioTrack(blobUrl: string): Promise<Blob> {
-  const resp = await fetch(blobUrl);
-  const blob = await resp.blob();
-  const arrayBuffer = await blob.arrayBuffer();
-  const audioCtx = new AudioContext();
-  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-  await audioCtx.close();
-
-  const numChannels = 1;
-  const targetRate = 16000;
-  const srcRate = audioBuffer.sampleRate;
-  const srcLen = audioBuffer.length;
-  const dstLen = Math.round(srcLen * targetRate / srcRate);
-  const srcData = audioBuffer.getChannelData(0);
-
-  // Resample to target rate
-  const dstData = new Float32Array(dstLen);
-  for (let i = 0; i < dstLen; i++) {
-    const idx = i * srcRate / targetRate;
-    const lo = Math.floor(idx);
-    const hi = Math.min(lo + 1, srcLen - 1);
-    const frac = idx - lo;
-    dstData[i] = srcData[lo] * (1 - frac) + srcData[hi] * frac;
-  }
-
-  // 16-bit PCM
-  const pcm = new Int16Array(dstLen);
-  for (let i = 0; i < dstLen; i++) {
-    const s = Math.max(-1, Math.min(1, dstData[i]));
-    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-  }
-
-  // WAV header
-  const dataSize = pcm.length * 2;
-  const buf = new ArrayBuffer(44 + dataSize);
-  const v = new DataView(buf);
-  const w = (off: number, str: string) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
-  w(0, "RIFF");
-  v.setUint32(4, 36 + dataSize, true);
-  w(8, "WAVE");
-  w(12, "fmt ");
-  v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true);
-  v.setUint16(22, numChannels, true);
-  v.setUint32(24, targetRate, true);
-  v.setUint32(28, targetRate * numChannels * 2, true);
-  v.setUint16(32, numChannels * 2, true);
-  v.setUint16(34, 16, true);
-  w(36, "data");
-  v.setUint32(40, dataSize, true);
-  new Int16Array(buf, 44).set(pcm);
-
-  return new Blob([buf], { type: "audio/wav" });
-}
-
 /**
  * Upload audio blob to a temporary URL for ASR.
  * In web context, we pass the blob URL directly since DashScope accepts URLs.

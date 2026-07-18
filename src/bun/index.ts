@@ -304,6 +304,7 @@ transport.registerHandler((msg: any) => {
                 }
                 const resultResp = await fetch(resultUrl);
                 const resultData = await resultResp.text();
+                console.log("[transcribe-audio] result (first 500 chars):", resultData.slice(0, 500));
                 transport.send({ type: "transcription-result", requestId, result: resultData });
                 return;
               }
