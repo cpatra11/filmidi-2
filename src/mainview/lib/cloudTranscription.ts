@@ -49,7 +49,7 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
-  // Convert blob URLs to public WAV URLs before routing — both backend and direct paths need accessible URLs
+  // Convert blob URLs to accessible WAV URLs before routing
   let resolvedUrl = audioUrl;
   if (audioUrl.startsWith("blob:")) {
     const { uploadAudioForASR } = await import("@/lib/agentIPC");
@@ -61,9 +61,18 @@ export async function transcribeAudio(
       reader.onerror = reject;
       reader.readAsDataURL(audioBlob);
     });
+
+    // Try to get a public URL via Bun (backend UploadThing or tempfile.org)
     const [header, base64] = dataUrl.split(",");
     const mimeType = "audio/wav";
-    resolvedUrl = await uploadAudioForASR(base64, mimeType);
+    const uploadResult = await uploadAudioForASR(base64, mimeType);
+
+    if (uploadResult.startsWith("file://")) {
+      // DashScope can't access local files — use data URL instead (inline audio)
+      resolvedUrl = dataUrl;
+    } else {
+      resolvedUrl = uploadResult;
+    }
   }
 
   const account = useAccountStore.getState();
