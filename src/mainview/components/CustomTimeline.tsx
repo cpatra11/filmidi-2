@@ -296,6 +296,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const tracksRef = useRef<HTMLDivElement>(null);
   const scrollLeftRef = useRef(0);
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
+  const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
 
   const { fps, duration: videoDuration } = video;
   const scale = viewport.timelineScale;
@@ -509,9 +510,34 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const handleRulerPointerDown = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
-      isScrubbingRef.current = true;
       const body = bodyRef.current;
       if (!body || !bridge) return;
+
+      // Shift+drag on ruler creates a time selection range
+      if (e.shiftKey) {
+        const startRange = (e: PointerEvent) => {
+          const rect = body.getBoundingClientRect();
+          const x = e.clientX - rect.left + body.scrollLeft - HEADER_WIDTH;
+          return Math.max(0, Math.min(availableDuration, x / scale));
+        };
+        const rangeStart = startRange(e.nativeEvent);
+        setSelectionRange({ start: rangeStart, end: rangeStart });
+        const onMove = (ev: PointerEvent) => {
+          const rangeEnd = startRange(ev);
+          setSelectionRange({ start: Math.min(rangeStart, rangeEnd), end: Math.max(rangeStart, rangeEnd) });
+        };
+        const onUp = () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+        return;
+      }
+
+      // Normal ruler scrub
+      isScrubbingRef.current = true;
+      setSelectionRange(null); // Clear range on normal click
 
       const seekFromEvent = (ev: PointerEvent) => {
         const rect = body.getBoundingClientRect();
@@ -1066,6 +1092,17 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
               </div>
             );
           })}
+
+          {/* Time selection range */}
+          {selectionRange && (
+            <div
+              className="ct-selection-range"
+              style={{
+                left: selectionRange.start * scale,
+                width: (selectionRange.end - selectionRange.start) * scale,
+              }}
+            />
+          )}
 
           {/* Snap guide line */}
           {snapGuideTime !== null && (

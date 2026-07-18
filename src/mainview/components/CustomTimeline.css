@@ -525,6 +525,19 @@
   z-index: 3;
 }
 
+/* ─── Selection range ────────────────────────────────────────── */
+
+.ct-selection-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(74, 144, 226, 0.12);
+  border-left: 1px solid rgba(74, 144, 226, 0.4);
+  border-right: 1px solid rgba(74, 144, 226, 0.4);
+  pointer-events: none;
+  z-index: 2;
+}
+
 /* ─── Playhead ──────────────────────────────────────────────── */
 
 .ct-playhead {
