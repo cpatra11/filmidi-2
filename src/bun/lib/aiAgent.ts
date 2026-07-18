@@ -102,8 +102,8 @@ function toSDKMessages(
   sessionMessages: AgentMessage[],
   userMessage: AgentMessage,
   context: { timeline: string; media: string },
-): Array<{ role: "user" | "assistant"; content: any }> {
-  const result: Array<{ role: "user" | "assistant"; content: any }> = [];
+): Array<{ role: "user" | "assistant" | "tool"; content: any }> {
+  const result: Array<{ role: "user" | "assistant" | "tool"; content: any }> = [];
 
   // Inject context as first user message (like current buildQwenMessages)
   result.push({
@@ -143,36 +143,55 @@ function toSDKMessages(
       continue;
     }
 
-    // Assistant messages
-    const blocks: any[] = [];
+    // Assistant messages: separate tool-call and tool-result parts
+    const assistantBlocks: any[] = [];
+    const toolResultParts: any[] = [];
+
     if (msg.content) {
-      blocks.push({ type: "text", text: msg.content });
+      assistantBlocks.push({ type: "text", text: msg.content });
     }
     if (msg.toolUse) {
       for (const tool of msg.toolUse) {
         if (tool.result) {
-          blocks.push({
+          // Tool results go in separate "tool" role messages
+          let output: any;
+          try {
+            output = JSON.parse(tool.result.content);
+            output = { type: "json", value: output };
+          } catch {
+            output = { type: "text", text: tool.result.content };
+          }
+          toolResultParts.push({
             type: "tool-result",
             toolCallId: tool.id,
             toolName: tool.name,
-            result: tool.result.content,
-            isError: tool.result.isError,
+            output,
           });
         } else {
+          // Tool calls go in the assistant message (use "input" not "args")
           let input: Record<string, unknown> = {};
           try {
             input = JSON.parse(tool.inputJSON);
           } catch {}
-          blocks.push({
+          assistantBlocks.push({
             type: "tool-call",
             toolCallId: tool.id,
             toolName: tool.name,
-            args: input,
+            input,
           });
         }
       }
     }
-    result.push({ role: "assistant", content: blocks });
+
+    // Emit assistant message with text + tool-call parts only
+    if (assistantBlocks.length > 0) {
+      result.push({ role: "assistant", content: assistantBlocks });
+    }
+
+    // Emit tool results as a separate "tool" role message
+    if (toolResultParts.length > 0) {
+      result.push({ role: "tool", content: toolResultParts });
+    }
   }
 
   // Add the new user message
