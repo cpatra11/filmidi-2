@@ -9,6 +9,9 @@ interface AppState {
   toolMode: ToolMode;
   setToolMode: (mode: ToolMode) => void;
 
+  snapEnabled: boolean;
+  setSnapEnabled: (enabled: boolean) => void;
+
   showAgentPanel: boolean;
   toggleAgentPanel: () => void;
 
@@ -31,6 +34,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   toolMode: "pointer",
   setToolMode: (mode) => set({ toolMode: mode }),
+
+  snapEnabled: true,
+  setSnapEnabled: (enabled) => set({ snapEnabled: enabled }),
 
   showAgentPanel: true,
   toggleAgentPanel: () => set((s) => ({ showAgentPanel: !s.showAgentPanel })),

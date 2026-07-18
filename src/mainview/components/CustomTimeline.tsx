@@ -509,14 +509,40 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     [bridge, fps, scale, availableDuration, groupOffset],
   );
 
-  // ─── Click on empty track space → deselect ───────────────────
-  const handleTracksClick = useCallback(
+  // ─── Click on empty track space → deselect + seek playhead ──
+  const handleTracksPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (e.target === tracksRef.current || (e.target as HTMLElement).classList.contains("ct-track-row")) {
-        useEditorStore.getState().clearSelection();
-      }
+      const target = e.target as HTMLElement;
+      const isTrack = target === tracksRef.current || target.classList.contains("ct-track-row");
+      if (!isTrack) return;
+
+      useEditorStore.getState().clearSelection();
+
+      // Seek playhead to click position
+      if (!bodyRef.current || !bridge) return;
+      const rect = bodyRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left + bodyRef.current.scrollLeft - HEADER_WIDTH;
+      const time = Math.max(0, Math.min(availableDuration, x / scale));
+      const frame = timeToFrame(time + groupOffset, fps);
+      useEditorStore.getState().setCurrentFrame(frame);
+      bridge.seek(frame);
+
+      // Drag to scrub
+      const onMove = (ev: PointerEvent) => {
+        const mx = ev.clientX - rect.left + bodyRef.current!.scrollLeft - HEADER_WIDTH;
+        const mt = Math.max(0, Math.min(availableDuration, mx / scale));
+        const mf = timeToFrame(mt + groupOffset, fps);
+        useEditorStore.getState().setCurrentFrame(mf);
+        bridge?.seek(mf);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
     },
-    [],
+    [bridge, fps, scale, availableDuration, groupOffset],
   );
 
   // ─── Clip selection — also handles razor/blade tool ──────────
@@ -621,21 +647,26 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         const deltaTrack = Math.round(-dy / TRACK_HEIGHT);
 
         // Compute new positions with snapping
-        const magnets = computeMagnets(
+        const snapEnabled = useAppStore.getState().snapEnabled;
+        const magnets = snapEnabled ? computeMagnets(
           allLayers,
           new Set(moveIdArray),
           playheadTime,
-        );
+        ) : [];
 
         const newPositions: Array<{ id: string; startTime: number; track: number }> = [];
         for (const id of moveIdArray) {
           const initial = initialPositions.get(id);
           if (!initial) continue;
           let newTime = initial.startTime + deltaTime;
-          const snap = snapTime(newTime, magnets, scale, DEFAULT_SNAP_PIXELS);
-          if (snap) {
-            newTime = snap.time;
-            setSnapGuideTime(snap.time);
+          if (snapEnabled) {
+            const snap = snapTime(newTime, magnets, scale, DEFAULT_SNAP_PIXELS);
+            if (snap) {
+              newTime = snap.time;
+              setSnapGuideTime(snap.time);
+            } else {
+              setSnapGuideTime(null);
+            }
           } else {
             setSnapGuideTime(null);
           }
@@ -901,7 +932,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           className="ct-tracks-inner"
           ref={tracksRef}
           style={{ width: totalWidth }}
-          onPointerDown={handleTracksClick}
+          onPointerDown={handleTracksPointerDown}
           onContextMenu={(e) => {
             // If right-click was on a clip, it will be set by the clip's handler
             // If right-click was on empty area, set target to empty

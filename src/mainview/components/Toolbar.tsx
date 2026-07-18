@@ -36,6 +36,7 @@ import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
+import { Magnet } from "lucide-react";
 
 function ToolButton({
   icon: Icon,
@@ -83,6 +84,8 @@ export function Toolbar() {
   const {
     toolMode,
     setToolMode,
+    snapEnabled,
+    setSnapEnabled,
     showAgentPanel,
     toggleAgentPanel,
     showInspector,
@@ -178,6 +181,14 @@ export function Toolbar() {
             }
           }
         }, { label: "Trim start at playhead" });
+      }} />
+
+      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+
+      {/* Snap toggle */}
+      <ToolButton icon={Magnet} label="Snap" shortcut="N" active={useAppStore.getState().snapEnabled} onClick={() => {
+        const s = useAppStore.getState();
+        s.setSnapEnabled(!s.snapEnabled);
       }} />
 
       <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
