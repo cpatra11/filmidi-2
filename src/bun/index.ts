@@ -170,7 +170,7 @@ transport.registerHandler((msg: any) => {
           const filename = `audio-${Date.now()}${ext}`;
 
           const formData = new FormData();
-          formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), filename);
+          formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), filename);
           formData.append("expiryHours", "1");
 
           const resp = await fetch("https://tempfile.org/api/upload/local", {

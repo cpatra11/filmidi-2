@@ -217,12 +217,50 @@ function fuzzyMatch(a: string, b: string): number {
 
 const MIN_SPEED = 0.0001;
 
+// ─── INPUT NORMALIZATION ────────────────────────────────────────────
+// The agent model sometimes passes stringified JSON instead of real objects/arrays.
+// e.g. `"cuts": "[{\"layerId\":\"id\",\"atFrame\":66}]"` instead of `"cuts": [{"layerId":"id","atFrame":66}]`
+// This helper recursively walks the input and parses any string that looks like JSON.
+
+function tryParseJSON(val: unknown): unknown {
+  if (typeof val !== "string") return val;
+  const trimmed = val.trim();
+  if (!(trimmed.startsWith("[") || trimmed.startsWith("{"))) return val;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return val;
+  }
+}
+
+function normalizeInput(input: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(input)) {
+    const parsed = tryParseJSON(val);
+    if (Array.isArray(parsed)) {
+      result[key] = parsed.map((item: unknown) =>
+        typeof item === "object" && item !== null && !Array.isArray(item)
+          ? normalizeInput(item as Record<string, unknown>)
+          : item
+      );
+    } else if (typeof parsed === "object" && parsed !== null) {
+      result[key] = normalizeInput(parsed as Record<string, unknown>);
+    } else {
+      result[key] = parsed;
+    }
+  }
+  return result;
+}
+
 // ─── TOOL EXECUTOR ────────────────────────────────────────────────
 
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
 ): Promise<string> {
+  // Normalize inputs before dispatching — fixes agent sending stringified JSON
+  input = normalizeInput(input);
+
   const editor = useEditorStore.getState();
   const commit = editor.commit;
   const fps = editor.video.fps || 30;
@@ -462,7 +500,11 @@ export async function executeTool(
       }
 
       case "remove_clips": {
-        const layerIds = input.layerIds as string[];
+        let layerIds = input.layerIds as string[];
+        // Accept clipIds as alias
+        if (!layerIds || layerIds.length === 0) {
+          layerIds = input.clipIds as string[];
+        }
         if (!layerIds || layerIds.length === 0) return JSON.stringify({ error: "No layerIds provided" });
         const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
         const allLayers = editor.video.layers ?? [];
@@ -523,7 +565,14 @@ export async function executeTool(
       }
 
       case "split_clips": {
-        const cuts = input.cuts as Array<Record<string, unknown>> | undefined;
+        let cuts = input.cuts as Array<Record<string, unknown>> | undefined;
+        // Accept aliases: clipId → layerId, frame → atFrame
+        if (cuts) {
+          cuts = cuts.map((c) => ({
+            layerId: (c.layerId ?? c.clipId) as string,
+            atFrame: (c.atFrame ?? c.frame) as number,
+          }));
+        }
         const { findLinkedPartnerIn, getLayerLinkId } = await import("@/lib/linkUtils");
         const allLayers = editor.video.layers ?? [];
         const beforeSnap = snapshotTimeline();
