@@ -75,7 +75,7 @@ function buildBody(model: string, type: GenerationType, params: GenerationParams
         model,
         input,
         parameters: {
-          size: size ?? "1024x1024",
+          size: size ?? "1024*1024",
           n: params.numImages ?? 1,
         },
       };
@@ -92,7 +92,7 @@ function buildBody(model: string, type: GenerationType, params: GenerationParams
         input,
         parameters: {
           duration: params.duration ?? 5,
-          size: size ?? "1280x720",
+          size: size ?? "1280*720",
         },
       };
     }
@@ -113,25 +113,25 @@ function buildBody(model: string, type: GenerationType, params: GenerationParams
 function resolutionToSize(resolution?: string, aspectRatio?: string): string | null {
   const ar = aspectRatio ?? "16:9";
   if (resolution === "4K") {
-    if (ar === "9:16") return "2160x3840";
-    if (ar === "1:1") return "3840x3840";
-    if (ar === "4:3") return "2880x2160";
-    if (ar === "3:4") return "2160x2880";
-    return "3840x2160";
+    if (ar === "9:16") return "2160*3840";
+    if (ar === "1:1") return "3840*3840";
+    if (ar === "4:3") return "2880*2160";
+    if (ar === "3:4") return "2160*2880";
+    return "3840*2160";
   }
   if (resolution === "1080p") {
-    if (ar === "9:16") return "1080x1920";
-    if (ar === "1:1") return "1920x1920";
-    if (ar === "4:3") return "1440x1080";
-    if (ar === "3:4") return "1080x1440";
-    return "1920x1080";
+    if (ar === "9:16") return "1080*1920";
+    if (ar === "1:1") return "1920*1920";
+    if (ar === "4:3") return "1440*1080";
+    if (ar === "3:4") return "1080*1440";
+    return "1920*1080";
   }
   // 720p or default
-  if (ar === "9:16") return "720x1280";
-  if (ar === "1:1") return "1280x1280";
-  if (ar === "4:3") return "960x720";
-  if (ar === "3:4") return "720x960";
-  return "1280x720";
+  if (ar === "9:16") return "720*1280";
+  if (ar === "1:1") return "1280*1280";
+  if (ar === "4:3") return "960*720";
+  if (ar === "3:4") return "720*960";
+  return "1280*720";
 }
 
 export async function submitGeneration(

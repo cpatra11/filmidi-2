@@ -1615,7 +1615,7 @@ export async function executeTool(
         }
 
         const prompt = input.prompt as string;
-        const model = (input.model as string) ?? "";
+        const model = (input.model as string) || (name === "generate_image" ? "qwen-image-2.0-pro" : "");
         const duration = input.duration as number | undefined;
         const aspectRatio = input.aspectRatio as string | undefined;
         const resolution = input.resolution as string | undefined;
