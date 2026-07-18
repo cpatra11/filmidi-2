@@ -181,8 +181,10 @@ transport.registerHandler((msg: any) => {
             });
             if (resp.ok) {
               const data = await resp.json() as any;
-              if (data?.success && data?.files?.[0]?.url) {
-                transport.send({ type: "upload-audio-result", requestId, url: data.files[0].url });
+              if (data?.success && data?.files?.[0]?.id) {
+                // tempfile.org returns the info page URL — we need the direct download URL
+                const fileId = data.files[0].id;
+                transport.send({ type: "upload-audio-result", requestId, url: `https://tempfile.org/${fileId}/download` });
                 return;
               }
             }
