@@ -30,6 +30,23 @@ import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
 import type { ContextTarget } from "./ClipContextMenu";
 
+// Track offsets for proper z-order: audio=0-9, video=10-19, text=20-29
+function nextTrack(type: string, offset: number = 0): number {
+  const layers = useEditorStore.getState().video.layers ?? [];
+  const sameTypeCount = layers.filter((l: any) => l.type === type).length;
+  return offset + sameTypeCount;
+}
+
+function getDisplayName(urlOrFile: string | File | undefined): string {
+  if (!urlOrFile) return "Clip";
+  if (typeof urlOrFile === "string") {
+    const parts = urlOrFile.split("/");
+    const last = parts[parts.length - 1];
+    return decodeURIComponent(last).replace(/\.[^.]+$/, "") || "Clip";
+  }
+  return urlOrFile.name.replace(/\.[^.]+$/, "") || "Clip";
+}
+
 function VHandle() {
   return (
     <Separator className="w-[3px] bg-transparent hover:bg-white/20 active:bg-white/40 transition-colors cursor-col-resize shrink-0" />
@@ -71,20 +88,32 @@ export function Layout() {
           if (!asset || !asset.url) continue;
           const type = asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio";
           const sourceDuration = asset.duration || 5;
-          if (type === "video") {
+          const isVideoType = type === "video";
+          if (isVideoType) {
             const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
             const { commands: cmds } = await import("@videoflow/react-video-editor");
             const setSettingCommand = cmds.setSettingCommand;
             const linkId = generateLinkId();
-            // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
-            // Audio layer uses same video URL — DashScope can extract audio from video
+            const clipName = getDisplayName(asset.name);
+            const audioTrack = nextTrack("audio", 0);
+            const videoTrack = nextTrack("video", 10);
+            cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
+            cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
             const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
+            await cmds.setPropertyCommand(editor.commit, audioLayerId, "track", audioTrack);
+            await cmds.setPropertyCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
             await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
             const layerId = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
+            await cmds.setPropertyCommand(editor.commit, layerId, "track", videoTrack);
+            await cmds.setPropertyCommand(editor.commit, layerId, "name", clipName);
             await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
             await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
           } else {
-            await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
+            const l = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
+            if (l) {
+              const { commands: cmds } = await import("@videoflow/react-video-editor");
+              await cmds.setPropertyCommand(editor.commit, l, "track", nextTrack("audio", 0));
+            }
           }
         }
         // Seek to refresh preview
@@ -330,20 +359,32 @@ export function Layout() {
         const url = URL.createObjectURL(file);
         mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
-        if (type === "video") {
+        const isVideoFile = type === "video";
+        if (isVideoFile) {
           const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
           const { commands: cmds } = await import("@videoflow/react-video-editor");
           const setSettingCommand = cmds.setSettingCommand;
           const linkId = generateLinkId();
-          // Audio layer uses same video URL — DashScope can extract audio from video
+          const clipName = getDisplayName(file);
+          const audioTrack = nextTrack("audio", 0);
+          const videoTrack = nextTrack("video", 10);
+          cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
+          cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
           const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+          await cmds.setPropertyCommand(editor.commit, audioLayerId, "track", audioTrack);
+          await cmds.setPropertyCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
           const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+          await cmds.setPropertyCommand(editor.commit, layerId, "track", videoTrack);
+          await cmds.setPropertyCommand(editor.commit, layerId, "name", clipName);
           await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
-          // Mute video layer's built-in audio — separate audio track handles sound
           await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
         } else {
-          await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+          const l = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+          if (l) {
+            const { commands: cmds } = await import("@videoflow/react-video-editor");
+            await cmds.setPropertyCommand(editor.commit, l, "track", nextTrack("audio", 0));
+          }
         }
       }
       mediaStore.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
@@ -367,21 +408,25 @@ export function Layout() {
         const { commands: cmds } = await import("@videoflow/react-video-editor");
         const setSettingCommand = cmds.setSettingCommand;
         const linkId = generateLinkId();
-        // Audio layer uses same video URL — DashScope can extract audio from video
+        const clipName = getDisplayName(data.url);
+        const audioTrack = nextTrack("audio", 0);
+        const videoTrack = nextTrack("video", 10);
+        cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
+        cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
         const audioLayerId = await addLayerCommand(editor.commit, {
-          type: "audio",
-          source: data.url,
-          sourceDuration: data.duration || 5,
-          startTime,
+          type: "audio", source: data.url, sourceDuration: data.duration || 5, startTime,
         });
-        if (audioLayerId) await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+        if (audioLayerId) {
+          await cmds.setPropertyCommand(editor.commit, audioLayerId, "track", audioTrack);
+          await cmds.setPropertyCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+          await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+        }
         const videoLayerId = await addLayerCommand(editor.commit, {
-          type: data.type,
-          source: data.url,
-          sourceDuration: data.duration || 5,
-          startTime,
+          type: data.type, source: data.url, sourceDuration: data.duration || 5, startTime,
         });
         if (videoLayerId) {
+          await cmds.setPropertyCommand(editor.commit, videoLayerId, "track", videoTrack);
+          await cmds.setPropertyCommand(editor.commit, videoLayerId, "name", clipName);
           await setLayerLinkId(editor.commit, videoLayerId, linkId, setSettingCommand);
           await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
         }
@@ -469,10 +514,18 @@ export function Layout() {
                                 const { commands: cmds } = await import("@videoflow/react-video-editor");
                                 const setSettingCommand = cmds.setSettingCommand;
                                 const linkId = generateLinkId();
-                                // Audio layer uses same video URL — DashScope can extract audio from video
+                                const clipName = getDisplayName(file);
+                                const audioTrack = nextTrack("audio", 0);
+                                const videoTrack = nextTrack("video", 10);
+                                cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
+                                cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
                                 const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                                await cmds.setPropertyCommand(editor.commit, audioLayerId2, "track", audioTrack);
+                                await cmds.setPropertyCommand(editor.commit, audioLayerId2, "name", `${clipName} Audio`);
                                 await setLayerLinkId(editor.commit, audioLayerId2, linkId, setSettingCommand);
                                 const layerId2 = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+                                await cmds.setPropertyCommand(editor.commit, layerId2, "track", videoTrack);
+                                await cmds.setPropertyCommand(editor.commit, layerId2, "name", clipName);
                                 await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);
                                 await cmds.setPropertyCommand(editor.commit, layerId2, "mute", true);
                               } else {
@@ -557,6 +610,8 @@ function EditorPlaybar() {
   const currentFrame = useEditorStore((s) => s.currentFrame);
   const fps = video.fps || 30;
   const timeStr = formatTime(currentFrame / fps, fps);
+  const selection = useEditorStore((s) => s.selection);
+  const [volume, setVolume] = useState(1);
 
   const togglePlay = () => {
     const s = useEditorStore.getState();
@@ -611,6 +666,26 @@ function EditorPlaybar() {
       </button>
 
       <span style={{ fontFamily: "var(--vf-font-mono)", minWidth: 70, textAlign: "center", fontSize: 11 }}>{timeStr}</span>
+
+      {/* Volume control */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}>
+        <span style={{ fontSize: 13, cursor: "default", opacity: 0.6 }}>🔊</span>
+        <input
+          type="range"
+          min="0" max="1" step="0.05"
+          value={volume}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            setVolume(v);
+            const s = useEditorStore.getState();
+            for (const id of selection.layerIds) {
+              commands.setPropertyCommand(s.commit, id, "volume", v);
+            }
+          }}
+          style={{ width: 60, accentColor: "var(--vf-primary, #888)", cursor: "pointer" }}
+          title={`Volume: ${Math.round(volume * 100)}%`}
+        />
+      </div>
 
       <div style={{ flex: 1 }} />
 

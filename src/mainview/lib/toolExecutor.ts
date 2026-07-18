@@ -739,7 +739,6 @@ export async function executeTool(
           const source = layer.settings?.source as string;
           if (!source) continue;
           try {
-            // Upload video directly to catbox.moe — DashScope ASR accepts MP4 files
             const resp = await fetch(source);
             const blob = await resp.blob();
             const dataUrl: string = await new Promise((resolve, reject) => {
@@ -756,18 +755,25 @@ export async function executeTool(
             const { setLayerLinkId } = await import("@/lib/linkUtils");
             const { commands: cmds } = await import("@videoflow/react-video-editor");
             const setSettingCommand = cmds.setSettingCommand;
+            const clipName = (layer.settings?.name as string) || "Clip";
+            const audioTrack = (editor.video.layers ?? []).filter((l: any) => l.type === "audio").length;
+            cmds.setTrackSettingsCommand(commit, audioTrack, { name: `A${audioTrack + 1}` });
             const newAudioId = await addLayerCommand(commit, {
               type: "audio",
               source: publicUrl,
               sourceDuration: layer.settings?.sourceDuration ?? 5,
               startTime: layer.settings?.startTime ?? 0,
             });
-            if (newAudioId) await setLayerLinkId(commit, newAudioId, linkId, setSettingCommand);
+            if (newAudioId) {
+              await cmds.setPropertyCommand(commit, newAudioId, "track", audioTrack);
+              await cmds.setPropertyCommand(commit, newAudioId, "name", `${clipName} Audio`);
+              await setLayerLinkId(commit, newAudioId, linkId, setSettingCommand);
+            }
             await setLayerLinkId(commit, layer.id, linkId, setSettingCommand);
             await cmds.setPropertyCommand(commit, layer.id, "mute", true);
             extracted++;
           } catch (e) {
-            console.warn("[extract_audio] failed for", source.slice(0, 60), e);
+            console.warn("[extract_audio] failed for", (source as string)?.slice(0, 60), e);
           }
         }
         refreshPreview();
@@ -935,7 +941,8 @@ export async function executeTool(
             const endFrame = toTimeline(phrase[phrase.length - 1].end ?? phrase[0].end ?? 1);
             const durationSeconds = Math.max(0.5, (endFrame - startFrame) / fps);
 
-            await addLayerCommand(commit, {
+            const textTrack = 20 + (editor.video.layers ?? []).filter((l: any) => l.type === "text" || l.type === "captions").length;
+            const captionLayerId = await addLayerCommand(commit, {
               type: "text",
               startTime: startFrame / fps,
               sourceDuration: durationSeconds,
@@ -944,6 +951,11 @@ export async function executeTool(
                 ...captionProps,
               },
             });
+            if (captionLayerId) {
+              const { commands: cmds } = await import("@videoflow/react-video-editor");
+              await cmds.setPropertyCommand(commit, captionLayerId, "track", textTrack);
+              await cmds.setPropertyCommand(commit, captionLayerId, "name", displayText.slice(0, 40));
+            }
             totalCaptions++;
           }
         }
