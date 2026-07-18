@@ -23,6 +23,7 @@ const {
   trimStartCommand,
   reorderLayersCommand,
   setTrackSettingsCommand,
+  setSettingCommand,
 } = commands;
 
 export interface ToolResult {
@@ -251,7 +252,10 @@ export async function executeTool(
       }
 
       case "inspect_media": {
-        const mediaRef = input.mediaRef as string;
+        const mediaRef = input.mediaRef as string | undefined;
+        if (!mediaRef) {
+          return JSON.stringify({ error: "mediaRef is required. Call get_media first to list available assets, then pass the asset id." });
+        }
         const maxFrames = Math.min((input.maxFrames as number) ?? 6, 12);
         const clipId = input.clipId as string | undefined;
         const overview = input.overview as boolean | undefined;
@@ -390,14 +394,20 @@ export async function executeTool(
             sourceDuration,
             startTime: startTime || startFrame / fps,
           });
-          // Separate video+audio tracks for video assets
+          // Separate video+audio tracks for video assets — linked via linkId
           if (asset.type === "video") {
-            await addLayerCommand(commit, {
+            const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+            const linkId = generateLinkId();
+            await setLayerLinkId(commit, layerId, linkId, setSettingCommand);
+            // Mute the video layer's built-in audio — the separate audio track handles sound
+            await setPropertyCommand(commit, layerId, "mute", true);
+            const audioLayerId = await addLayerCommand(commit, {
               type: "audio",
               source: asset.url,
               sourceDuration,
               startTime: startTime || startFrame / fps,
             });
+            await setLayerLinkId(commit, audioLayerId, linkId, setSettingCommand);
           }
           results.push({ layerId, mediaRef, startTime: startTime || startFrame / fps, sourceDuration });
         }
@@ -425,20 +435,26 @@ export async function executeTool(
           if (!asset) continue;
           const startTime = ((entry.startFrame as number) ?? 0) / fps;
           const sourceDuration = (entry.durationFrames as number ? (entry.durationFrames as number) / fps : undefined) ?? asset.duration ?? 5;
-          await addLayerCommand(commit, {
+          const layerId = await addLayerCommand(commit, {
             type: asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio",
             source: asset.url,
             sourceDuration,
             startTime,
           });
-          // Separate video+audio tracks for video assets
+          // Separate video+audio tracks for video assets — linked via linkId
           if (asset.type === "video") {
-            await addLayerCommand(commit, {
+            const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+            const linkId = generateLinkId();
+            await setLayerLinkId(commit, layerId, linkId, setSettingCommand);
+            // Mute the video layer's built-in audio — the separate audio track handles sound
+            await setPropertyCommand(commit, layerId, "mute", true);
+            const audioLayerId = await addLayerCommand(commit, {
               type: "audio",
               source: asset.url,
               sourceDuration,
               startTime,
             });
+            await setLayerLinkId(commit, audioLayerId, linkId, setSettingCommand);
           }
         }
         refreshPreview();
@@ -448,10 +464,20 @@ export async function executeTool(
       case "remove_clips": {
         const layerIds = input.layerIds as string[];
         if (!layerIds || layerIds.length === 0) return JSON.stringify({ error: "No layerIds provided" });
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+        const allLayers = editor.video.layers ?? [];
+        // Resolve linked partners — remove them too
+        const idsToRemove = new Set(layerIds);
+        for (const id of layerIds) {
+          const partner = findLinkedPartnerIn(allLayers, id);
+          if (partner && !idsToRemove.has(partner.id)) {
+            idsToRemove.add(partner.id);
+          }
+        }
         const beforeSnap = snapshotTimeline();
-        await removeLayersCommand(commit, layerIds);
+        await removeLayersCommand(commit, Array.from(idsToRemove));
         refreshPreview();
-        return JSON.stringify({ removed: layerIds });
+        return JSON.stringify({ removed: Array.from(idsToRemove) });
       }
 
       case "remove_tracks": {
@@ -470,11 +496,27 @@ export async function executeTool(
       case "move_clips": {
         const clips = input.clips as Array<Record<string, unknown>>;
         if (!clips || clips.length === 0) return JSON.stringify({ error: "No clips provided" });
-        const updates = clips.map((c) => ({
-          id: c.layerId as string,
-          startTime: Math.max(0, c.startTime as number),
-          track: c.track !== undefined ? Math.max(0, c.track as number) : undefined,
-        }));
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+        const allLayers = editor.video.layers ?? [];
+        const updates: Array<{ id: string; startTime: number; track?: number }> = [];
+        const seenIds = new Set<string>();
+        for (const c of clips) {
+          const layerId = c.layerId as string;
+          const startTime = Math.max(0, c.startTime as number);
+          const track = c.track !== undefined ? Math.max(0, c.track as number) : undefined;
+          if (!seenIds.has(layerId)) {
+            updates.push({ id: layerId, startTime, track });
+            seenIds.add(layerId);
+          }
+          // Also move linked partner to the same startTime
+          const partner = findLinkedPartnerIn(allLayers, layerId);
+          if (partner && !seenIds.has(partner.id)) {
+            const origStart = partner.settings?.startTime ?? 0;
+            const delta = startTime - ((c.startTime as number) ?? 0);
+            updates.push({ id: partner.id, startTime: Math.max(0, origStart + delta), track: partner.track });
+            seenIds.add(partner.id);
+          }
+        }
         await moveLayersCommand(commit, updates);
         refreshPreview();
         return JSON.stringify({ moved: updates });
@@ -482,6 +524,8 @@ export async function executeTool(
 
       case "split_clips": {
         const cuts = input.cuts as Array<Record<string, unknown>> | undefined;
+        const { findLinkedPartnerIn, getLayerLinkId } = await import("@/lib/linkUtils");
+        const allLayers = editor.video.layers ?? [];
         const beforeSnap = snapshotTimeline();
         if (cuts && cuts.length > 0) {
           for (const cut of cuts) {
@@ -494,16 +538,39 @@ export async function executeTool(
             if (atFrame > startFrame && atFrame < startFrame + durFrames) {
               const splitDur = (atFrame - startFrame) / fps;
               const remainDur = (durFrames - (atFrame - startFrame)) / fps;
-              const origDur = layer.settings?.sourceDuration ?? 5;
-              // Resize original
+              // Resize original (left part)
               await resizeLayerCommand(commit, layerId, splitDur);
-              // Add right part
-              await addLayerCommand(commit, {
+              // Add right part — preserve linkId if present
+              const linkId = getLayerLinkId(layer);
+              const newLayerId = await addLayerCommand(commit, {
                 type: layer.type as string,
                 source: layer.settings?.source as string,
                 sourceDuration: remainDur,
                 startTime: (layer.settings?.startTime ?? 0) + splitDur,
               });
+              if (linkId && newLayerId) {
+                await setSettingCommand(commit, newLayerId, "linkId", linkId);
+              }
+              // Also split the linked partner at the same frame
+              const partner = findLinkedPartnerIn(allLayers, layerId);
+              if (partner) {
+                const pStartFrame = Math.round((partner.settings?.startTime ?? 0) * fps);
+                const pDurFrames = Math.round((partner.settings?.sourceDuration ?? 0) * fps);
+                if (atFrame > pStartFrame && atFrame < pStartFrame + pDurFrames) {
+                  const pSplitDur = (atFrame - pStartFrame) / fps;
+                  const pRemainDur = (pDurFrames - (atFrame - pStartFrame)) / fps;
+                  await resizeLayerCommand(commit, partner.id, pSplitDur);
+                  const pNewId = await addLayerCommand(commit, {
+                    type: partner.type as string,
+                    source: partner.settings?.source as string,
+                    sourceDuration: pRemainDur,
+                    startTime: (partner.settings?.startTime ?? 0) + pSplitDur,
+                  });
+                  if (linkId && pNewId) {
+                    await setSettingCommand(commit, pNewId, "linkId", linkId);
+                  }
+                }
+              }
             }
           }
         } else {
@@ -521,12 +588,16 @@ export async function executeTool(
             const durFrames = Math.round((layer.settings?.sourceDuration ?? 0) * fps);
             const remainDur = (durFrames - (frame - startFrame)) / fps;
             await resizeLayerCommand(commit, layer.id, splitDur);
-            await addLayerCommand(commit, {
+            const linkId = getLayerLinkId(layer);
+            const newLayerId = await addLayerCommand(commit, {
               type: layer.type as string,
               source: layer.settings?.source as string,
               sourceDuration: remainDur,
               startTime: (layer.settings?.startTime ?? 0) + splitDur,
             });
+            if (linkId && newLayerId) {
+              await setSettingCommand(commit, newLayerId, "linkId", linkId);
+            }
           }
         }
         refreshPreview();
@@ -678,11 +749,25 @@ export async function executeTool(
         if (input.isBold !== undefined) captionProps.fontWeight = input.isBold ? "bold" : "normal";
         if (input.isItalic !== undefined) captionProps.fontStyle = input.isItalic ? "italic" : "normal";
 
-        // Get clips to transcribe
+        // Get clips to transcribe — prefer audio tracks, skip video layers with linked audio partners
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
         const layers = editor.video.layers ?? [];
         let captionTargets = targetClipIds
           ? layers.filter((l: any) => targetClipIds.includes(l.id))
           : layers.filter((l: any) => l.type === "video" || l.type === "audio");
+        // When both video+audio linked layers exist, only transcribe the audio layer
+        if (!targetClipIds) {
+          const videoLayers = captionTargets.filter((l: any) => l.type === "video");
+          const audioLayerIds = new Set(
+            captionTargets.filter((l: any) => l.type === "audio").map((l: any) => l.id)
+          );
+          captionTargets = captionTargets.filter((l: any) => {
+            if (l.type !== "video") return true;
+            // Skip video layer if it has a linked audio partner in the targets
+            const partner = findLinkedPartnerIn(layers, l.id);
+            return !partner || !audioLayerIds.has(partner.id);
+          });
+        }
 
         if (captionTargets.length === 0) {
           return JSON.stringify({ error: "No audio/video clips found for captioning." });
@@ -1187,11 +1272,23 @@ export async function executeTool(
         const endFrame = input.endFrame as number | undefined;
         const settingsMode = (input.mode as string) ?? useSettingsStore.getState().audioProcessingMode ?? "local";
 
-        // Get clips to transcribe
+        // Get clips to transcribe — prefer audio tracks, skip video layers with linked audio
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
         const layers = editor.video.layers ?? [];
         let targetLayers = clipId
           ? layers.filter((l: any) => l.id === clipId)
           : layers.filter((l: any) => l.type === "video" || l.type === "audio");
+        // When both video+audio linked layers exist, only transcribe the audio layer
+        if (!clipId) {
+          const audioLayerIds = new Set(
+            targetLayers.filter((l: any) => l.type === "audio").map((l: any) => l.id)
+          );
+          targetLayers = targetLayers.filter((l: any) => {
+            if (l.type !== "video") return true;
+            const partner = findLinkedPartnerIn(layers, l.id);
+            return !partner || !audioLayerIds.has(partner.id);
+          });
+        }
 
         if (targetLayers.length === 0) {
           return JSON.stringify({ error: "No audio/video clips found to transcribe." });

@@ -3,6 +3,7 @@ import Electrobun from "electrobun/bun";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -145,6 +146,81 @@ transport.registerHandler((msg: any) => {
         Electrobun.Utils.openExternal(msg.authUrl);
         transport.send({ type: "sign-in-browser-opened" });
       }
+      break;
+    }
+
+    case "tool-result": {
+      // Resolve pending tool execution from agent loop
+      resolveToolResult(msg.toolResultId, msg.result, msg.isError);
+      break;
+    }
+
+    case "upload-audio-for-asr": {
+      // Upload audio blob (sent as base64) to tempfile.org for DashScope ASR
+      (async () => {
+        try {
+          const { base64Data, mimeType, requestId } = msg;
+          if (!base64Data || !requestId) {
+            transport.send({ type: "upload-audio-result", requestId, error: "Missing base64Data or requestId" });
+            return;
+          }
+
+          const buffer = Buffer.from(base64Data, "base64");
+          const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
+          const filename = `audio-${Date.now()}${ext}`;
+
+          const formData = new FormData();
+          formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), filename);
+          formData.append("expiryHours", "1");
+
+          const resp = await fetch("https://tempfile.org/api/upload/local", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!resp.ok) {
+            const errText = await resp.text().catch(() => "");
+            transport.send({ type: "upload-audio-result", requestId, error: `Upload failed (${resp.status}): ${errText}` });
+            return;
+          }
+
+          const data = await resp.json() as any;
+          const url = data?.files?.[0]?.url;
+          if (!url) {
+            transport.send({ type: "upload-audio-result", requestId, error: "No URL in upload response" });
+            return;
+          }
+
+          transport.send({ type: "upload-audio-result", requestId, url });
+        } catch (err: any) {
+          transport.send({ type: "upload-audio-result", requestId: msg.requestId, error: err?.message ?? String(err) });
+        }
+      })();
+      break;
+    }
+
+    case "agent-message": {
+      // Run the AI SDK agent loop in Bun
+      const apiKey = secureStore.get("qwen_api_key");
+      if (!apiKey) {
+        transport.send({
+          type: "agent-error",
+          requestId: msg.requestId,
+          error: "No API key configured. Set it in Settings > Agent.",
+        });
+        break;
+      }
+      runAgentLoop({
+        requestId: msg.requestId,
+        sessionMessages: msg.sessionMessages,
+        userMessage: msg.userMessage,
+        context: msg.context,
+        toolDefs: msg.toolDefs,
+        system: msg.system,
+        modelId: msg.modelId,
+        apiKey,
+        send: (m: any) => transport.send(m),
+      });
       break;
     }
 

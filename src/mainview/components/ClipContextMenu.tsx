@@ -102,11 +102,11 @@ export function ClipContextMenu({ children, onAction }: ClipContextMenuProps) {
             </ContextMenuItem>
             <ContextMenuItem onClick={handle("sync-lock")}>
               <Lock size={14} />
-              Sync Lock
+              Link Tracks
             </ContextMenuItem>
-            <ContextMenuItem onClick={handle("sync-unlock")}>
+            <ContextMenuItem onClick={handle("unlink")}>
               <Unlock size={14} />
-              Sync Unlock
+              Unlink Tracks
             </ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>

@@ -48,11 +48,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "inspect_media",
     description:
-      "View media metadata: storyboard frames (sampled at intervals), duration, resolution, codec, file size, audio channels. Optionally return word-level transcript. For long media, use overview=true first, then zoom with startSeconds/endSeconds.",
+      "Inspect a SINGLE media asset by its id (from get_media). Returns storyboard frames, duration, resolution, codec, audio channels, and optionally word-level transcript. You MUST provide mediaRef — call get_media first to get asset ids.",
     input_schema: {
       type: "object",
       properties: {
-        mediaRef: { type: "string", description: "Asset id from get_media." },
+        mediaRef: { type: "string", description: "REQUIRED. The asset id string — must be copied exactly from get_media output. Do not call inspect_media without this parameter." },
         clipId: { type: "string", description: "Optional — scope to specific clip's portion." },
         maxFrames: { type: "integer", description: "Optional — max storyboard frames (default 8)." },
         startSeconds: { type: "number", description: "Optional — start of inspection window." },
@@ -196,7 +196,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "split_clips",
     description:
-      "Split one or more layers at specific cut points. Each cut point must be strictly inside its clip. Multiple cuts on the same clip are fine. Splits only insert boundaries; nothing shifts. Use ripple_delete_ranges when you need to remove a span.",
+      "Split one or more layers at specific cut points. Each cut point must be strictly inside its clip. Multiple cuts on the same clip are fine. Linked partners (video+audio pairs) are split at the same frame. Splits only insert boundaries; nothing shifts. Use ripple_delete_ranges when you need to remove a span.",
     input_schema: {
       type: "object",
       properties: {

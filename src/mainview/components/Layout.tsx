@@ -188,8 +188,18 @@ export function Layout() {
         const s2 = useEditorStore.getState();
         const ids2 = s2.selection.layerIds;
         if (ids2.length > 0) {
+          // Also delete linked partners
+          const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+          const allLayers = s2.video.layers ?? [];
+          const idsToDelete = new Set(ids2);
+          for (const id of ids2) {
+            const partner = findLinkedPartnerIn(allLayers, id);
+            if (partner && !idsToDelete.has(partner.id)) {
+              idsToDelete.add(partner.id);
+            }
+          }
           s2.commit((v: any) => {
-            const idSet = new Set(ids2);
+            const idSet = new Set(idsToDelete);
             const remove = (layers: any[]) => {
               for (let i = layers.length - 1; i >= 0; i--) {
                 if (idSet.has(layers[i].id)) layers.splice(i, 1);
@@ -244,7 +254,32 @@ export function Layout() {
         break;
       }
       default:
-        if (action.startsWith("ai-") || action.startsWith("detect") || action.startsWith("show-beat") || action.startsWith("snap-to") || action.startsWith("sync-")) {
+        if (action === "unlink") {
+          const { unlinkLayers } = await import("@/lib/linkUtils");
+          const { commands: cmds } = await import("@videoflow/react-video-editor"); const setSettingCommand = cmds.setSettingCommand;
+          const sel = useEditorStore.getState();
+          const ids = sel.selection.layerIds;
+          if (ids.length > 0) {
+            for (const id of ids) {
+              await unlinkLayers(id, sel.commit, setSettingCommand);
+            }
+            useMediaPanelStore.getState().showToast("Tracks unlinked");
+          }
+        } else if (action === "sync-lock") {
+          const { generateLinkId, setLayerLinkId, findLinkedPartnerIn } = await import("@/lib/linkUtils");
+          const { commands: cmds } = await import("@videoflow/react-video-editor"); const setSettingCommand = cmds.setSettingCommand;
+          const sel = useEditorStore.getState();
+          const ids = sel.selection.layerIds;
+          if (ids.length >= 2) {
+            const linkId = generateLinkId();
+            for (const id of ids) {
+              await setLayerLinkId(sel.commit, id, linkId, setSettingCommand);
+            }
+            useMediaPanelStore.getState().showToast(`Linked ${ids.length} tracks`);
+          } else {
+            useMediaPanelStore.getState().showToast("Select 2+ tracks to link");
+          }
+        } else if (action.startsWith("ai-") || action.startsWith("detect") || action.startsWith("show-beat") || action.startsWith("snap-to") || action.startsWith("sync-")) {
           useMediaPanelStore.getState().showToast(`${action}: coming soon`);
         }
         break;
@@ -284,10 +319,18 @@ export function Layout() {
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const url = URL.createObjectURL(file);
         mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
-        if (editor.mediaImporter) editor.mediaImporter([file], {});
-        await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+        if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
+        const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
         if (type === "video") {
-          await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+          const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+          const { commands: cmds } = await import("@videoflow/react-video-editor");
+          const setSettingCommand = cmds.setSettingCommand;
+          const linkId = generateLinkId();
+          await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
+          // Mute video layer's built-in audio — separate audio track handles sound
+          await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
+          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+          await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
         }
       }
       mediaStore.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
@@ -313,12 +356,22 @@ export function Layout() {
         startTime,
       });
       if (data.type === "video") {
-        await addLayerCommand(editor.commit, {
+        const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+        const { commands: cmds } = await import("@videoflow/react-video-editor");
+        const setSettingCommand = cmds.setSettingCommand;
+        const linkId = generateLinkId();
+        const videoLayerId = editor.video.layers.at(-1)?.id;
+        if (videoLayerId) {
+          await setLayerLinkId(editor.commit, videoLayerId, linkId, setSettingCommand);
+          await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
+        }
+        const audioLayerId = await addLayerCommand(editor.commit, {
           type: "audio",
           source: data.url,
           sourceDuration: data.duration || 5,
           startTime,
         });
+        if (audioLayerId) await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
       }
       // Seek to refresh preview
       const s = useEditorStore.getState();
@@ -390,10 +443,17 @@ export function Layout() {
                               const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
                               const url = URL.createObjectURL(file);
                               store.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
-                              if (editor.mediaImporter) editor.mediaImporter([file], {});
-                              await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+        if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
+                              const layerId2 = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
                               if (type === "video") {
-                                await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                                const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+                                const { commands: cmds } = await import("@videoflow/react-video-editor");
+                                const setSettingCommand = cmds.setSettingCommand;
+                                const linkId = generateLinkId();
+                                await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);
+                                await cmds.setPropertyCommand(editor.commit, layerId2, "mute", true);
+                                const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                                await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
                               }
                             }
                             store.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);

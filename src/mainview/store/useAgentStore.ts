@@ -1,7 +1,7 @@
 import { create } from "zustand";
-import { streamChat, streamChatBackend } from "@/lib/qwenClient";
-import { TOOL_DEFINITIONS } from "@/lib/toolDefinitions";
-import { executeTool, getTimelineContext, getMediaContext } from "@/lib/toolExecutor";
+import { streamChatBackend, Message } from "@/lib/qwenClient";
+import { sendAgentMessage, cancelAgentStream } from "@/lib/agentIPC";
+import { getTimelineContext, getMediaContext } from "@/lib/toolExecutor";
 import { useMediaPanelStore } from "./useMediaPanelStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { useAccountStore } from "./useAccountStore";
@@ -136,20 +136,10 @@ function loadSessions(): ChatSession[] {
   }
 }
 
-interface QwenMessage {
-  role: "user" | "assistant";
-  content: string | Array<Record<string, unknown>>;
-}
-
-/**
- * Resolve @-mentions in user text.
- * Replaces `@asset:xyz` patterns with asset names, collects MentionRefs,
- * and base64-encodes image assets for inlining.
- */
-async function resolveMentions(text: string): Promise<{
+function resolveMentions(text: string): {
   cleaned: string;
   mentions: MentionRef[];
-}> {
+} {
   const mediaStore = useMediaPanelStore.getState();
   const editorStore = useEditorStore.getState();
 
@@ -208,81 +198,305 @@ async function resolveMentions(text: string): Promise<{
   return { cleaned, mentions };
 }
 
-function buildQwenMessages(session: ChatSession): QwenMessage[] {
-  const result: QwenMessage[] = [];
+function updateSession(sessionId: string, updater: (sess: ChatSession) => Partial<ChatSession>) {
+  useAgentStore.setState((s) => ({
+    sessions: s.sessions.map((sess) =>
+      sess.id === sessionId ? { ...sess, ...updater(sess), updatedAt: Date.now() } : sess
+    ),
+  }));
+}
 
-  // Inject timeline context as a system-prefixed user message
-  const context = getTimelineContext();
-  const mediaContext = getMediaContext();
-  result.push({
+async function streamViaBun(
+  sessionId: string,
+  requestId: string,
+  model: string,
+  systemMsg: string,
+) {
+  const state = useAgentStore.getState();
+  const session = state.sessions.find((s) => s.id === sessionId);
+  if (!session) return;
+
+  const assistantMsgId = makeId();
+  let assistantContent = "";
+
+  // Create placeholder assistant message
+  updateSession(sessionId, (sess) => ({
+    messages: [
+      ...sess.messages,
+      { id: assistantMsgId, role: "assistant" as const, content: "", toolUse: [], timestamp: Date.now() },
+    ],
+  }));
+
+  sendAgentMessage({
+    requestId,
+    sessionMessages: session.messages,
+    userMessage: session.messages[session.messages.length - 1],
+    context: { timeline: getTimelineContext(), media: getMediaContext() },
+    system: systemMsg,
+    modelId: model,
+    listeners: {
+      onEvent: (event) => {
+        if (useAgentStore.getState().currentSessionId !== sessionId) return;
+
+        if (event.type === "text-delta") {
+          assistantContent += event.text;
+          updateSession(sessionId, (sess) => ({
+            messages: sess.messages.map((m) =>
+              m.id === assistantMsgId ? { ...m, content: assistantContent } : m
+            ),
+          }));
+        }
+
+        if (event.type === "tool-call") {
+          const toolEntry: ToolUseEntry = {
+            id: event.toolCallId,
+            name: event.toolName,
+            inputJSON: JSON.stringify(event.input),
+          };
+          updateSession(sessionId, (sess) => ({
+            messages: sess.messages.map((m) =>
+              m.id === assistantMsgId
+                ? { ...m, toolUse: [...(m.toolUse ?? []), toolEntry] }
+                : m
+            ),
+          }));
+        }
+
+        if (event.type === "tool-result") {
+          updateSession(sessionId, (sess) => ({
+            messages: sess.messages.map((m) =>
+              m.id === assistantMsgId
+                ? {
+                    ...m,
+                    toolUse: m.toolUse?.map((t) =>
+                      t.id === event.toolCallId
+                        ? { ...t, result: { content: event.output, isError: false } }
+                        : t
+                    ),
+                  }
+                : m
+            ),
+          }));
+        }
+      },
+
+      onDone: (data) => {
+        if (data.newMessages && data.newMessages.length > 0) {
+          const mutationTools = new Set([
+            "add_clips", "insert_clips", "remove_clips", "remove_tracks",
+            "move_clips", "split_clips", "set_clip_properties", "ripple_delete_ranges",
+            "set_keyframes", "add_texts", "update_text", "add_captions", "remove_words",
+            "apply_layout", "apply_color", "apply_effect", "create_matte",
+            "set_project_settings", "import_media",
+          ]);
+
+          const st = useAgentStore.getState();
+          let turn = st.agentTurn;
+          const history = [...st.agentEditHistory];
+
+          for (const msg of data.newMessages) {
+            if (msg.toolUse) {
+              for (const tool of msg.toolUse) {
+                if (tool.result && !tool.result.isError && mutationTools.has(tool.name)) {
+                  turn++;
+                  let input: Record<string, unknown> = {};
+                  try { input = JSON.parse(tool.inputJSON); } catch {}
+                  history.push({ turn, tool: tool.name, summary: JSON.stringify(input).slice(0, 120) });
+                }
+              }
+            }
+          }
+
+          useAgentStore.setState((s) => ({
+            agentTurn: turn,
+            agentEditHistory: history.slice(-30),
+          }));
+
+          updateSession(sessionId, (sess) => ({
+            messages: [
+              ...sess.messages.filter((m) => m.id !== assistantMsgId),
+              ...data.newMessages,
+            ],
+          }));
+        }
+
+        useAgentStore.setState({ isStreaming: false });
+        persistSessions(useAgentStore.getState().sessions);
+      },
+
+      onError: (error) => {
+        useAgentStore.setState({ streamError: error, isStreaming: false });
+        persistSessions(useAgentStore.getState().sessions);
+      },
+
+      onToolRequest: () => {},
+    },
+  });
+}
+
+async function streamViaBackend(
+  sessionId: string,
+  requestId: string,
+  sessionToken: string,
+  model: string,
+  systemMsg: string,
+) {
+  // Keep the existing backend streaming path for cloud users
+  // (API key stays on backend, frontend streams via SSE)
+  // This reuses the old streamChatBackend + manual loop approach
+  const { streamChatBackend } = await import("@/lib/qwenClient");
+  const { TOOL_DEFINITIONS } = await import("@/lib/toolDefinitions");
+
+  const session = useAgentStore.getState().sessions.find((s) => s.id === sessionId);
+  if (!session) return;
+
+  const assistantMsgId = makeId();
+  let assistantContent = "";
+
+  updateSession(sessionId, (sess) => ({
+    messages: [
+      ...sess.messages,
+      {
+        id: assistantMsgId,
+        role: "assistant" as const,
+        content: "",
+        toolUse: [],
+        timestamp: Date.now(),
+      },
+    ],
+  }));
+
+  // Build messages for backend (using the backend's message format)
+  // Backend uses Anthropic message format - build messages inline
+  const qwenMessages: Message[] = [];
+
+  // Inject context
+  qwenMessages.push({
     role: "user",
-    content: `[Timeline context]\n${context}\n\n[Media library]\n${mediaContext}`,
+    content: `[Timeline context]\n${getTimelineContext()}\n\n[Media library]\n${getMediaContext()}`,
   });
 
   for (const msg of session.messages) {
     if (msg.role === "system") continue;
-
     if (msg.role === "user") {
-      const blocks: Array<Record<string, unknown>> = [];
-
-      // If there are image mentions, add them as image blocks
-      if (msg.mentions && msg.mentions.length > 0) {
+      const blocks: any[] = [];
+      if (msg.mentions) {
         for (const m of msg.mentions) {
           if (m.imageDataUrl && m.type === "mediaAsset") {
             blocks.push({
               type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/png",
-                data: m.imageDataUrl.replace(/^data:image\/\w+;base64,/, ""),
-              },
+              source: { type: "base64", media_type: "image/png", data: m.imageDataUrl.replace(/^data:image\/\w+;base64,/, "") },
             });
           }
         }
-        // Add a note for the agent about inlined images
-        blocks.push({
-          type: "text",
-          text: `[The user referenced the following media inline — do not call inspect_media for them: ${msg.mentions.filter((m) => m.imageDataUrl).map((m) => m.name).join(", ")}]`,
-        });
+        blocks.push({ type: "text", text: `[The user referenced media inline: ${msg.mentions.filter((m) => m.imageDataUrl).map((m) => m.name).join(", ")}]` });
       }
-
       blocks.push({ type: "text", text: msg.content });
-      result.push({ role: "user", content: blocks });
-      continue;
-    }
-
-    // assistant
-    const blocks: Array<Record<string, unknown>> = [];
-    if (msg.content) {
-      blocks.push({ type: "text", text: msg.content });
-    }
-    if (msg.toolUse) {
-      for (const tool of msg.toolUse) {
-        if (tool.result) {
-          blocks.push({
-            type: "tool_result",
-            tool_use_id: tool.id,
-            content: tool.result.content,
-            is_error: tool.result.isError,
-          });
-        } else {
-          let input: Record<string, unknown> = {};
-          try {
-            input = JSON.parse(tool.inputJSON);
-          } catch {}
-          blocks.push({
-            type: "tool_use",
-            id: tool.id,
-            name: tool.name,
-            input,
-          });
+      qwenMessages.push({ role: "user", content: blocks });
+    } else {
+      const blocks: any[] = [];
+      if (msg.content) blocks.push({ type: "text", text: msg.content });
+      if (msg.toolUse) {
+        for (const tool of msg.toolUse) {
+          if (tool.result) {
+            blocks.push({ type: "tool_result", tool_use_id: tool.id, content: tool.result.content, is_error: tool.result.isError });
+          } else {
+            let input: Record<string, unknown> = {};
+            try { input = JSON.parse(tool.inputJSON); } catch {}
+            blocks.push({ type: "tool_use", id: tool.id, name: tool.name, input });
+          }
         }
       }
+      qwenMessages.push({ role: "assistant", content: blocks });
     }
-    result.push({ role: "assistant", content: blocks });
   }
 
-  return result;
+  const abortController = new AbortController();
+  (window as unknown as Record<string, unknown>).__vf_agent_abort = abortController;
+
+  try {
+    let maxToolRounds = 10;
+    while (maxToolRounds > 0) {
+      maxToolRounds--;
+
+      const stream = streamChatBackend(sessionToken, {
+        messages: qwenMessages,
+        tools: TOOL_DEFINITIONS,
+        model,
+        system: systemMsg,
+        signal: abortController.signal,
+      });
+
+      let gotStop = false;
+
+      for await (const event of stream) {
+        if (useAgentStore.getState().currentSessionId !== sessionId) break;
+
+        if (event.type === "text_delta") {
+          assistantContent += event.text;
+          updateSession(sessionId, (sess) => ({
+            messages: sess.messages.map((m) => m.id === assistantMsgId ? { ...m, content: assistantContent } : m),
+          }));
+        }
+
+        if (event.type === "tool_use") {
+          updateSession(sessionId, (sess) => ({
+            messages: sess.messages.map((m) => m.id === assistantMsgId ? { ...m, toolUse: [...(m.toolUse ?? []), { id: event.id, name: event.name, inputJSON: JSON.stringify(event.input) }] } : m),
+          }));
+        }
+
+        if (event.type === "stop") {
+          gotStop = true;
+          const msg = useAgentStore.getState().sessions.find((s) => s.id === sessionId)?.messages.find((m) => m.id === assistantMsgId);
+          if (!msg) break;
+
+          const pendingTools = msg.toolUse?.filter((t) => !t.result) ?? [];
+          if (pendingTools.length === 0) break;
+
+          const { executeTool } = await import("@/lib/toolExecutor");
+          const results = await Promise.all(pendingTools.map(async (tool) => {
+            let input: Record<string, unknown> = {};
+            try { input = JSON.parse(tool.inputJSON); } catch {}
+            const resultStr = await executeTool(tool.name, input);
+            let isError = false;
+            try { isError = !!JSON.parse(resultStr).error; } catch { isError = true; }
+            return { id: tool.id, name: tool.name, inputJSON: tool.inputJSON, result: { content: resultStr, isError } };
+          }));
+
+          updateSession(sessionId, (sess) => ({
+            messages: sess.messages.map((m) => m.id === assistantMsgId ? { ...m, toolUse: m.toolUse?.map((t) => results.find((r) => r.id === t.id) ?? t) } : m),
+          }));
+
+          assistantContent = "";
+
+          // Add tool results to qwenMessages for next round
+          for (const r of results) {
+            qwenMessages.push({ role: "assistant", content: [
+              { type: "tool_use", id: r.id, name: r.name, input: JSON.parse(r.inputJSON || "{}") },
+            ]});
+            qwenMessages.push({ role: "user", content: [
+              { type: "tool_result", tool_use_id: r.id, content: r.result.content, is_error: r.result.isError },
+            ]});
+          }
+        }
+      }
+
+      if (gotStop) {
+        const msg = useAgentStore.getState().sessions.find((s) => s.id === sessionId)?.messages.find((m) => m.id === assistantMsgId);
+        if (!msg?.toolUse?.length) break;
+      } else {
+        break;
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof DOMException && err.name === "AbortError")) {
+      useAgentStore.setState({ streamError: err instanceof Error ? err.message : "Stream failed" });
+    }
+  } finally {
+    useAgentStore.setState({ isStreaming: false });
+    persistSessions(useAgentStore.getState().sessions);
+    delete (window as unknown as Record<string, unknown>).__vf_agent_abort;
+  }
 }
 
 export const useAgentStore = create<AgentState>((set, get) => ({
@@ -366,9 +580,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const userMsg: AgentMessage = {
       id: makeId(),
       role: "user",
-      content: mentions.length > 0
-        ? cleaned
-        : text.trim(),
+      content: mentions.length > 0 ? cleaned : text.trim(),
       mentions: mentions.length > 0 ? mentions : undefined,
       timestamp: Date.now(),
     };
@@ -396,56 +608,22 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     persistSessions(get().sessions);
 
     const model = MODEL_MAP[state.model] ?? state.model;
-    const abortController = new AbortController();
-    const aborter = abortController;
-    (window as Record<string, unknown>).__vf_agent_abort = aborter;
+    const requestId = makeId();
 
-    try {
-      const assistantMsgId = makeId();
-      let assistantContent = "";
+    // Build system prompt
+    const agentState = get();
+    const editHistoryText = agentState.agentEditHistory.length > 0
+      ? "\n\nRecent agent edits (most recent first):\n" +
+        agentState.agentEditHistory.slice(-12).reverse().map(
+          (e) => `  [Turn ${e.turn}] ${e.tool}: ${e.summary}`,
+        ).join("\n")
+      : "";
 
-      set((s) => ({
-        sessions: s.sessions.map((sess) =>
-          sess.id === sessionId
-            ? {
-                ...sess,
-                messages: [
-                  ...sess.messages,
-                  {
-                    id: assistantMsgId,
-                    role: "assistant" as const,
-                    content: "",
-                    toolUse: [],
-                    timestamp: Date.now(),
-                  },
-                ],
-                updatedAt: Date.now(),
-              }
-            : sess
-        ),
-      }));
+    const effectiveAudioMode = (apiKey || isBackendUser)
+      ? "cloud"
+      : useSettingsStore.getState().audioProcessingMode;
 
-      let maxToolRounds = 10;
-
-      while (maxToolRounds > 0) {
-        maxToolRounds--;
-        const session = get().sessions.find((s) => s.id === sessionId);
-        if (!session) break;
-
-        const qwenMessages = buildQwenMessages(session);
-        const agentState = get();
-        const editHistoryText = agentState.agentEditHistory.length > 0
-          ? "\n\nRecent agent edits (most recent first):\n" +
-            agentState.agentEditHistory.slice(-12).reverse().map(
-              (e) => `  [Turn ${e.turn}] ${e.tool}: ${e.summary}`,
-            ).join("\n")
-          : "";
-        
-        const effectiveAudioMode = (apiKey || isBackendUser) 
-          ? "cloud" 
-          : useSettingsStore.getState().audioProcessingMode;
-          
-        const systemMsg = `You are a creative AI assistant connected to Filmidi, an AI-native video editor. Help the user build and edit their project by calling the tools available to you.
+    const systemMsg = `You are a creative AI assistant connected to Filmidi, an AI-native video editor. Help the user build and edit their project by calling the tools available to you.
 
 # Core model
 - The timeline has a fixed fps and resolution. All timing is in FRAMES, not seconds: frame = seconds × fps.
@@ -456,7 +634,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - IDs are returned as short prefixes. Pass them back exactly as given — never pad, complete, or guess a longer form.
 
 # Always do
-- Timeline context (totalFrames, trackCount, fps, currentFrame) is auto-injected before each of your turns. Call get_timeline only when you need the full track/clip structure.
+- Call get_timeline before making edits to check current state (totalFrames, trackCount, fps, currentFrame, track/clip structure).
 - Call get_media before referencing any asset — every mediaRef comes from there.
 - Before describing any user-supplied asset, call inspect_media and describe what you actually see — never paraphrase the filename.
 - To find a moment across the library ("the sunset shot", "where she mentions the budget"), call search_media before inspecting files one by one.
@@ -482,205 +660,20 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - No preamble, no numbered play-by-play, no restating the plan back. Match the app's calm, terse voice: never chatty, never marketing.
 - When the user is vague about aesthetic direction, ask one focused question instead of guessing.${editHistoryText}`;
 
-        let currentToolBlock: ToolUseEntry | null = null;
-        let gotStop = false;
+    // Route: cloud users → backend API (key on server), direct users → Bun IPC (key in Bun)
+    const useBackend = isBackendUser && account.sessionToken;
 
-        const useBackend = isBackendUser && account.sessionToken;
-        const stream = useBackend
-          ? streamChatBackend(account.sessionToken!, {
-              messages: qwenMessages,
-              tools: TOOL_DEFINITIONS,
-              model,
-              system: systemMsg,
-              signal: aborter.signal,
-            })
-          : streamChat(apiKey!, {
-              messages: qwenMessages,
-              tools: TOOL_DEFINITIONS,
-              model,
-              system: systemMsg,
-              signal: aborter.signal,
-            });
-
-        try {
-          for await (const event of stream) {
-            if (get().currentSessionId !== sessionId) break;
-
-            if (event.type === "text_delta") {
-              assistantContent += event.text;
-
-              set((s) => ({
-                sessions: s.sessions.map((sess) =>
-                  sess.id === sessionId
-                    ? {
-                        ...sess,
-                        messages: sess.messages.map((m) =>
-                          m.id === assistantMsgId
-                            ? { ...m, content: assistantContent }
-                            : m
-                        ),
-                        updatedAt: Date.now(),
-                      }
-                    : sess
-                ),
-              }));
-            }
-
-            if (event.type === "tool_use") {
-              currentToolBlock = {
-                id: event.id,
-                name: event.name,
-                inputJSON: JSON.stringify(event.input),
-              };
-
-              set((s) => ({
-                sessions: s.sessions.map((sess) =>
-                  sess.id === sessionId
-                    ? {
-                        ...sess,
-                        messages: sess.messages.map((m) =>
-                          m.id === assistantMsgId
-                            ? {
-                                ...m,
-                                toolUse: [...(m.toolUse ?? []), currentToolBlock!],
-                              }
-                            : m
-                        ),
-                        updatedAt: Date.now(),
-                      }
-                    : sess
-                ),
-              }));
-            }
-
-            if (event.type === "stop") {
-              gotStop = true;
-
-              const msg = get()
-                .sessions.find((s) => s.id === sessionId)
-                ?.messages.find((m) => m.id === assistantMsgId);
-              if (!msg) break;
-
-              const pendingTools =
-                msg.toolUse?.filter((t) => !t.result) ?? [];
-              if (pendingTools.length === 0) {
-                break;
-              }
-
-              const results = await Promise.all(
-                pendingTools.map(async (tool) => {
-                  let input: Record<string, unknown> = {};
-                  try {
-                    input = JSON.parse(tool.inputJSON);
-                  } catch {}
-                  const resultStr = await executeTool(tool.name, input);
-                  let isError = false;
-                  try {
-                    const parsed = JSON.parse(resultStr);
-                    isError = !!parsed.error;
-                  } catch {
-                    isError = true;
-                  }
-                  // Track edit history for mutation tools
-                  const mutationTools = [
-                    "add_clips", "insert_clips", "remove_clips", "remove_tracks",
-                    "move_clips", "split_clips", "set_clip_properties", "ripple_delete_ranges",
-                    "set_keyframes", "add_texts", "update_text", "add_captions", "remove_words",
-                    "apply_layout", "apply_color", "apply_effect", "create_matte",
-                    "set_project_settings", "import_media",
-                  ];
-                  if (mutationTools.includes(tool.name) && !isError) {
-                    const turn = get().agentTurn + 1;
-                    const summary = typeof input === "object" ? JSON.stringify(input).slice(0, 120) : "";
-                    set((s) => ({
-                      agentTurn: turn,
-                      agentEditHistory: [
-                        ...s.agentEditHistory.slice(-30),
-                        { turn, tool: tool.name, summary },
-                      ],
-                    }));
-                  }
-                  return {
-                    id: tool.id,
-                    name: tool.name,
-                    inputJSON: tool.inputJSON,
-                    result: { content: resultStr, isError },
-                  };
-                }),
-              );
-
-              set((s) => ({
-                sessions: s.sessions.map((sess) =>
-                  sess.id === sessionId
-                    ? {
-                        ...sess,
-                        messages: sess.messages.map((m) =>
-                          m.id === assistantMsgId
-                            ? {
-                                ...m,
-                                toolUse: m.toolUse?.map((t) => {
-                                  const res = results.find(
-                                    (r) => r.id === t.id,
-                                  );
-                                  return res ?? t;
-                                }),
-                              }
-                            : m
-                        ),
-                        updatedAt: Date.now(),
-                      }
-                    : sess
-                ),
-              }));
-
-              assistantContent = "";
-            }
-          }
-        } catch (err) {
-          if (err instanceof DOMException && err.name === "AbortError") {
-            break;
-          }
-          if (!gotStop) {
-            console.error("Stream error:", err);
-            if (!assistantContent && !currentToolBlock) {
-              set((s) => ({
-                streamError: err instanceof Error ? err.message : "Stream failed",
-              }));
-            }
-            break;
-          }
-        }
-
-        if (gotStop) {
-          const msg = get()
-            .sessions.find((s) => s.id === sessionId)
-            ?.messages.find((m) => m.id === assistantMsgId);
-
-          if (!msg?.toolUse?.length) {
-            persistSessions(get().sessions);
-            break;
-          }
-          // Tools were executed — continue the loop so the model can respond to their results
-        } else {
-          break;
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      set((s) => ({
-        streamError: msg,
-      }));
-    } finally {
-      set({ isStreaming: false });
-      persistSessions(get().sessions);
-      delete (window as Record<string, unknown>).__vf_agent_abort;
+    if (useBackend) {
+      // Backend path: key stays on server, frontend streams via SSE
+      await streamViaBackend(sessionId, requestId, account.sessionToken!, model, systemMsg);
+    } else {
+      // Direct path: key stays in Bun, agent loop runs in Bun
+      await streamViaBun(sessionId, requestId, model, systemMsg);
     }
   },
 
   cancelStream: () => {
-    const aborter = (window as Record<string, unknown>)
-      .__vf_agent_abort as AbortController | undefined;
-    aborter?.abort();
+    cancelAgentStream();
     set({ isStreaming: false });
   },
 

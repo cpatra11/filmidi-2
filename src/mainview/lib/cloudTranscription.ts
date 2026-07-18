@@ -130,7 +130,8 @@ async function transcribeViaDashScope(
   const input: Record<string, unknown> = {};
 
   if (audioUrl.startsWith("blob:")) {
-    // Blob URLs don't exist outside the renderer — embed the audio inline
+    // Blob URLs can't be accessed by DashScope — upload via Bun IPC to get a public URL
+    const { uploadAudioForASR } = await import("@/lib/agentIPC");
     const resp = await fetch(audioUrl);
     const blob = await resp.blob();
     const dataUrl: string = await new Promise((resolve, reject) => {
@@ -139,7 +140,11 @@ async function transcribeViaDashScope(
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
-    input.file_url = dataUrl; // "data:audio/wav;base64,..."
+    // Extract base64 data and mime type from data URL
+    const [header, base64] = dataUrl.split(",");
+    const mimeType = header.match(/data:(.*?);/)?.[1] || "audio/wav";
+    const publicUrl = await uploadAudioForASR(base64, mimeType);
+    input.file_url = publicUrl;
   } else {
     input.file_url = audioUrl;
   }
@@ -217,7 +222,7 @@ function parseTranscriptionResult(
 
   for (const t of transcripts) {
     const text = (t.text as string) ?? "";
-    const start = (t.start_time as number) ?? (t.start as number) ?? 0;
+    const start = (t.start_time as number) ?? (t.begin_time as number) ?? (t.start as number) ?? 0;
     const end = (t.end_time as number) ?? (t.end as number) ?? 0;
     const speaker = (t.speaker as string) ?? (t.speaker_id as string) ?? undefined;
 
@@ -225,7 +230,7 @@ function parseTranscriptionResult(
     const sentenceWords = (t.words ?? []) as Array<Record<string, unknown>>;
     for (const w of sentenceWords) {
       const wText = (w.text as string) ?? "";
-      const wStart = (w.start_time as number) ?? (w.start as number) ?? start;
+      const wStart = (w.start_time as number) ?? (w.begin_time as number) ?? (w.start as number) ?? start;
       const wEnd = (w.end_time as number) ?? (w.end as number) ?? end;
       const wSpeaker = (w.speaker as string) ?? (w.speaker_id as string) ?? speaker;
 

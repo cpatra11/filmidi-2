@@ -77,7 +77,7 @@ export function MediaTab() {
         createdAt: Date.now(),
       });
       if (editor.mediaImporter) {
-        editor.mediaImporter([file], {});
+        editor.mediaImporter([file], { startTime: 0, track: 0 });
       }
     }
     store.showToast(`Imported ${fileArr.length} file${fileArr.length > 1 ? "s" : ""}`);
