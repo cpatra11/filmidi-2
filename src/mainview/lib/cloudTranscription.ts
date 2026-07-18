@@ -31,7 +31,8 @@ export interface TranscriptionResult {
 
 const DASHSCOPE_BASE = "https://dashscope-intl.aliyuncs.com";
 const BACKEND_URL = "http://localhost:3000";
-const ASR_MODEL = "qwen3-asr-flash-realtime";
+const ASR_MODEL = "qwen3-asr-flash-filetrans";
+const ASR_ENDPOINT = `${DASHSCOPE_BASE}/api/v1/services/audio/asr/transcription`;
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 150; // 5 minutes max
 
@@ -145,25 +146,23 @@ async function transcribeViaDashScope(
     diarization?: boolean;
   },
 ): Promise<TranscriptionResult> {
-  const input: Record<string, unknown> = {};
-
-  // Blob URLs should already be resolved to public URLs by transcribeAudio()
-  input.audio_url = audioUrl;
-
-  if (options?.diarization !== false) {
-    input.diarization = { enable: true };
-  }
+  const parameters: Record<string, unknown> = {
+    channel_id: [0],
+    enable_words: true,
+  };
 
   const submitBody: Record<string, unknown> = {
     model: ASR_MODEL,
-    input,
+    input: { file_url: audioUrl },
+    parameters,
   };
 
-  const submitResp = await fetch(`${DASHSCOPE_BASE}/api/v1/services/asr/transcription/asr-task`, {
+  const submitResp = await fetch(ASR_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`,
+      "X-DashScope-Async": "enable",
     },
     body: JSON.stringify(submitBody),
   });
