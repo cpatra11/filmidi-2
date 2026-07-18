@@ -127,10 +127,10 @@ export function uploadAudioForASR(base64Data: string, mimeType: string): Promise
     }
 
     const requestId = crypto.randomUUID();
-    const timer = setTimeout(() => {
+    const     timer = setTimeout(() => {
       asrPendingResolvers.delete(requestId);
-      reject(new Error("Upload for ASR timed out"));
-    }, 60_000);
+      reject(new Error("Audio export timed out"));
+    }, 30_000);
 
     asrPendingResolvers.set(requestId, { resolve, reject, timer });
 

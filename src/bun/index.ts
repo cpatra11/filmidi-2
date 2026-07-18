@@ -156,7 +156,8 @@ transport.registerHandler((msg: any) => {
     }
 
     case "upload-audio-for-asr": {
-      // Upload audio blob (sent as base64) to tempfile.org for DashScope ASR
+      // Write audio blob (sent as base64) to a temp file and return file:// URL
+      // DashScope ASR accepts file:// URLs — Swift client uses the same approach
       (async () => {
         try {
           const { base64Data, mimeType, requestId } = msg;
@@ -167,31 +168,13 @@ transport.registerHandler((msg: any) => {
 
           const buffer = Buffer.from(base64Data, "base64");
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
-          const filename = `audio-${Date.now()}${ext}`;
+          const fileName = `filmidi-audio-${Date.now()}${ext}`;
+          const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
+          mkdirSync(tempDir, { recursive: true });
+          const filePath = join(tempDir, fileName);
+          writeFileSync(filePath, buffer);
 
-          const formData = new FormData();
-          formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), filename);
-          formData.append("expiryHours", "1");
-
-          const resp = await fetch("https://tempfile.org/api/upload/local", {
-            method: "POST",
-            body: formData,
-          });
-
-          if (!resp.ok) {
-            const errText = await resp.text().catch(() => "");
-            transport.send({ type: "upload-audio-result", requestId, error: `Upload failed (${resp.status}): ${errText}` });
-            return;
-          }
-
-          const data = await resp.json() as any;
-          const url = data?.files?.[0]?.url;
-          if (!url) {
-            transport.send({ type: "upload-audio-result", requestId, error: "No URL in upload response" });
-            return;
-          }
-
-          transport.send({ type: "upload-audio-result", requestId, url });
+          transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
         } catch (err: any) {
           transport.send({ type: "upload-audio-result", requestId: msg.requestId, error: err?.message ?? String(err) });
         }
