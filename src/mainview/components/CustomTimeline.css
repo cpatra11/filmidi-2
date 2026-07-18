@@ -578,3 +578,32 @@
   pointer-events: none;
   z-index: 0;
 }
+
+/* ─── Solo button ────────────────────────────────────────────── */
+
+.ct-track-header-solo {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--vf-text-mute, #666);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.ct-track-header-solo:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--vf-text, #ccc);
+}
+
+.ct-track-header-solo[data-active="true"] {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.15);
+}

@@ -75,15 +75,23 @@ function TrackHeader({
   trackName,
   trackType,
   enabled,
+  muted,
+  soloed,
   onRename,
   onToggleEnabled,
+  onToggleMute,
+  onToggleSolo,
 }: {
   trackIdx: number;
   trackName: string;
   trackType: "video" | "audio" | "other";
   enabled: boolean;
+  muted?: boolean;
+  soloed?: boolean;
   onRename: (name: string) => void;
   onToggleEnabled: () => void;
+  onToggleMute?: () => void;
+  onToggleSolo?: () => void;
 }) {
   const typeColor = trackType === "video" ? "#4A90E2" : trackType === "audio" ? "#4CAF50" : "#9B59B6";
   const typeIcon = trackType === "video" ? "V" : trackType === "audio" ? "A" : "T";
@@ -106,6 +114,25 @@ function TrackHeader({
         />
       </div>
       <div className="ct-track-header-toggles">
+        {trackType === "audio" && (
+          <button
+            data-variant="icon"
+            data-active={soloed ? "true" : "false"}
+            onClick={onToggleSolo}
+            title={soloed ? "Unsolo track" : "Solo track"}
+            className="ct-track-header-solo"
+          >
+            S
+          </button>
+        )}
+        <button
+          data-variant="icon"
+          data-active={muted ? "true" : "false"}
+          onClick={onToggleMute}
+          title={muted ? "Unmute track" : "Mute track"}
+        >
+          {muted ? "🔇" : trackType === "audio" ? "🔊" : "👁"}
+        </button>
         <button
           data-variant="icon"
           data-active={enabled ? "true" : "false"}
@@ -826,6 +853,26 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     [commit],
   );
 
+  // ─── Track mute toggle ───────────────────────────────────────
+  const handleTrackMute = useCallback(
+    (trackIdx: number, currentMuted: boolean) => {
+      (commands as any).setTrackSettingsCommand(commit, trackIdx, {
+        muted: !currentMuted,
+      });
+    },
+    [commit],
+  );
+
+  // ─── Track solo toggle ───────────────────────────────────────
+  const handleTrackSolo = useCallback(
+    (trackIdx: number, currentSoloed: boolean) => {
+      (commands as any).setTrackSettingsCommand(commit, trackIdx, {
+        solo: !currentSoloed,
+      });
+    },
+    [commit],
+  );
+
   // ─── Render ──────────────────────────────────────────────────
   const selectionSet = useMemo(
     () => new Set(selection.layerIds),
@@ -893,8 +940,10 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                   trackName={name}
                   trackType="video"
                   enabled={enabled}
+                  muted={(meta as any)?.muted === true}
                   onRename={(n) => handleTrackRename(trackIdx, n)}
                   onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
+                  onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
                 />
               );
             },
@@ -919,8 +968,12 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                   trackName={name}
                   trackType="audio"
                   enabled={enabled}
+                  muted={(meta as any)?.muted === true}
+                  soloed={(meta as any)?.solo === true}
                   onRename={(n) => handleTrackRename(trackIdx, n)}
                   onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
+                  onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
+                  onToggleSolo={() => handleTrackSolo(trackIdx, (meta as any)?.solo === true)}
                 />
               );
             },
