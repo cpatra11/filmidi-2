@@ -651,6 +651,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
 # Audio Processing
 - Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable — tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
+- To add captions: FIRST call extract_audio on video clips to create WAV audio layers, THEN call add_captions on the audio layer. The extracted WAV is automatically uploaded to tempfile.org for cloud ASR access.
+- If add_captions fails with "url error", the audio extraction might have failed — try extract_audio again to get a fresh WAV blob, then retry add_captions.
 
 # Export
 - When the user asks to export/render/save, call export_project. Default mode is video. Use mode=xml for timeline XML and mode=filmidi for a self-contained .filmidi package.
