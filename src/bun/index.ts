@@ -237,6 +237,88 @@ transport.registerHandler((msg: any) => {
       break;
     }
 
+    case "transcribe-audio": {
+      // Run transcription entirely in Bun (avoids browser CORS issues)
+      (async () => {
+        try {
+          const { audioUrl, apiKey, requestId } = msg;
+          if (!audioUrl || !apiKey || !requestId) {
+            transport.send({ type: "transcription-result", requestId, error: "Missing audioUrl, apiKey, or requestId" });
+            return;
+          }
+
+          const ASR_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/asr/transcription";
+          const POLL_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/tasks";
+
+          // Submit transcription task
+          const submitResp = await fetch(ASR_ENDPOINT, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              "X-DashScope-Async": "enable",
+            },
+            body: JSON.stringify({
+              model: "qwen3-asr-flash-filetrans",
+              input: { file_url: audioUrl },
+              parameters: { channel_id: [0], enable_words: true },
+            }),
+          });
+
+          if (!submitResp.ok) {
+            const err = await submitResp.text();
+            transport.send({ type: "transcription-result", requestId, error: `ASR submit failed (${submitResp.status}): ${err}` });
+            return;
+          }
+
+          const submitData = await submitResp.json();
+          const taskId = submitData?.output?.task_id;
+          if (!taskId) {
+            transport.send({ type: "transcription-result", requestId, error: "No task_id in ASR response" });
+            return;
+          }
+
+          // Poll for completion
+          for (let attempt = 0; attempt < 150; attempt++) {
+            await new Promise((r) => setTimeout(r, 2000));
+            try {
+              const pollResp = await fetch(`${POLL_ENDPOINT}/${taskId}`, {
+                headers: { Authorization: `Bearer ${apiKey}` },
+              });
+              if (!pollResp.ok) continue;
+
+              const pollData = await pollResp.json();
+              const status = pollData?.output?.task_status;
+
+              if (status === "SUCCEEDED") {
+                const resultUrl = pollData?.output?.results?.[0]?.transcription_url;
+                if (!resultUrl) {
+                  transport.send({ type: "transcription-result", requestId, error: "No transcription_url in result" });
+                  return;
+                }
+                const resultResp = await fetch(resultUrl);
+                const resultData = await resultResp.text();
+                transport.send({ type: "transcription-result", requestId, result: resultData });
+                return;
+              }
+
+              if (status === "FAILED") {
+                transport.send({ type: "transcription-result", requestId, error: `ASR task failed: ${JSON.stringify(pollData.output)}` });
+                return;
+              }
+            } catch (_) {
+              // Poll error — retry
+            }
+          }
+
+          transport.send({ type: "transcription-result", requestId, error: "ASR task timed out" });
+        } catch (err: any) {
+          transport.send({ type: "transcription-result", requestId: msg.requestId, error: err?.message ?? String(err) });
+        }
+      })();
+      break;
+    }
+
     case "agent-message": {
       // Run the AI SDK agent loop in Bun
       const apiKey = secureStore.get("qwen_api_key");

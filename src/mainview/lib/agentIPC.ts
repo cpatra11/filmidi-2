@@ -167,3 +167,56 @@ export function uploadAudioForASR(base64Data: string, mimeType: string): Promise
     }));
   });
 }
+
+/**
+ * Run transcription entirely through Bun (avoids CORS issues with browser fetch).
+ */
+let transcriptionPendingResolvers = new Map<string, { resolve: (result: string) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+
+export function transcribeOnBun(audioUrl: string, apiKey: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const bridge = (window as any).__electrobunBunBridge;
+    if (!bridge) {
+      reject(new Error("No Bun process available"));
+      return;
+    }
+
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => {
+      transcriptionPendingResolvers.delete(requestId);
+      reject(new Error("Transcription timed out"));
+    }, 300_000); // 5 min timeout for ASR
+
+    transcriptionPendingResolvers.set(requestId, { resolve, reject, timer });
+
+    const origHandler = (window as any).__electrobun?.receiveMessageFromBun;
+    const handler = (msg: any) => {
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "transcription-result" && msg.requestId === requestId) {
+        const pending = transcriptionPendingResolvers.get(requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          transcriptionPendingResolvers.delete(requestId);
+          if (msg.error) {
+            pending.reject(new Error(msg.error));
+          } else {
+            pending.resolve(msg.result);
+          }
+        }
+        if ((window as any).__electrobun) {
+          (window as any).__electrobun.receiveMessageFromBun = origHandler;
+        }
+        return;
+      }
+      if (origHandler) origHandler(msg);
+    };
+    (window as any).__electrobun.receiveMessageFromBun = handler;
+
+    bridge.postMessage(JSON.stringify({
+      type: "transcribe-audio",
+      requestId,
+      audioUrl,
+      apiKey,
+    }));
+  });
+}

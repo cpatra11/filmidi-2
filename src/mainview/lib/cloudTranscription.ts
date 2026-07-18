@@ -32,9 +32,6 @@ export interface TranscriptionResult {
 const DASHSCOPE_BASE = "https://dashscope-intl.aliyuncs.com";
 const BACKEND_URL = "http://localhost:3000";
 const ASR_MODEL = "qwen3-asr-flash-filetrans";
-const ASR_ENDPOINT = `${DASHSCOPE_BASE}/api/v1/services/audio/asr/transcription`;
-const POLL_INTERVAL_MS = 2000;
-const MAX_POLL_ATTEMPTS = 150; // 5 minutes max
 
 /**
  * Transcribe audio from a URL using cloud ASR.
@@ -146,67 +143,11 @@ async function transcribeViaDashScope(
     diarization?: boolean;
   },
 ): Promise<TranscriptionResult> {
-  const parameters: Record<string, unknown> = {
-    channel_id: [0],
-    enable_words: true,
-  };
-
-  const submitBody: Record<string, unknown> = {
-    model: ASR_MODEL,
-    input: { file_url: audioUrl },
-    parameters,
-  };
-
-  const submitResp = await fetch(ASR_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "X-DashScope-Async": "enable",
-    },
-    body: JSON.stringify(submitBody),
-  });
-
-  if (!submitResp.ok) {
-    const err = await submitResp.text();
-    throw new Error(`ASR submit failed (${submitResp.status}): ${err}`);
-  }
-
-  const submitData = await submitResp.json();
-  const taskId = submitData.output?.task_id;
-  if (!taskId) throw new Error("No task_id in ASR response");
-
-  // Poll for completion
-  for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-
-    const pollResp = await fetch(
-      `${DASHSCOPE_BASE}/api/v1/tasks/${taskId}`,
-      { headers: { "Authorization": `Bearer ${apiKey}` } }
-    );
-
-    if (!pollResp.ok) continue;
-
-    const pollData = await pollResp.json();
-    const status = pollData.output?.task_status;
-
-    if (status === "SUCCEEDED") {
-      // Download the result JSON
-      const resultUrl = pollData.output?.results?.[0]?.transcription_url;
-      if (!resultUrl) throw new Error("No transcription_url in result");
-
-      const resultResp = await fetch(resultUrl);
-      const resultData = await resultResp.json();
-      return parseTranscriptionResult(resultData, options);
-    }
-
-    if (status === "FAILED") {
-      throw new Error(`ASR task failed: ${JSON.stringify(pollData.output)}`);
-    }
-    // else: RUNNING, keep polling
-  }
-
-  throw new Error("ASR task timed out");
+  // Route through Bun IPC to avoid CORS issues
+  const { transcribeOnBun } = await import("@/lib/agentIPC");
+  const resultJson = await transcribeOnBun(audioUrl, apiKey);
+  const resultData = JSON.parse(resultJson) as Record<string, unknown>;
+  return parseTranscriptionResult(resultData, options);
 }
 
 function parseTranscriptionResult(
