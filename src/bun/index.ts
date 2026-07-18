@@ -156,8 +156,8 @@ transport.registerHandler((msg: any) => {
     }
 
     case "upload-audio-for-asr": {
-      // Write audio blob (sent as base64) to a temp file and return file:// URL
-      // DashScope ASR accepts file:// URLs — Swift client uses the same approach
+      // Upload audio blob to a public URL for ASR.
+      // Tries tempfile.org first (no auth, free), then falls back to file://
       (async () => {
         try {
           const { base64Data, mimeType, requestId } = msg;
@@ -169,11 +169,51 @@ transport.registerHandler((msg: any) => {
           const buffer = Buffer.from(base64Data, "base64");
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
           const fileName = `filmidi-audio-${Date.now()}${ext}`;
+
+          // 1. Try tempfile.org (field name must be "files" per API docs)
+          try {
+            const formData = new FormData();
+            formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
+            formData.append("expiryHours", "1");
+            const resp = await fetch("https://tempfile.org/api/upload/local", {
+              method: "POST",
+              body: formData,
+            });
+            if (resp.ok) {
+              const data = await resp.json() as any;
+              if (data?.success && data?.files?.[0]?.url) {
+                transport.send({ type: "upload-audio-result", requestId, url: data.files[0].url });
+                return;
+              }
+            }
+          } catch (_) {
+            // tempfile.org not available — fall through
+          }
+
+          // 2. Try backend upload (UploadThing)
+          try {
+            const formData = new FormData();
+            formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
+            const resp = await fetch("http://localhost:3000/api/v1/uploads", {
+              method: "POST",
+              body: formData,
+            });
+            if (resp.ok) {
+              const data = await resp.json() as any;
+              if (data?.url) {
+                transport.send({ type: "upload-audio-result", requestId, url: data.url });
+                return;
+              }
+            }
+          } catch (_) {
+            // Backend not available — fall through
+          }
+
+          // 3. Fallback: write to local temp file (DashScope accepts file:// URLs)
           const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
           mkdirSync(tempDir, { recursive: true });
           const filePath = join(tempDir, fileName);
           writeFileSync(filePath, buffer);
-
           transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
         } catch (err: any) {
           transport.send({ type: "upload-audio-result", requestId: msg.requestId, error: err?.message ?? String(err) });
