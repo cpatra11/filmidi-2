@@ -243,13 +243,61 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               properties: {
                 type: "object",
                 description: "Optional — visual properties: { opacity?, scale?, rotation?, position?, blendMode? }.",
+                properties: {
+                  opacity: { type: "number" },
+                  scale: { type: "number" },
+                  rotation: { type: "number" },
+                  position: { type: "array", items: { type: "number" } },
+                  blendMode: { type: "string" },
+                },
               },
             },
-            required: ["layerId"],
           },
         },
       },
       required: ["clips"],
+    },
+  },
+  {
+    name: "tag_media",
+    description:
+      "Add or remove tags on media library assets. Tags are searchable labels for organizing assets.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mediaRef: { type: "string", description: "Asset ID from get_media." },
+        tags: { type: "array", items: { type: "string" }, description: "Tags to add or remove." },
+        action: { type: "string", enum: ["add", "remove", "set"], description: "add=append, remove=delete, set=replace all." },
+      },
+      required: ["mediaRef", "tags", "action"],
+    },
+  },
+  {
+    name: "tag_clip",
+    description:
+      "Add or remove tags on timeline clips (layers). Tags are stored in layer settings and searchable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clipId: { type: "string", description: "Clip/layer ID from get_timeline." },
+        tags: { type: "array", items: { type: "string" }, description: "Tags to add or remove." },
+        action: { type: "string", enum: ["add", "remove", "set"], description: "add=append, remove=delete, set=replace all." },
+      },
+      required: ["clipId", "tags", "action"],
+    },
+  },
+  {
+    name: "search_by_tag",
+    description:
+      "Find media assets and timeline clips that have specific tags. Returns matching asset IDs and clip IDs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tags: { type: "array", items: { type: "string" }, description: "Tags to search for." },
+        match: { type: "string", enum: ["any", "all"], description: "any=at least one tag matches, all=every tag matches. Default: any." },
+        scope: { type: "string", enum: ["media", "timeline", "both"], description: "Where to search. Default: both." },
+      },
+      required: ["tags"],
     },
   },
   {

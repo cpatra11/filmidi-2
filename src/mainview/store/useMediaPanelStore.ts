@@ -15,6 +15,7 @@ export interface MediaAsset {
   folderId: string | null;
   thumbnailUrl?: string;
   createdAt: number;
+  tags?: string[];
 }
 
 export interface MediaFolder {

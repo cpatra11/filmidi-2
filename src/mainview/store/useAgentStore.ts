@@ -199,6 +199,49 @@ function resolveMentions(text: string): {
     return (layer as Record<string, unknown>).name as string ?? layer.id.slice(0, 8);
   });
 
+  // Resolve @tag:xxx patterns — find assets/clips with matching tag
+  const tagPattern = /@tag:(\S+)/g;
+  cleaned = cleaned.replace(tagPattern, (_match, tagName) => {
+    const matchingAssets = mediaStore.assets.filter((a) => (a.tags ?? []).some((t) => t.toLowerCase() === tagName.toLowerCase()));
+    const matchingClips = (editorStore.video.layers ?? []).filter((l: any) => {
+      try { const raw = (l.settings as any)?.tags; return Array.isArray(raw) && raw.some((t: string) => t.toLowerCase() === tagName.toLowerCase()); } catch { return false; }
+    });
+    for (const a of matchingAssets) {
+      mentions.push({ type: "mediaAsset", id: a.id, name: a.name });
+    }
+    for (const l of matchingClips) {
+      mentions.push({ type: "timelineClip", id: l.id, name: (l as any).name ?? l.id.slice(0, 8) });
+    }
+    const names = [...matchingAssets.map((a) => a.name), ...matchingClips.map((l: any) => (l as any).name ?? l.id.slice(0, 8))];
+    return names.length > 0 ? names.join(", ") : _match;
+  });
+
+  // Resolve @folder:xxx patterns — find all assets in folder
+  const folderPattern = /@folder:(\S+)/g;
+  cleaned = cleaned.replace(folderPattern, (_match, folderId) => {
+    const folder = mediaStore.folders.find((f) => f.id === folderId || f.name.toLowerCase() === folderId.toLowerCase());
+    if (!folder) return _match;
+    const folderAssets = mediaStore.assets.filter((a) => a.folderId === folder.id);
+    for (const a of folderAssets) {
+      mentions.push({ type: "mediaAsset", id: a.id, name: a.name });
+    }
+    return folderAssets.length > 0 ? folderAssets.map((a) => a.name).join(", ") : _match;
+  });
+
+  // Resolve @range:startFrame-endFrame patterns
+  const rangePattern = /@range:(\d+)-(\d+)/g;
+  cleaned = cleaned.replace(rangePattern, (_match, startStr, endStr) => {
+    const startFrame = parseInt(startStr, 10);
+    const endFrame = parseInt(endStr, 10);
+    if (isNaN(startFrame) || isNaN(endFrame)) return _match;
+    mentions.push({
+      type: "timelineRange",
+      id: `${startFrame}-${endFrame}`,
+      name: `Frames ${startFrame}-${endFrame}`,
+    });
+    return `frames ${startFrame} to ${endFrame}`;
+  });
+
   return { cleaned, mentions };
 }
 

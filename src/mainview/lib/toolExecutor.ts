@@ -1716,6 +1716,75 @@ export async function executeTool(
         return JSON.stringify({ createdFolders, movedAssets, note: `Created ${createdFolders} folder(s), moved ${movedAssets} asset(s).` });
       }
 
+      // ─── TAGGING ──────────────────────────────────────────────────
+      case "tag_media": {
+        const mediaRef = input.mediaRef as string;
+        const tags = input.tags as string[];
+        const action = input.action as string;
+        const store = useMediaPanelStore.getState();
+        const updatedAssets = store.assets.map((a) => {
+          if (a.id !== mediaRef) return a;
+          let newTags = [...(a.tags ?? [])];
+          if (action === "add") {
+            for (const t of tags) { if (!newTags.includes(t)) newTags.push(t); }
+          } else if (action === "remove") {
+            newTags = newTags.filter((t) => !tags.includes(t));
+          } else if (action === "set") {
+            newTags = [...tags];
+          }
+          return { ...a, tags: newTags };
+        });
+        store.setAssets(updatedAssets as any);
+        return JSON.stringify({ mediaRef, tags: (updatedAssets.find((a: any) => a.id === mediaRef) as any)?.tags ?? [], action });
+      }
+      case "tag_clip": {
+        const clipId = input.clipId as string;
+        const tags = input.tags as string[];
+        const action = input.action as string;
+        const s = useEditorStore.getState();
+        const layer = s.video.layers?.find((l: any) => l.id === clipId);
+        if (!layer) return JSON.stringify({ error: `Clip not found: ${clipId}` });
+        let currentTags: string[] = [];
+        try { const raw = (layer.settings as any)?.tags; currentTags = Array.isArray(raw) ? raw : []; } catch {}
+        let newTags: string[];
+        if (action === "add") {
+          newTags = [...currentTags];
+          for (const t of tags) { if (!newTags.includes(t)) newTags.push(t); }
+        } else if (action === "remove") {
+          newTags = currentTags.filter((t) => !tags.includes(t));
+        } else {
+          newTags = [...tags];
+        }
+        await setSettingCommand(commit, clipId, "tags", newTags);
+        return JSON.stringify({ clipId, tags: newTags, action });
+      }
+      case "search_by_tag": {
+        const searchTags = input.tags as string[];
+        const match = (input.match as string) ?? "any";
+        const scope = (input.scope as string) ?? "both";
+        const result: { mediaAssets: string[]; timelineClips: string[] } = { mediaAssets: [], timelineClips: [] };
+        if (scope === "media" || scope === "both") {
+          const store = useMediaPanelStore.getState();
+          for (const a of store.assets) {
+            const assetTags = a.tags ?? [];
+            if (match === "all" ? searchTags.every((t) => assetTags.includes(t)) : searchTags.some((t) => assetTags.includes(t))) {
+              result.mediaAssets.push(a.id);
+            }
+          }
+        }
+        if (scope === "timeline" || scope === "both") {
+          const s = useEditorStore.getState();
+          for (const l of s.video.layers ?? []) {
+            let layerTags: string[] = [];
+            try { const raw = (l.settings as any)?.tags; layerTags = Array.isArray(raw) ? raw : []; } catch {}
+            if (match === "all" ? searchTags.every((t) => layerTags.includes(t)) : searchTags.some((t) => layerTags.includes(t))) {
+              result.timelineClips.push(l.id);
+            }
+          }
+        }
+        return JSON.stringify(result);
+      }
+
       // ─── MEDIA IMPORT ───────────────────────────────────────────
       case "import_media": {
         const source = input.source as Record<string, string>;
