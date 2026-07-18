@@ -741,14 +741,24 @@ export async function executeTool(
           try {
             const { extractAudioTrack } = await import("@/lib/audioExtract");
             const wavBlob = await extractAudioTrack(source);
-            const audioUrl = URL.createObjectURL(wavBlob);
+            // Upload to catbox.moe immediately (blob URLs expire)
+            const dataUrl: string = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(wavBlob);
+            });
+            const [_, base64] = dataUrl.split(",");
+            const { uploadAudioForASR } = await import("@/lib/agentIPC");
+            const publicUrl = await uploadAudioForASR(base64, "audio/wav");
+
             const linkId = `link-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+            const { setLayerLinkId } = await import("@/lib/linkUtils");
             const { commands: cmds } = await import("@videoflow/react-video-editor");
             const setSettingCommand = cmds.setSettingCommand;
             await addLayerCommand(commit, {
               type: "audio",
-              source: audioUrl,
+              source: publicUrl,
               sourceDuration: layer.settings?.sourceDuration ?? 5,
               startTime: layer.settings?.startTime ?? 0,
             });
