@@ -29,6 +29,7 @@ import { useState, useCallback, useRef } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
 import type { ContextTarget } from "./ClipContextMenu";
+import { extractAudioTrack } from "@/lib/audioExtract";
 
 function VHandle() {
   return (
@@ -76,8 +77,14 @@ export function Layout() {
             const { commands: cmds } = await import("@videoflow/react-video-editor");
             const setSettingCommand = cmds.setSettingCommand;
             const linkId = generateLinkId();
+            // Extract audio → WAV blob URL for audio layer
+            let audioUrl = asset.url;
+            try {
+              const wavBlob = await extractAudioTrack(asset.url);
+              audioUrl = URL.createObjectURL(wavBlob);
+            } catch (_) {}
             // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
-            const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
+            const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl, sourceDuration, startTime });
             await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
             const layerId = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
             await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
@@ -334,8 +341,16 @@ export function Layout() {
           const { commands: cmds } = await import("@videoflow/react-video-editor");
           const setSettingCommand = cmds.setSettingCommand;
           const linkId = generateLinkId();
+          // Extract audio track from the fresh file → WAV blob URL for the audio layer
+          let audioUrl = url;
+          try {
+            const wavBlob = await extractAudioTrack(file);
+            audioUrl = URL.createObjectURL(wavBlob);
+          } catch (_) {
+            // Fallback: use the original video URL for audio
+          }
           // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
-          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl, sourceDuration: duration, startTime });
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
           const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
           await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
@@ -366,10 +381,16 @@ export function Layout() {
         const { commands: cmds } = await import("@videoflow/react-video-editor");
         const setSettingCommand = cmds.setSettingCommand;
         const linkId = generateLinkId();
+        // Extract audio → WAV blob URL for audio layer
+        let audioUrl = data.url;
+        try {
+          const wavBlob = await extractAudioTrack(data.url);
+          audioUrl = URL.createObjectURL(wavBlob);
+        } catch (_) {}
         // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
         const audioLayerId = await addLayerCommand(editor.commit, {
           type: "audio",
-          source: data.url,
+          source: audioUrl,
           sourceDuration: data.duration || 5,
           startTime,
         });
@@ -469,8 +490,14 @@ export function Layout() {
                                 const { commands: cmds } = await import("@videoflow/react-video-editor");
                                 const setSettingCommand = cmds.setSettingCommand;
                                 const linkId = generateLinkId();
+                                // Extract audio → WAV blob URL for audio layer
+                                let audioUrl = url;
+                                try {
+                                  const wavBlob = await extractAudioTrack(file);
+                                  audioUrl = URL.createObjectURL(wavBlob);
+                                } catch (_) {}
                                 // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
-                                const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                                const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl, sourceDuration: duration, startTime });
                                 await setLayerLinkId(editor.commit, audioLayerId2, linkId, setSettingCommand);
                                 const layerId2 = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
                                 await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);

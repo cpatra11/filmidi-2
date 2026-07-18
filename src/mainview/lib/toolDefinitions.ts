@@ -419,6 +419,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   // ─── LAYOUT (1) ──────────────────────────────────────────────────
   {
+    name: "extract_audio",
+    description:
+      "Extract audio track from video clip(s) on the timeline. Creates a WAV audio layer linked to the video. Use this when the audio layer is missing or when you need to re-extract audio for transcription.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clipIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Video clip IDs to extract audio from. Omit for all video clips.",
+        },
+      },
+      required: [],
+    },
+  },
+
+  // ─── LAYOUT (1) ──────────────────────────────────────────────────
+  {
     name: "apply_layout",
     description:
       "Compose multiple clips in the preview (split screen, PIP, grid, sidebar, three-up). Pick a layout, fill every slot with mediaRef (place new) or clipIds (re-layout existing). Fills each region edge-to-edge without stretching. Re-call with anchorX/anchorY to nudge crop framing. Never hand-position with set_clip_properties for multi-clip layouts.",

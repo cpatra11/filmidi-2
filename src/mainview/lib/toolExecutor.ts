@@ -727,6 +727,44 @@ export async function executeTool(
       }
 
       // ─── TEXT / CAPTIONS ────────────────────────────────────────
+      case "extract_audio": {
+        const targetIds = input.clipIds as string[] | undefined;
+        const allLayers = editor.video.layers ?? [];
+        const videoLayers = targetIds
+          ? allLayers.filter((l: any) => targetIds.includes(l.id) && l.type === "video")
+          : allLayers.filter((l: any) => l.type === "video");
+
+        let extracted = 0;
+        for (const layer of videoLayers) {
+          const source = layer.settings?.source as string;
+          if (!source) continue;
+          try {
+            const { extractAudioTrack } = await import("@/lib/audioExtract");
+            const wavBlob = await extractAudioTrack(source);
+            const audioUrl = URL.createObjectURL(wavBlob);
+            const linkId = `link-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+            const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+            const { commands: cmds } = await import("@videoflow/react-video-editor");
+            const setSettingCommand = cmds.setSettingCommand;
+            await addLayerCommand(commit, {
+              type: "audio",
+              source: audioUrl,
+              sourceDuration: layer.settings?.sourceDuration ?? 5,
+              startTime: layer.settings?.startTime ?? 0,
+            });
+            const newAudioId = editor.video.layers.at(-1)?.id;
+            if (newAudioId) await setLayerLinkId(commit, newAudioId, linkId, setSettingCommand);
+            await setLayerLinkId(commit, layer.id, linkId, setSettingCommand);
+            await cmds.setPropertyCommand(commit, layer.id, "mute", true);
+            extracted++;
+          } catch (e) {
+            console.warn("[extract_audio] failed for", source.slice(0, 60), e);
+          }
+        }
+        refreshPreview();
+        return JSON.stringify({ extracted });
+      }
+
       case "add_texts": {
         const texts = input.texts as Array<Record<string, unknown>>;
         if (!texts || texts.length === 0) return JSON.stringify({ error: "No texts provided" });
