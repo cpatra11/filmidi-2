@@ -82,17 +82,21 @@ const MODEL_MAP: Record<string, string> = {
   "qwen-flash":  "qwen3.6-flash",
   "qwen-turbo":  "qwen3.6-flash",  // qwen-turbo is invalid on Anthropic endpoint — fallback to flash
   // Pass canonical ids through unchanged
-  "qwen3.7-max":   "qwen3.7-max",
-  "qwen3.7-plus":  "qwen3.7-plus",
-  "qwen3.6-plus":  "qwen3.6-plus",
-  "qwen3.6-flash": "qwen3.6-flash",
+  "qwen3.7-max":        "qwen3.7-max",
+  "qwen3.7-plus":       "qwen3.7-plus",
+  "qwen3.6-max-preview": "qwen3.6-max-preview",
+  "qwen3.6-plus":       "qwen3.6-plus",
+  "qwen3.6-flash":      "qwen3.6-flash",
+  "qwen3.5-flash":      "qwen3.5-flash",
 };
 
 const AVAILABLE_MODELS = [
   { id: "qwen3.7-max",   name: "Qwen 3.7 Max (Best)" },
   { id: "qwen3.7-plus",  name: "Qwen 3.7 Plus" },
+  { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview" },
   { id: "qwen3.6-plus",  name: "Qwen 3.6 Plus" },
   { id: "qwen3.6-flash", name: "Qwen 3.6 Flash (Fast)" },
+  { id: "qwen3.5-flash", name: "Qwen 3.5 Flash" },
 ];
 
 

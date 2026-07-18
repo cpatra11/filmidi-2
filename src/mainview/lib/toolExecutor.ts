@@ -1755,6 +1755,14 @@ export async function executeTool(
       case "upscale_media": return JSON.stringify({ error: "Upscaling requires HitPaw backend — not available with direct API key. Sign in with Google to use upscaling." });
       case "list_models": return JSON.stringify({
         models: [
+          // Chat
+          { id: "qwen3.7-max", name: "Qwen 3.7 Max", type: "chat", description: "Highest intelligence, best for complex tasks" },
+          { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", type: "chat", description: "Balanced performance and speed" },
+          { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview", type: "chat", description: "Strong reasoning and coding" },
+          { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", type: "chat", description: "Strong reasoning with vision" },
+          { id: "qwen3.6-flash", name: "Qwen 3.6 Flash", type: "chat", description: "Fast and cost-effective" },
+          { id: "qwen3.5-flash", name: "Qwen 3.5 Flash", type: "chat", description: "Economical, good for simple tasks" },
+          // Image
           { id: "qwen-image-2.0-pro", name: "Qwen-Image 2.0 Pro", type: "image", description: "High-quality image generation" },
           { id: "qwen-image-2.0-turbo", name: "Qwen-Image 2.0 Turbo", type: "image", description: "Fast image generation" },
           { id: "wan2.7-image-pro", name: "Wan 2.7 Image Pro", type: "image", description: "High-quality text-to-image" },
