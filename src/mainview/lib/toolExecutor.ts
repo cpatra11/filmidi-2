@@ -550,11 +550,12 @@ export async function executeTool(
             updates.push({ id: layerId, startTime, track });
             seenIds.add(layerId);
           }
-          // Also move linked partner to the same startTime
+          // Also move linked partner by the same delta
           const partner = findLinkedPartnerIn(allLayers, layerId);
           if (partner && !seenIds.has(partner.id)) {
+            const actualStart = (allLayers.find((l: any) => l.id === layerId))?.settings?.startTime ?? 0;
+            const delta = startTime - actualStart;
             const origStart = partner.settings?.startTime ?? 0;
-            const delta = startTime - ((c.startTime as number) ?? 0);
             updates.push({ id: partner.id, startTime: Math.max(0, origStart + delta), track: partner.track });
             seenIds.add(partner.id);
           }
@@ -656,21 +657,27 @@ export async function executeTool(
       case "set_clip_properties": {
         const clips = input.clips as Array<Record<string, unknown>>;
         if (!clips || clips.length === 0) return JSON.stringify({ error: "No clips provided" });
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+        const allLayers2 = editor.video.layers ?? [];
         for (const clip of clips) {
           const layerId = clip.layerId as string;
+          const partner = findLinkedPartnerIn(allLayers2, layerId);
           if (clip.sourceDuration !== undefined) {
             await resizeLayerCommand(commit, layerId, clip.sourceDuration as number);
+            if (partner) await resizeLayerCommand(commit, partner.id, clip.sourceDuration as number);
           }
           if (clip.properties) {
             const props = clip.properties as Record<string, unknown>;
             for (const [key, value] of Object.entries(props)) {
               await setPropertyCommand(commit, layerId, key, value);
+              if (partner) await setPropertyCommand(commit, partner.id, key, value);
             }
           }
           if (clip.settings) {
             const sets = clip.settings as Record<string, unknown>;
             for (const [key, value] of Object.entries(sets)) {
               await setPropertyCommand(commit, layerId, key, value);
+              if (partner) await setPropertyCommand(commit, partner.id, key, value);
             }
           }
         }
@@ -687,20 +694,28 @@ export async function executeTool(
         for (const range of sortedRanges) {
           const delDuration = (range.endFrame - range.startFrame) / fps;
           const layers = editor.video.layers ?? [];
-          // Remove clips fully within range
-          const inRange = layers.filter((l) => {
+          // Remove clips fully within range — include linked partners
+          const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+          const inRangeSet = new Set<string>();
+          for (const l of layers) {
             const st = Math.round((l.settings?.startTime ?? 0) * fps);
             const dur = Math.round((l.settings?.sourceDuration ?? 0) * fps);
-            return st >= range.startFrame && st + dur <= range.endFrame;
-          });
-          if (inRange.length > 0) {
-            await removeLayersCommand(commit, inRange.map((l) => l.id));
+            if (st >= range.startFrame && st + dur <= range.endFrame) {
+              inRangeSet.add(l.id);
+              // Add linked partner
+              const partner = findLinkedPartnerIn(layers, l.id);
+              if (partner) inRangeSet.add(partner.id);
+            }
+          }
+          const inRangeIds = Array.from(inRangeSet);
+          if (inRangeIds.length > 0) {
+            await removeLayersCommand(commit, inRangeIds);
           }
           // Shift clips after range left
           const shifted = layers
             .filter((l) => {
               const st = Math.round((l.settings?.startTime ?? 0) * fps);
-              return st >= range.endFrame && !inRange.includes(l);
+              return st >= range.endFrame && !inRangeSet.has(l.id);
             })
             .map((l) => ({
               id: l.id,

@@ -185,11 +185,20 @@ export function Layout() {
         const s = useEditorStore.getState();
         const ids = s.selection.layerIds;
         if (ids.length > 0) {
-          const layers = s.video.layers.filter((l: any) => ids.includes(l.id));
+          // Expand to linked partners
+          const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+          const allLayers = s.video.layers ?? [];
+          const idsToCut = new Set(ids);
+          for (const id of ids) {
+            const partner = findLinkedPartnerIn(allLayers, id);
+            if (partner) idsToCut.add(partner.id);
+          }
+          const cutIds = Array.from(idsToCut);
+          const layers = s.video.layers.filter((l: any) => cutIds.includes(l.id));
           (window as any).__vfClipboard = { action, layers: JSON.parse(JSON.stringify(layers)) };
           if (action === "cut") {
             s.commit((v: any) => {
-              const idSet = new Set(ids);
+              const idSet = new Set(cutIds);
               const remove = (layers: any[]) => {
                 for (let i = layers.length - 1; i >= 0; i--) {
                   if (idSet.has(layers[i].id)) layers.splice(i, 1);
@@ -256,9 +265,17 @@ export function Layout() {
         const frame = s3.currentFrame;
         const fps3 = s3.video.fps || 30;
         const ids3 = s3.selection.layerIds;
-        if (ids3.length > 0) {
+        // Expand to linked partners
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+        const splitAllLayers = s3.video.layers ?? [];
+        const splitIds = new Set(ids3);
+        for (const id of ids3) {
+          const partner = findLinkedPartnerIn(splitAllLayers, id);
+          if (partner) splitIds.add(partner.id);
+        }
+        if (splitIds.size > 0) {
           s3.commit((v: any) => {
-            const idSet = new Set(ids3);
+            const idSet = new Set(splitIds);
             const toAdd: any[] = [];
             const processLayers = (layers: any[]) => {
               for (const layer of layers) {
