@@ -47,22 +47,21 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
-  // Convert blob URLs to accessible WAV URLs before routing
+  // Convert blob URLs to accessible URLs before routing
   let resolvedUrl = audioUrl;
   if (audioUrl.startsWith("blob:")) {
     const { uploadAudioForASR } = await import("@/lib/agentIPC");
-    // Extract audio track from video blob (DashScope ASR needs pure audio, not video containers)
-    const audioBlob = await extractAudioTrack(audioUrl);
+    // Upload the blob directly — DashScope ASR accepts video (MP4) and audio files
+    const resp = await fetch(audioUrl);
+    const blob = await resp.blob();
     const dataUrl: string = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
       reader.onerror = reject;
-      reader.readAsDataURL(audioBlob);
+      reader.readAsDataURL(blob);
     });
-
-    // Upload WAV to tempfile.org via Bun IPC → public HTTPS URL for DashScope
-    const [header, base64] = dataUrl.split(",");
-    resolvedUrl = await uploadAudioForASR(base64, "audio/wav");
+    const [_, base64] = dataUrl.split(",");
+    resolvedUrl = await uploadAudioForASR(base64, blob.type || "video/mp4");
   }
 
   const account = useAccountStore.getState();

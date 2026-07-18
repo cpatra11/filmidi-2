@@ -739,18 +739,18 @@ export async function executeTool(
           const source = layer.settings?.source as string;
           if (!source) continue;
           try {
-            const { extractAudioTrack } = await import("@/lib/audioExtract");
-            const wavBlob = await extractAudioTrack(source);
-            // Upload to catbox.moe immediately (blob URLs expire)
+            // Upload video directly to catbox.moe — DashScope ASR accepts MP4 files
+            const resp = await fetch(source);
+            const blob = await resp.blob();
             const dataUrl: string = await new Promise((resolve, reject) => {
               const reader = new FileReader();
               reader.onloadend = () => resolve(reader.result as string);
               reader.onerror = reject;
-              reader.readAsDataURL(wavBlob);
+              reader.readAsDataURL(blob);
             });
             const [_, base64] = dataUrl.split(",");
             const { uploadAudioForASR } = await import("@/lib/agentIPC");
-            const publicUrl = await uploadAudioForASR(base64, "audio/wav");
+            const publicUrl = await uploadAudioForASR(base64, blob.type || "video/mp4");
 
             const linkId = `link-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const { setLayerLinkId } = await import("@/lib/linkUtils");
