@@ -25,6 +25,7 @@ export interface GenerationParams {
   referenceVideoUrls?: string[];
   referenceAudioUrls?: string[];
   videoUrl?: string;
+  segments?: string;
 }
 
 export interface GenerationResult {
@@ -99,6 +100,7 @@ function buildBody(model: string, type: GenerationType, params: GenerationParams
     case "audio": {
       const input: Record<string, unknown> = { text: params.prompt };
       if (params.videoUrl) input["video_url"] = params.videoUrl;
+      if (params.segments) input["segments"] = params.segments;
       const parameters: Record<string, unknown> = {};
       if (params.voice) parameters["voice"] = params.voice;
       if (params.lyrics) parameters["lyrics"] = params.lyrics;

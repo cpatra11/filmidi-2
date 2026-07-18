@@ -670,6 +670,19 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["folderId"],
     },
   },
+  {
+    name: "organize_media",
+    description:
+      "Automatically organize media assets into structured folders by type (Video, Audio, Images) and optionally by AI-generated status. Call this when the user asks to organize their media library.",
+    input_schema: {
+      type: "object",
+      properties: {
+        byType: { type: "boolean", description: "Group by media type (Video/Audio/Image). Default: true." },
+        byGenerated: { type: "boolean", description: "Separate AI-generated assets into 'AI Generated' folder. Default: false." },
+      },
+      required: [],
+    },
+  },
 
   // ─── MEDIA IMPORT (1) ────────────────────────────────────────────
   {

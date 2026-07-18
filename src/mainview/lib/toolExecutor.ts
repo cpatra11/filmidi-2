@@ -1161,6 +1161,7 @@ export async function executeTool(
           threeUp: [{ x: 0, y: 0, w: 0.5, h: 1 }, { x: 0.5, y: 0, w: 0.5, h: 0.5 }, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }],
           sidebar: [{ x: 0.25, y: 0, w: 0.75, h: 1 }, { x: 0, y: 0, w: 0.25, h: 1 }],
           center: [{ x: 0.1, y: 0.1, w: 0.8, h: 0.8 }],
+          letterbox: [{ x: 0, y: 0.1, w: 1, h: 0.8 }],
         };
         const positions = layoutConfigs[layout] ?? layoutConfigs.sideBySide;
 
@@ -1195,6 +1196,29 @@ export async function executeTool(
             layerIds.push(layerId);
           }
         }
+
+        // Add black matte bars for letterbox layout
+        if (layout === "letterbox") {
+          const barHeight = 0.1;
+          const projectDuration = editor.video.duration || 30;
+          for (const barPos of [{ y: 0 }, { y: 1 - barHeight }]) {
+            const matteId = await addLayerCommand(commit, {
+              type: "shape",
+              source: "color",
+              sourceDuration: projectDuration,
+              startTime: 0,
+              properties: {
+                color: "#000000",
+                position: [0.5, barPos.y + barHeight / 2],
+                scale: 0.5,
+                width: 1,
+                height: barHeight,
+              },
+            });
+            if (matteId) layerIds.push(matteId);
+          }
+        }
+
         refreshPreview();
         return JSON.stringify({ layout, layersPlaced: layerIds.length, layerIds });
       }
@@ -1598,29 +1622,28 @@ export async function executeTool(
       case "create_folder": {
         const name = input.name as string;
         const store = useMediaPanelStore.getState();
-        const folders = ((store as Record<string, unknown>).folders as Array<Record<string, unknown>>) ?? [];
-        const newFolder = { id: `folder-${Date.now()}`, name, parentFolderId: input.parentFolderId };
-        folders.push(newFolder);
-        (store as Record<string, unknown>).folders = folders;
+        const newFolder = { id: `folder-${Date.now()}`, name, parentFolderId: (input.parentFolderId as string) ?? null };
+        store.addFolder(newFolder as any);
         return JSON.stringify({ folderId: newFolder.id, name });
       }
       case "move_to_folder": {
         const assetIds = input.assetIds as string[];
         const folderId = (input.folderId as string) ?? null;
         const store = useMediaPanelStore.getState();
-        for (const id of assetIds) {
-          const asset = store.assets.find((a) => a.id === id);
-          if (asset) (asset as Record<string, unknown>).folderId = folderId;
-        }
+        const updatedAssets = store.assets.map((a) =>
+          assetIds.includes(a.id) ? { ...a, folderId } : a
+        );
+        store.setAssets(updatedAssets as any);
         return JSON.stringify({ moved: assetIds.length, folderId });
       }
       case "rename_media": {
         const mediaRef = input.mediaRef as string;
         const newName = input.name as string;
         const store = useMediaPanelStore.getState();
-        const asset = store.assets.find((a) => a.id === mediaRef);
-        if (!asset) return JSON.stringify({ error: `Asset not found: ${mediaRef}` });
-        (asset as Record<string, unknown>).name = newName;
+        const updatedAssets = store.assets.map((a) =>
+          a.id === mediaRef ? { ...a, name: newName } : a
+        );
+        store.setAssets(updatedAssets as any);
         return JSON.stringify({ renamed: mediaRef, name: newName });
       }
       case "rename_folder": {
@@ -1643,9 +1666,54 @@ export async function executeTool(
       case "delete_folder": {
         const folderId = input.folderId as string;
         const store = useMediaPanelStore.getState();
-        const folders = ((store as Record<string, unknown>).folders as Array<Record<string, unknown>>) ?? [];
-        (store as Record<string, unknown>).folders = folders.filter((f) => f.id !== folderId);
+        store.removeFolder(folderId);
         return JSON.stringify({ deleted: folderId });
+      }
+
+      case "organize_media": {
+        const store = useMediaPanelStore.getState();
+        const byType = input.byType !== false;
+        const byGenerated = input.byGenerated === true;
+        let createdFolders = 0;
+        let movedAssets = 0;
+
+        // Ensure type-based folders exist
+        const typeFolders: Record<string, string> = {};
+        if (byType) {
+          for (const folderName of ["Video", "Audio", "Images"]) {
+            let folder = store.folders.find((f) => f.name === folderName && !f.parentFolderId);
+            if (!folder) {
+              const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+              store.addFolder({ id, name: folderName, parentFolderId: null });
+              folder = { id, name: folderName, parentFolderId: null };
+              createdFolders++;
+            }
+            typeFolders[folderName.toLowerCase()] = folder.id;
+          }
+        }
+
+        // Move assets to folders
+        const updatedAssets = store.assets.map((a) => {
+          let targetFolderId = a.folderId;
+          if (byType) {
+            const typeKey = a.type === "video" ? "video" : a.type === "audio" ? "audio" : "images";
+            if (typeFolders[typeKey]) targetFolderId = typeFolders[typeKey];
+          }
+          if (byGenerated && a.isGenerated) {
+            let genFolder = store.folders.find((f) => f.name === "AI Generated" && !f.parentFolderId);
+            if (!genFolder) {
+              const id = `folder-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+              store.addFolder({ id, name: "AI Generated", parentFolderId: null });
+              genFolder = { id, name: "AI Generated", parentFolderId: null };
+              createdFolders++;
+            }
+            targetFolderId = genFolder.id;
+          }
+          if (targetFolderId !== a.folderId) movedAssets++;
+          return { ...a, folderId: targetFolderId };
+        });
+        store.setAssets(updatedAssets as any);
+        return JSON.stringify({ createdFolders, movedAssets, note: `Created ${createdFolders} folder(s), moved ${movedAssets} asset(s).` });
       }
 
       // ─── MEDIA IMPORT ───────────────────────────────────────────
@@ -1737,12 +1805,25 @@ export async function executeTool(
             const pollResult = await waitForTask(apiKey || "", genResult.taskId);
             if (pollResult.status === "succeeded" && pollResult.resultUrls?.length) {
               const url = pollResult.resultUrls[0];
+              // Auto-import to media library
+              const mediaStore = useMediaPanelStore.getState();
+              const assetId = `gen-${Date.now()}`;
+              mediaStore.addAsset({
+                id: assetId,
+                name: prompt.slice(0, 40).trim(),
+                type: type === "video" ? "video" : type === "image" ? "image" : "audio",
+                url,
+                duration: duration ?? 5,
+                isGenerated: true,
+                folderId: mediaStore.currentFolderId,
+                createdAt: Date.now(),
+              });
               return JSON.stringify({
                 status: "succeeded",
                 resultUrl: url,
-                assetId: `gen-${Date.now()}`,
+                assetId,
                 assetName: prompt.slice(0, 40).trim(),
-                note: `Generated asset ready at ${url}. Use import_media to add it to the library.`,
+                note: `Generated ${type} added to library as "${prompt.slice(0, 40).trim()}". Use add_clips to place it on the timeline.`,
               });
             }
             return JSON.stringify({
@@ -1752,12 +1833,25 @@ export async function executeTool(
           }
 
           if (genResult.resultUrl) {
+            const url = genResult.resultUrl;
+            const mediaStore = useMediaPanelStore.getState();
+            const assetId = `gen-${Date.now()}`;
+            mediaStore.addAsset({
+              id: assetId,
+              name: prompt.slice(0, 40).trim(),
+              type: type === "video" ? "video" : type === "image" ? "image" : "audio",
+              url,
+              duration: duration ?? 5,
+              isGenerated: true,
+              folderId: mediaStore.currentFolderId,
+              createdAt: Date.now(),
+            });
             return JSON.stringify({
               status: "succeeded",
-              resultUrl: genResult.resultUrl,
-              assetId: `gen-${Date.now()}`,
+              resultUrl: url,
+              assetId,
               assetName: prompt.slice(0, 40).trim(),
-              note: `Generated asset ready at ${genResult.resultUrl}. Use import_media to add it to the library.`,
+              note: `Generated ${type} added to library as "${prompt.slice(0, 40).trim()}". Use add_clips to place it on the timeline.`,
             });
           }
 
