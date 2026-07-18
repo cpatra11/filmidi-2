@@ -170,7 +170,25 @@ transport.registerHandler((msg: any) => {
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
           const fileName = `filmidi-audio-${Date.now()}${ext}`;
 
-          // 1. Try tempfile.org (public HTTPS URL — DashScope can access it)
+          // 1. Try catbox.moe (free, no auth, no expiry)
+          try {
+            const formData = new FormData();
+            formData.append("reqtype", "fileupload");
+            formData.append("fileToUpload", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
+            const resp = await fetch("https://catbox.moe/user/api.php", {
+              method: "POST",
+              body: formData,
+            });
+            if (resp.ok) {
+              const url = (await resp.text()).trim();
+              if (url && url.startsWith("https://")) {
+                transport.send({ type: "upload-audio-result", requestId, url });
+                return;
+              }
+            }
+          } catch (_) {}
+
+          // 2. Try tempfile.org
           try {
             const formData = new FormData();
             formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
@@ -189,7 +207,7 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          // 2. Try backend upload (UploadThing)
+          // 3. Try backend upload (UploadThing)
           try {
             const formData = new FormData();
             formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
@@ -206,7 +224,7 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          // 3. Last resort: file:// URL
+          // 4. Last resort: file:// URL
           const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
           mkdirSync(tempDir, { recursive: true });
           const filePath = join(tempDir, fileName);
