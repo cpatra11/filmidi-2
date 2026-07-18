@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import {
   ContextMenu,
+  ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
@@ -25,7 +26,7 @@ export function TimelineContextMenu({
 
   return (
     <ContextMenu>
-      {children}
+      <ContextMenuTrigger render={<div />}>{children}</ContextMenuTrigger>
       <ContextMenuContent side="top" sideOffset={4}>
         <ContextMenuItem onClick={handle("add-track")}>
           <Plus size={14} />

@@ -18,7 +18,7 @@ import {
   type LayerJSON,
   type Magnet,
 } from "@videoflow/react-video-editor";
-import { getLayerLinkId } from "@/lib/linkUtils";
+import { getLayerLinkId, findLinkedPartnerIn } from "@/lib/linkUtils";
 import "./CustomTimeline.css";
 
 const TRACK_HEIGHT = 40;
@@ -127,6 +127,7 @@ function TimelineClip({
   onPointerDown,
   onHandlePointerDown,
   onDoubleClick,
+  onContextMenu,
 }: {
   layer: LayerJSON;
   scale: number;
@@ -135,6 +136,7 @@ function TimelineClip({
   onPointerDown: (e: React.PointerEvent, layer: LayerJSON) => void;
   onHandlePointerDown: (e: React.PointerEvent, layer: LayerJSON, edge: "start" | "end") => void;
   onDoubleClick: (e: React.MouseEvent, layer: LayerJSON) => void;
+  onContextMenu: (e: React.MouseEvent, layer: LayerJSON) => void;
 }) {
   const bounds = layerTimelineBounds(layer);
   const start = bounds.start - groupOffset;
@@ -156,6 +158,7 @@ function TimelineClip({
       style={{ left, width }}
       onPointerDown={(e) => onPointerDown(e, layer)}
       onDoubleClick={(e) => onDoubleClick(e, layer)}
+      onContextMenu={(e) => onContextMenu(e, layer)}
     >
       <div
         className="ct-clip-handle"
@@ -244,7 +247,7 @@ function TimelineClip({
 }
 
 // ─── Main Custom Timeline ─────────────────────────────────────
-export function CustomTimeline() {
+export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: (target: "clip" | "empty") => void }) {
   const video = useEditor((s) => s.video);
   const selection = useEditor((s) => s.selection);
   const viewport = useEditor((s) => s.viewport);
@@ -532,14 +535,22 @@ export function CustomTimeline() {
       const startClientY = e.clientY;
       let moved = false;
 
-      // Store initial positions of all selected layers
+      // Store initial positions of all selected layers + their linked partners
       const selectedIds = e.shiftKey || e.metaKey || e.ctrlKey
         ? useEditorStore.getState().selection.layerIds
         : [layer.id];
 
+      // Expand selection to include linked partners
       const allLayers = video.layers ?? [];
-      const initialPositions = new Map<string, { startTime: number; track: number }>();
+      const moveIds = new Set<string>(selectedIds);
       for (const id of selectedIds) {
+        const partner = findLinkedPartnerIn(allLayers, id);
+        if (partner) moveIds.add(partner.id);
+      }
+      const moveIdArray = Array.from(moveIds);
+
+      const initialPositions = new Map<string, { startTime: number; track: number }>();
+      for (const id of moveIdArray) {
         const l = allLayers.find((x) => x.id === id);
         if (l) {
           initialPositions.set(id, {
@@ -563,12 +574,12 @@ export function CustomTimeline() {
         // Compute new positions with snapping
         const magnets = computeMagnets(
           allLayers,
-          new Set(selectedIds),
+          new Set(moveIdArray),
           playheadTime,
         );
 
         const newPositions: Array<{ id: string; startTime: number; track: number }> = [];
-        for (const id of selectedIds) {
+        for (const id of moveIdArray) {
           const initial = initialPositions.get(id);
           if (!initial) continue;
           let newTime = initial.startTime + deltaTime;
@@ -587,7 +598,7 @@ export function CustomTimeline() {
               l.track = pos.track;
             }
           }
-        }, { label: "move", mergeKey: `move:${selectedIds.sort().join(",")}` });
+        }, { label: "move", mergeKey: `move:${moveIdArray.sort().join(",")}` });
       };
 
       const onUp = () => {
@@ -681,6 +692,19 @@ export function CustomTimeline() {
       }
     },
     [enterGroup],
+  );
+
+  // ─── Context menu on clip → set target ──────────────────────
+  const handleClipContextMenu = useCallback(
+    (_e: React.MouseEvent, layer: LayerJSON) => {
+      // Select the clip if not already selected
+      const editor = useEditorStore.getState();
+      if (!editor.selection.layerIds.includes(layer.id)) {
+        editor.selectLayers([layer.id]);
+      }
+      onContextMenuTarget?.("clip");
+    },
+    [onContextMenuTarget],
   );
 
   // ─── Track rename ────────────────────────────────────────────
@@ -808,6 +832,14 @@ export function CustomTimeline() {
           ref={tracksRef}
           style={{ width: totalWidth }}
           onPointerDown={handleTracksClick}
+          onContextMenu={(e) => {
+            // If right-click was on a clip, it will be set by the clip's handler
+            // If right-click was on empty area, set target to empty
+            const target = e.target as HTMLElement;
+            if (!target.closest(".ct-clip")) {
+              onContextMenuTarget?.("empty");
+            }
+          }}
         >
           {/* Video track rows (reverse order) */}
           {videoRows.map((row, displayIdx) => {
@@ -831,6 +863,7 @@ export function CustomTimeline() {
                     onPointerDown={handleClipPointerDown}
                     onHandlePointerDown={handleHandlePointerDown}
                     onDoubleClick={handleClipDoubleClick}
+                    onContextMenu={handleClipContextMenu}
                   />
                 ))}
               </div>
@@ -865,6 +898,7 @@ export function CustomTimeline() {
                     onPointerDown={handleClipPointerDown}
                     onHandlePointerDown={handleHandlePointerDown}
                     onDoubleClick={handleClipDoubleClick}
+                    onContextMenu={handleClipContextMenu}
                   />
                 ))}
               </div>

@@ -18,7 +18,6 @@ import { GenerationPanel } from "./GenerationPanel";
 import { MediaContextMenu } from "./MediaContextMenu";
 import { ClipContextMenu } from "./ClipContextMenu";
 import { Toolbar } from "./Toolbar";
-import { TimelineContextMenu } from "./TimelineContextMenu";
 import { ExportDialog } from "./ExportDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { HelpDialog } from "./HelpDialog";
@@ -29,6 +28,7 @@ import { getMediaDuration } from "@/lib/mediaDuration";
 import { useState, useCallback, useRef } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
+import type { ContextTarget } from "./ClipContextMenu";
 
 function VHandle() {
   return (
@@ -51,6 +51,7 @@ function HHandle() {
 export function Layout() {
   const { showAgentPanel, showMediaPanel, showInspector } = useAppStore();
   const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
+  const [contextTarget, setContextTarget] = useState<ContextTarget>("empty");
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
   const handleMediaAction = async (action: string) => {
@@ -70,12 +71,20 @@ export function Layout() {
           if (!asset || !asset.url) continue;
           const type = asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio";
           const sourceDuration = asset.duration || 5;
-          await addLayerCommand(editor.commit, {
-            type,
-            source: asset.url,
-            sourceDuration,
-            startTime,
-          });
+          if (type === "video") {
+            const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+            const { commands: cmds } = await import("@videoflow/react-video-editor");
+            const setSettingCommand = cmds.setSettingCommand;
+            const linkId = generateLinkId();
+            // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
+            const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
+            await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+            const layerId = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
+            await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
+            await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
+          } else {
+            await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
+          }
         }
         // Seek to refresh preview
         const s = useEditorStore.getState();
@@ -320,17 +329,20 @@ export function Layout() {
         const url = URL.createObjectURL(file);
         mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
-        const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
         if (type === "video") {
           const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
           const { commands: cmds } = await import("@videoflow/react-video-editor");
           const setSettingCommand = cmds.setSettingCommand;
           const linkId = generateLinkId();
+          // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
+          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+          await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+          const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
           await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
           // Mute video layer's built-in audio — separate audio track handles sound
           await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
-          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
-          await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+        } else {
+          await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
         }
       }
       mediaStore.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
@@ -349,22 +361,12 @@ export function Layout() {
       const editor = useEditorStore.getState();
       const fps = editor.video.fps || 30;
       const startTime = editor.currentFrame / fps;
-      await addLayerCommand(editor.commit, {
-        type: data.type,
-        source: data.url,
-        sourceDuration: data.duration || 5,
-        startTime,
-      });
       if (data.type === "video") {
         const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
         const { commands: cmds } = await import("@videoflow/react-video-editor");
         const setSettingCommand = cmds.setSettingCommand;
         const linkId = generateLinkId();
-        const videoLayerId = editor.video.layers.at(-1)?.id;
-        if (videoLayerId) {
-          await setLayerLinkId(editor.commit, videoLayerId, linkId, setSettingCommand);
-          await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
-        }
+        // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
         const audioLayerId = await addLayerCommand(editor.commit, {
           type: "audio",
           source: data.url,
@@ -372,6 +374,24 @@ export function Layout() {
           startTime,
         });
         if (audioLayerId) await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+        await addLayerCommand(editor.commit, {
+          type: data.type,
+          source: data.url,
+          sourceDuration: data.duration || 5,
+          startTime,
+        });
+        const videoLayerId = editor.video.layers.at(-1)?.id;
+        if (videoLayerId) {
+          await setLayerLinkId(editor.commit, videoLayerId, linkId, setSettingCommand);
+          await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
+        }
+      } else {
+        await addLayerCommand(editor.commit, {
+          type: data.type,
+          source: data.url,
+          sourceDuration: data.duration || 5,
+          startTime,
+        });
       }
       // Seek to refresh preview
       const s = useEditorStore.getState();
@@ -444,16 +464,19 @@ export function Layout() {
                               const url = URL.createObjectURL(file);
                               store.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
         if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
-                              const layerId2 = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
                               if (type === "video") {
                                 const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
                                 const { commands: cmds } = await import("@videoflow/react-video-editor");
                                 const setSettingCommand = cmds.setSettingCommand;
                                 const linkId = generateLinkId();
+                                // Create audio layer FIRST so video layer ends up higher in the array (renders on top)
+                                const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                                await setLayerLinkId(editor.commit, audioLayerId2, linkId, setSettingCommand);
+                                const layerId2 = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
                                 await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);
                                 await cmds.setPropertyCommand(editor.commit, layerId2, "mute", true);
-                                const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
-                                await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+                              } else {
+                                await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
                               }
                             }
                             store.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
@@ -508,12 +531,10 @@ export function Layout() {
                         <p className="text-sm font-medium text-white/80">Drop to add to timeline</p>
                       </div>
                     )}
-                    <ClipContextMenu onAction={handleClipAction}>
-                      <TimelineContextMenu onAction={handleTimelineAction}>
-                        <vf-editor data-theme="dark" style={{ display: "contents" }}>
-                          <CustomTimeline />
-                        </vf-editor>
-                      </TimelineContextMenu>
+                    <ClipContextMenu contextTarget={contextTarget} onAction={handleClipAction}>
+                      <vf-editor data-theme="dark" style={{ display: "contents" }}>
+                        <CustomTimeline onContextMenuTarget={setContextTarget} />
+                      </vf-editor>
                     </ClipContextMenu>
                   </div>
                 </div>
