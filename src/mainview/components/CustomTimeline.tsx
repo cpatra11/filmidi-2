@@ -331,6 +331,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const scrollLeftRef = useRef(0);
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
+  const [markers, setMarkers] = useState<Array<{ time: number; label: string }>>([]);
 
   const { fps, duration: videoDuration } = video;
   const scale = viewport.timelineScale;
@@ -547,6 +548,18 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       e.preventDefault();
       const body = bodyRef.current;
       if (!body || !bridge) return;
+
+      // M+click on ruler places a marker at that position
+      if ((window as any).__markerMode) {
+        const rect = body.getBoundingClientRect();
+        const x = e.clientX - rect.left + body.scrollLeft - HEADER_WIDTH;
+        const time = Math.max(0, Math.min(availableDuration, x / scale));
+        const label = prompt("Marker label:", `Marker ${markers.length + 1}`);
+        if (label !== null) {
+          setMarkers((prev) => [...prev, { time, label }].sort((a, b) => a.time - b.time));
+        }
+        return;
+      }
 
       // Shift+drag on ruler creates a time selection range
       if (e.shiftKey) {
@@ -984,6 +997,16 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                 {formatTime(tick.time, fps)}
               </div>
             ))}
+          {/* Markers on ruler */}
+          {markers.map((m, i) => (
+            <div
+              key={i}
+              className="ct-ruler-marker"
+              style={{ left: m.time * scale }}
+              title={m.label}
+              onClick={(e) => { e.stopPropagation(); if (confirm(`Remove marker "${m.label}"?`)) setMarkers((prev) => prev.filter((_, j) => j !== i)); }}
+            />
+          ))}
         </div>
       </div>
 

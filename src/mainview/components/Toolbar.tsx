@@ -23,6 +23,8 @@ import {
   ChevronRight,
   Download,
   Home,
+  Magnet,
+  Flag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +38,6 @@ import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
-import { Magnet } from "lucide-react";
 
 function ToolButton({
   icon: Icon,
@@ -230,6 +231,13 @@ export function Toolbar() {
       }} />
       <ToolButton icon={Maximize2} label="Zoom Fit" shortcut="⌘0" onClick={() => {
         useEditorStore.getState().setViewport({ timelineScale: 1, previewZoom: 1 });
+      }} />
+
+      {/* Marker toggle — M+click on ruler to place */}
+      <ToolButton icon={Flag} label="Marker" shortcut="M" active={!!(window as any).__markerMode} onClick={() => {
+        (window as any).__markerMode = !(window as any).__markerMode;
+        // Force re-render
+        useAppStore.getState().setTrackHeight(useAppStore.getState().trackHeight);
       }} />
 
       {/* Track height */}
