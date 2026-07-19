@@ -3,6 +3,7 @@ import { useProjectStore, type ProjectEntry } from "@/store/useProjectStore";
 import { useAppStore } from "@/store/useAppStore";
 import { useAccountStore } from "@/store/useAccountStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
+import { NewProjectDialog } from "./NewProjectDialog";
 import { Button } from "@/components/ui/button";
 import { Film, Plus, Search, Trash2, MoreHorizontal, FolderOpen, User } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -224,7 +225,7 @@ function SampleCard({
 }
 
 export function HomeView() {
-  const { projects, addProject, openProject, deleteProject, renameProject } =
+  const { projects, addProject, openProject, deleteProject, renameProject, setShowNewProjectDialog } =
     useProjectStore();
   const { setProjectName } = useAppStore();
   const [searchQuery, setSearchQuery] = useState("");
@@ -240,9 +241,12 @@ export function HomeView() {
     : sortedProjects;
 
   const handleNewProject = () => {
-    const name = "Untitled Project";
-    const id = addProject(name);
-    setProjectName(name);
+    setShowNewProjectDialog(true);
+  };
+
+  const handleCreateProject = (settings: { name: string; width: number; height: number; fps: number }) => {
+    const id = addProject(settings.name, settings);
+    setProjectName(settings.name);
     openProject(id);
   };
 
@@ -389,6 +393,11 @@ export function HomeView() {
           )}
         </div>
       </div>
+      <NewProjectDialog
+        open={useProjectStore.getState().showNewProjectDialog}
+        onOpenChange={(open) => useProjectStore.getState().setShowNewProjectDialog(open)}
+        onCreate={handleCreateProject}
+      />
     </div>
   );
 }

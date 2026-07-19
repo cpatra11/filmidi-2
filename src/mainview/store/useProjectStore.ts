@@ -3,6 +3,9 @@ import { create } from "zustand";
 export interface ProjectEntry {
   id: string;
   name: string;
+  width?: number;
+  height?: number;
+  fps?: number;
   createdAt: number;
   lastOpenedAt: number;
   thumbnailUrl?: string;
@@ -11,12 +14,14 @@ export interface ProjectEntry {
 interface ProjectState {
   projects: ProjectEntry[];
   currentProjectId: string | null;
+  showNewProjectDialog: boolean;
 
-  addProject: (name: string) => string;
+  addProject: (name: string, settings?: { width?: number; height?: number; fps?: number }) => string;
   openProject: (id: string | null) => void;
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
   updateThumbnail: (id: string, url: string) => void;
+  setShowNewProjectDialog: (show: boolean) => void;
   clearAll: () => void;
 }
 
@@ -42,13 +47,17 @@ function generateId(): string {
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: loadProjects(),
   currentProjectId: null,
+  showNewProjectDialog: false,
 
-  addProject: (name: string) => {
+  addProject: (name: string, settings?: { width?: number; height?: number; fps?: number }) => {
     const id = generateId();
     const now = Date.now();
     const entry: ProjectEntry = {
       id,
       name,
+      width: settings?.width ?? 1920,
+      height: settings?.height ?? 1080,
+      fps: settings?.fps ?? 30,
       createdAt: now,
       lastOpenedAt: now,
     };
@@ -90,6 +99,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     );
     saveProjects(updated);
     set({ projects: updated });
+  },
+
+  setShowNewProjectDialog: (show: boolean) => {
+    set({ showNewProjectDialog: show });
   },
 
   clearAll: () => {

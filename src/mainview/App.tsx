@@ -135,8 +135,16 @@ function App() {
     saveStore.setCurrentProject(currentProjectId);
     const savedData = saveStore.loadProject(currentProjectId);
     if (!savedData) {
+      // Use project settings from the store
+      const project = useProjectStore.getState().projects.find((p) => p.id === currentProjectId);
       saveStore.saveProject({
-        timeline: defaultVideo,
+        timeline: {
+          ...defaultVideo,
+          name: project?.name ?? "Untitled",
+          width: project?.width ?? 1920,
+          height: project?.height ?? 1080,
+          fps: project?.fps ?? 30,
+        },
         mediaManifest: [],
         generationLog: [],
         chatHistory: [],
