@@ -173,7 +173,7 @@ function ModelPicker() {
         <ChevronDown className="w-2.5 h-2.5" />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg shadow-lg overflow-hidden z-50 max-h-[200px] overflow-y-auto min-w-[160px]">
+        <div className="absolute top-full left-0 mt-1 bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg shadow-lg z-50 max-h-[260px] overflow-y-auto min-w-[160px]">
           {models.map((m, i) => (
             <button
               key={m.id}
@@ -495,7 +495,7 @@ export function GenerationPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-b from-[#0A0A0A] to-[#050505] rounded-xl border border-[#1C1C1C] shadow-lg overflow-hidden relative">
+    <div className="h-full flex flex-col bg-gradient-to-b from-[#0A0A0A] to-[#050505] rounded-xl border border-[#1C1C1C] shadow-lg relative">
       {/* History overlay */}
       {showHistory && <HistoryPanel />}
 
@@ -590,7 +590,7 @@ export function GenerationPanel() {
 
       {/* Prompt area + input box */}
       <div className="flex-1 min-h-0 px-3 pb-2 flex flex-col gap-1">
-        <div className="flex-1 min-h-0 rounded-xl bg-black/20 border border-white/10 focus-within:border-white/20 transition-colors overflow-hidden flex flex-col relative">
+        <div className="flex-1 min-h-0 rounded-xl bg-black/20 border border-white/10 focus-within:border-white/20 transition-colors flex flex-col relative">
           {/* Settings popover */}
           <SettingsPopover />
 

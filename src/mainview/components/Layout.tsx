@@ -492,10 +492,11 @@ export function Layout() {
       <TitleBar />
 
       <div className="flex-1 min-h-0">
+        <style>{`#panel-agent > div { overflow: visible !important; }`}</style>
         <Group orientation="horizontal">
           {/* ── Agent Panel (full height) ── */}
           {showAgentPanel && (
-            <Panel defaultSize="19%" minSize="14%" maxSize="40%" id="panel-agent" style={{ overflow: "visible" as any }}>
+            <Panel defaultSize="19%" minSize="14%" maxSize="40%" id="panel-agent">
               <div className="h-full bg-[var(--vf-panel)]" data-tour="agent">
                 <AgentPanel />
               </div>
