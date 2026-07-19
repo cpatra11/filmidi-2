@@ -852,11 +852,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "list_models",
     description:
-      "List available AI models for generation. Filter by type (video, image, audio). Shows capabilities: supported durations, aspect ratios, references, voices, asset types. Call before any generation tool.",
+      "List available AI models for chat and generation. Filter by type (chat, video, image, audio). Call before any generation tool.",
     input_schema: {
       type: "object",
       properties: {
-        type: { type: "string", enum: ["video", "image", "audio"], description: "Optional — filter by model type." },
+        type: { type: "string", enum: ["chat", "video", "image", "audio", "transcription", "upscale"], description: "Optional — filter by model type." },
       },
       required: [],
     },

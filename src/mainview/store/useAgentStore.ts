@@ -82,23 +82,38 @@ const MODEL_MAP: Record<string, string> = {
   "qwen-max":    "qwen3.7-max",
   "qwen-plus":   "qwen3.7-plus",
   "qwen-flash":  "qwen3.6-flash",
-  "qwen-turbo":  "qwen3.6-flash",  // qwen-turbo is invalid on Anthropic endpoint — fallback to flash
-  // Pass canonical ids through unchanged
-  "qwen3.7-max":        "qwen3.7-max",
-  "qwen3.7-plus":       "qwen3.7-plus",
-  "qwen3.6-max-preview": "qwen3.6-max-preview",
-  "qwen3.6-plus":       "qwen3.6-plus",
-  "qwen3.6-flash":      "qwen3.6-flash",
-  "qwen3.5-flash":      "qwen3.5-flash",
+  "qwen-turbo":  "qwen3.6-flash",
+  // Qwen models — canonical ids pass through
+  "qwen3.8-max-preview":  "qwen3.8-max-preview",
+  "qwen3.7-max":          "qwen3.7-max",
+  "qwen3.7-plus":         "qwen3.7-plus",
+  "qwen3.6-max-preview":  "qwen3.6-max-preview",
+  "qwen3.6-plus":         "qwen3.6-plus",
+  "qwen3.6-flash":        "qwen3.6-flash",
+  "qwen3.5-flash":        "qwen3.5-flash",
+  // Third-party models on Qwen Cloud
+  "deepseek-v4-pro":      "deepseek-v4-pro",
+  "deepseek-v4-flash":    "deepseek-v4-flash",
+  "kimi-k2.7-code":       "kimi-k2.7-code",
+  "glm-5.2":              "glm-5.2",
+  "minimax-m2.5":         "minimax-m2.5",
 };
 
 const AVAILABLE_MODELS = [
-  { id: "qwen3.7-max",   name: "Qwen 3.7 Max (Best)" },
-  { id: "qwen3.7-plus",  name: "Qwen 3.7 Plus" },
+  // Qwen — newest first
+  { id: "qwen3.8-max-preview", name: "Qwen 3.8 Max (Preview)" },
+  { id: "qwen3.7-max",         name: "Qwen 3.7 Max" },
+  { id: "qwen3.7-plus",        name: "Qwen 3.7 Plus" },
   { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview" },
-  { id: "qwen3.6-plus",  name: "Qwen 3.6 Plus" },
-  { id: "qwen3.6-flash", name: "Qwen 3.6 Flash (Fast)" },
-  { id: "qwen3.5-flash", name: "Qwen 3.5 Flash" },
+  { id: "qwen3.6-plus",        name: "Qwen 3.6 Plus" },
+  { id: "qwen3.6-flash",       name: "Qwen 3.6 Flash" },
+  { id: "qwen3.5-flash",       name: "Qwen 3.5 Flash" },
+  // Third-party
+  { id: "deepseek-v4-pro",     name: "DeepSeek V4 Pro" },
+  { id: "deepseek-v4-flash",   name: "DeepSeek V4 Flash" },
+  { id: "kimi-k2.7-code",      name: "Kimi K2.7 Code" },
+  { id: "glm-5.2",             name: "GLM 5.2" },
+  { id: "minimax-m2.5",        name: "MiniMax M2.5" },
 ];
 
 

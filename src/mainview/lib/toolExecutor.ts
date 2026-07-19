@@ -1945,13 +1945,20 @@ export async function executeTool(
       case "upscale_media": return JSON.stringify({ error: "Upscaling requires HitPaw backend — not available with direct API key. Sign in with Google to use upscaling." });
       case "list_models": return JSON.stringify({
         models: [
-          // Chat
+          // Chat — Qwen
+          { id: "qwen3.8-max-preview", name: "Qwen 3.8 Max Preview", type: "chat", description: "Newest flagship, preview" },
           { id: "qwen3.7-max", name: "Qwen 3.7 Max", type: "chat", description: "Highest intelligence, best for complex tasks" },
           { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", type: "chat", description: "Balanced performance and speed" },
           { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview", type: "chat", description: "Strong reasoning and coding" },
           { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", type: "chat", description: "Strong reasoning with vision" },
           { id: "qwen3.6-flash", name: "Qwen 3.6 Flash", type: "chat", description: "Fast and cost-effective" },
           { id: "qwen3.5-flash", name: "Qwen 3.5 Flash", type: "chat", description: "Economical, good for simple tasks" },
+          // Chat — Third-party on Qwen Cloud
+          { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", type: "chat", description: "High-performance reasoning" },
+          { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", type: "chat", description: "Fast reasoning" },
+          { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", type: "chat", description: "Code-specialized" },
+          { id: "glm-5.2", name: "GLM 5.2", type: "chat", description: "General purpose" },
+          { id: "minimax-m2.5", name: "MiniMax M2.5", type: "chat", description: "General purpose" },
           // Image
           { id: "qwen-image-2.0-pro", name: "Qwen-Image 2.0 Pro", type: "image", description: "High-quality image generation" },
           { id: "qwen-image-2.0-turbo", name: "Qwen-Image 2.0 Turbo", type: "image", description: "Fast image generation" },
