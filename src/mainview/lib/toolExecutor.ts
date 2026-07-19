@@ -859,7 +859,7 @@ export async function executeTool(
       case "add_captions": {
         const targetClipIds = input.clipIds as string[] | undefined;
         const language = input.language as string | undefined;
-        const maxWords = (input.maxWords as number) ?? 5;
+        const maxWords = (input.maxWords as number) ?? 3;
         const textCase = (input.textCase as string) ?? "auto";
         const animation = input.animation as string | undefined;
         const highlightColor = input.highlightColor as string | undefined;
@@ -947,13 +947,24 @@ export async function executeTool(
 
           const visibleWords = transcript.words.filter((w) => {
             if (w.start === undefined || w.end === undefined) return false;
-            const midSec = (w.start + w.end) / 2;
-            return midSec >= visibleStart && midSec <= visibleEnd;
+            if (w.end <= w.start) return false; // bad/zero timestamps
+            return w.end >= visibleStart && w.start <= visibleEnd;
           });
 
+          // Fallback: if time-filtering yields nothing, use ALL words
+          const wordsToUse = visibleWords.length > 0 ? visibleWords : transcript.words.filter((w) => {
+            if (w.start === undefined || w.end === undefined) return false;
+            return w.end > w.start; // at least has valid duration
+          });
+
+          if (wordsToUse.length === 0) {
+            console.warn("[add_captions] No transcribable words for", source.slice(0, 60));
+            continue;
+          }
+
           // Split into phrases of maxWords
-          for (let i = 0; i < visibleWords.length; i += maxWords) {
-            const phrase = visibleWords.slice(i, i + maxWords);
+          for (let i = 0; i < wordsToUse.length; i += maxWords) {
+            const phrase = wordsToUse.slice(i, i + maxWords);
             const text = phrase.map((w) => w.text).join(" ");
             if (!text.trim()) continue;
 
@@ -962,8 +973,8 @@ export async function executeTool(
             if (textCase === "upper") displayText = text.toUpperCase();
             else if (textCase === "lower") displayText = text.toLowerCase();
 
-            const startFrame = toTimeline(phrase[0].start ?? 0);
-            const endFrame = toTimeline(phrase[phrase.length - 1].end ?? phrase[0].end ?? 1);
+            const startFrame = Math.max(0, toTimeline(phrase[0].start ?? 0));
+            const endFrame = Math.max(startFrame + 1, toTimeline(phrase[phrase.length - 1].end ?? phrase[0].end ?? 1));
             const durationSeconds = Math.max(0.5, (endFrame - startFrame) / fps);
 
             const textTrack = 20 + (editor.video.layers ?? []).filter((l: any) => l.type === "text" || l.type === "captions").length;
