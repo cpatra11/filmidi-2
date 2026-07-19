@@ -15,6 +15,7 @@ import {
   snapTime,
   DEFAULT_SNAP_PIXELS,
   packLayersIntoTracks,
+  createLayerJSON,
   type LayerJSON,
   type Magnet,
 } from "@videoflow/react-video-editor";
@@ -672,33 +673,40 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           const linkId = getLayerLinkId(layer);
           const partner = findLinkedPartnerIn(video.layers ?? [], layer.id);
           const razorEditor = useEditorStore.getState();
-          commands.resizeLayerCommand(razorEditor.commit, layer.id, splitDur);
-          // Fire-and-forget the rest (async addLayerCommand calls)
-          (async () => {
-            const { addLayerCommand: addCmd } = commands;
-            const newId = await addCmd(razorEditor.commit, {
-              type: layer.type, source: layer.settings?.source as string,
-              sourceDuration: remainDur, startTime: bounds.start + splitDur,
-            });
-            if (linkId && newId) {
-              const { commands: cmds } = await import("@videoflow/react-video-editor");
-              await cmds.setSettingCommand(razorEditor.commit, newId, "linkId", linkId);
+          // Single commit for atomic undo
+          const commitData: any = {
+            primary: { id: layer.id, splitDur, remainDur, startTime: bounds.start + splitDur },
+            partner: partner ? {
+              id: partner.id,
+              pBounds: layerTimelineBounds(partner),
+              pSplitDur: frame / fps - layerTimelineBounds(partner).start,
+              pRemainDur: layerTimelineBounds(partner).end - frame / fps,
+              pStartTime: layerTimelineBounds(partner).start + (frame / fps - layerTimelineBounds(partner).start),
+            } : null,
+            linkId,
+            type: layer.type,
+            source: layer.settings?.source as string,
+            partnerType: partner?.type,
+            partnerSource: partner?.settings?.source as string,
+          };
+          // Use a single commit to do all mutations atomically
+          razorEditor.commit((draft: any) => {
+            // Resize primary
+            const pri = draft.layers?.find((x: any) => x.id === commitData.primary.id);
+            if (pri) pri.settings.sourceDuration = commitData.primary.splitDur;
+            // Add right part for primary
+            const newLayer = { ...createLayerJSON({ type: commitData.type, source: commitData.source, sourceDuration: commitData.primary.remainDur, startTime: commitData.primary.startTime }) };
+            if (commitData.linkId) newLayer.settings.linkId = commitData.linkId;
+            draft.layers?.push(newLayer);
+            // Handle partner
+            if (commitData.partner) {
+              const part = draft.layers?.find((x: any) => x.id === commitData.partner.id);
+              if (part) part.settings.sourceDuration = commitData.partner.pSplitDur;
+              const pNew = { ...createLayerJSON({ type: commitData.partnerType!, source: commitData.partnerSource, sourceDuration: commitData.partner.pRemainDur, startTime: commitData.partner.pStartTime }) };
+              if (commitData.linkId) pNew.settings.linkId = commitData.linkId;
+              draft.layers?.push(pNew);
             }
-            if (partner) {
-              const pBounds = layerTimelineBounds(partner);
-              const pSplitDur = frame / fps - pBounds.start;
-              const pRemainDur = pBounds.end - frame / fps;
-              commands.resizeLayerCommand(razorEditor.commit, partner.id, pSplitDur);
-              const pNewId = await addCmd(razorEditor.commit, {
-                type: partner.type, source: partner.settings?.source as string,
-                sourceDuration: pRemainDur, startTime: pBounds.start + pSplitDur,
-              });
-              if (linkId && pNewId) {
-                const { commands: cmds } = await import("@videoflow/react-video-editor");
-                await cmds.setSettingCommand(razorEditor.commit, pNewId, "linkId", linkId);
-              }
-            }
-          })();
+          }, { label: "Razor split" });
         }
         return;
       }

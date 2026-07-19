@@ -39,6 +39,17 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
 
+// Expand layer IDs to include linked partners
+function expandToPartners(ids: string[]): string[] {
+  const layers = useEditorStore.getState().video.layers ?? [];
+  const set = new Set(ids);
+  for (const id of ids) {
+    const partner = layers.find((l: any) => l.settings?.linkId && l.id !== id && layers.find((x: any) => x.id === id)?.settings?.linkId === l.settings?.linkId);
+    if (partner) set.add(partner.id);
+  }
+  return Array.from(set);
+}
+
 function ToolButton({
   icon: Icon,
   label,
@@ -114,7 +125,7 @@ export function Toolbar() {
         const s = useEditorStore.getState();
         const frame = s.currentFrame;
         const fps = s.video.fps || 30;
-        const ids = s.selection.layerIds;
+        const ids = expandToPartners(s.selection.layerIds);
         if (ids.length === 0) return;
         s.commit((v: any) => {
           const idSet = new Set(ids);
@@ -258,7 +269,7 @@ export function Toolbar() {
       {/* Delete */}
       <ToolButton icon={Trash2} label="Delete" shortcut="Del" onClick={() => {
         const s = useEditorStore.getState();
-        const ids = s.selection.layerIds;
+        const ids = expandToPartners(s.selection.layerIds);
         if (ids.length > 0) {
           s.commit((v: any) => {
             const idSet = new Set(ids);

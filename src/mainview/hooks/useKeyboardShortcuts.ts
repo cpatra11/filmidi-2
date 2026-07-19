@@ -5,6 +5,20 @@ import { commands } from "@videoflow/react-video-editor";
 
 const { addLayerCommand } = commands;
 
+function expandToPartners(ids: string[]): string[] {
+  const layers = useEditorStore.getState().video.layers ?? [];
+  const set = new Set(ids);
+  for (const id of ids) {
+    const layer = layers.find((l: any) => l.id === id);
+    if (!layer) continue;
+    const linkId = (layer as any).settings?.linkId;
+    if (!linkId) continue;
+    const partner = layers.find((l: any) => l.id !== id && (l as any).settings?.linkId === linkId);
+    if (partner) set.add(partner.id);
+  }
+  return Array.from(set);
+}
+
 function nudgeSelectedClips(direction: "left" | "right", frames: number) {
   const s = useEditorStore.getState();
   const ids = s.selection.layerIds;
@@ -227,7 +241,7 @@ function splitAtPlayhead() {
   const s = useEditorStore.getState();
   const frame = s.currentFrame;
   const fps = s.video.fps || 30;
-  const ids = s.selection.layerIds;
+  const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
 
   s.commit((v: any) => {
@@ -265,7 +279,7 @@ function splitAtPlayhead() {
 
 function cutSelectedLayers() {
   const s = useEditorStore.getState();
-  const ids = s.selection.layerIds;
+  const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
   // Copy to clipboard
   const layers = s.video.layers.filter((l: any) => ids.includes(l.id));
@@ -313,7 +327,7 @@ async function pasteLayers() {
 
 function deleteSelectedLayers() {
   const s = useEditorStore.getState();
-  const ids = s.selection.layerIds;
+  const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
   s.commit((v: any) => {
     const idSet = new Set(ids);
