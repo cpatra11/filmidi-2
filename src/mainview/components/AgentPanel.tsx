@@ -407,6 +407,7 @@ export function AgentPanel() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const modelBtnRef = useRef<HTMLButtonElement>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
 
@@ -654,11 +655,10 @@ export function AgentPanel() {
                     key={`${item.type}-${item.id}`}
                     onClick={() => insertMention(item)}
                     onMouseEnter={() => setMentionIndex(idx)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] cursor-pointer ${
-                      idx === mentionIndex
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] cursor-pointer ${idx === mentionIndex
                         ? "bg-white/10 text-[#e0e0ee]"
                         : "text-[#aaaacc] hover:bg-white/5"
-                    }`}
+                      }`}
                   >
                     {item.type === "mediaAsset" ? (
                       <Video className="w-3 h-3 shrink-0" />
@@ -680,29 +680,41 @@ export function AgentPanel() {
             {/* Model picker */}
             <div className="relative">
               <button
+                ref={modelBtnRef}
                 onClick={() => setShowModelPicker((v) => !v)}
                 className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-[#aaaacc] hover:text-[#ccccee] cursor-pointer"
               >
                 {AVAILABLE_MODELS.find((m) => m.id === model)?.name ?? model}
                 <ChevronDown className="w-2.5 h-2.5" />
               </button>
-              {showModelPicker && (
-                <div className="absolute bottom-full left-0 mb-1 bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg shadow-lg overflow-y-auto z-50 min-w-[160px] max-h-[260px]">
-                  {AVAILABLE_MODELS.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        setModel(m.id);
-                        setShowModelPicker(false);
-                      }}
-                      className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer truncate ${model === m.id ? "bg-white/10 text-[#e0e0ee]" : "text-[#aaaacc] hover:bg-white/5"}`}
-                      title={m.name}
-                    >
-                      {m.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {showModelPicker && modelBtnRef.current && (() => {
+                const rect = modelBtnRef.current.getBoundingClientRect();
+                return (
+                  <div
+                    className="fixed z-[9999] bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg shadow-lg overflow-y-auto min-w-[180px]"
+                    style={{
+                      left: rect.left,
+                      bottom: window.innerHeight - rect.top + 4,
+                      maxHeight: Math.min(400, rect.top - 20),
+                    }}
+                  >
+                    <div className="px-3 py-1 text-[9px] text-[#555577] border-b border-white/5 sticky top-0 bg-[#0A0A0A]">{AVAILABLE_MODELS.length} models</div>
+                    {AVAILABLE_MODELS.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          setModel(m.id);
+                          setShowModelPicker(false);
+                        }}
+                        className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer truncate ${model === m.id ? "bg-white/10 text-[#e0e0ee]" : "text-[#aaaacc] hover:bg-white/5"}`}
+                        title={m.name}
+                      >
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="flex-1" />
