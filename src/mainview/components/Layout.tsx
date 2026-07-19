@@ -492,7 +492,7 @@ export function Layout() {
           {/* ── Agent Panel (full height) ── */}
           {showAgentPanel && (
             <Panel defaultSize="19%" minSize="14%" maxSize="40%" id="panel-agent">
-              <div className="h-full overflow-hidden bg-[var(--vf-panel)]" data-tour="agent">
+              <div className="h-full bg-[var(--vf-panel)]" data-tour="agent">
                 <AgentPanel />
               </div>
             </Panel>
