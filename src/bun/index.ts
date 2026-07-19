@@ -204,38 +204,43 @@ transport.registerHandler((msg: any) => {
     }
     case "db-save-project": {
       const { id, name, width, height, fps } = msg;
+      if (!id) { transport.send({ type: "db-save-project-result", ok: false, error: "Missing id" }); break; }
       const now = Date.now();
       db.run(`INSERT OR REPLACE INTO projects (id, name, width, height, fps, created_at, last_opened_at)
         VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?)`,
-        [id, name, width ?? 1920, height ?? 1080, fps ?? 30, id, now, now]);
+        [id, name ?? "Untitled", width ?? 1920, height ?? 1080, fps ?? 30, id, now, now]);
       transport.send({ type: "db-save-project-result", ok: true });
       break;
     }
     case "db-delete-project": {
+      if (!msg.id) break;
       db.run("DELETE FROM projects WHERE id = ?", [msg.id]);
       db.run("DELETE FROM project_data WHERE id = ?", [msg.id]);
       transport.send({ type: "db-delete-project-result", ok: true });
       break;
     }
     case "db-update-project-name": {
+      if (!msg.id || !msg.name) break;
       db.run("UPDATE projects SET name = ? WHERE id = ?", [msg.name, msg.id]);
       transport.send({ type: "db-update-project-name-result", ok: true });
       break;
     }
     case "db-save-project-data": {
       const { projectId, timeline, mediaManifest, generationLog, chatHistory, thumbnail } = msg;
+      if (!projectId) { transport.send({ type: "db-save-project-data-result", ok: false }); break; }
       db.run(`INSERT OR REPLACE INTO project_data (id, timeline, media_manifest, generation_log, chat_history)
         VALUES (?, ?, ?, ?, ?)`,
         [projectId,
-         timeline ? JSON.stringify(timeline) : null,
-         mediaManifest ? JSON.stringify(mediaManifest) : null,
-         generationLog ? JSON.stringify(generationLog) : null,
-         chatHistory ? JSON.stringify(chatHistory) : null]);
+         timeline != null ? JSON.stringify(timeline) : null,
+         mediaManifest != null ? JSON.stringify(mediaManifest) : null,
+         generationLog != null ? JSON.stringify(generationLog) : null,
+         chatHistory != null ? JSON.stringify(chatHistory) : null]);
       if (thumbnail) db.run("UPDATE projects SET thumbnail = ? WHERE id = ?", [thumbnail, projectId]);
       transport.send({ type: "db-save-project-data-result", ok: true });
       break;
     }
     case "db-load-project-data": {
+      if (!msg.id) { transport.send({ type: "db-load-project-data-result", data: null }); break; }
       const row = db.query("SELECT * FROM project_data WHERE id = ?").get(msg.id) as any;
       if (row) {
         transport.send({ type: "db-load-project-data-result", data: {
@@ -250,6 +255,7 @@ transport.registerHandler((msg: any) => {
       break;
     }
     case "db-delete-project-data": {
+      if (!msg.id) break;
       db.run("DELETE FROM project_data WHERE id = ?", [msg.id]);
       transport.send({ type: "db-delete-project-data-result", ok: true });
       break;
