@@ -638,6 +638,7 @@ function StoragePane() {
       localStorage.removeItem("filmidi_agent_sessions");
       localStorage.removeItem("filmidi_generation_history");
       localStorage.removeItem("filmidi_media_panel");
+      import("@/lib/dbIPC").then(({ dbDeleteChatSessions }) => dbDeleteChatSessions()).catch(() => {});
     } catch {}
   };
 

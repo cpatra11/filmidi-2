@@ -81,3 +81,17 @@ export async function dbLoadProjectData(id: string): Promise<{
 export async function dbDeleteProjectData(id: string): Promise<void> {
   await sendAndWait("db-delete-project-data", { id }, "db-delete-project-data-result");
 }
+
+/** Chat sessions */
+export async function dbSaveChatSessions(sessions: any[]): Promise<void> {
+  await sendAndWait("db-save-chat-sessions", { sessions }, "db-save-chat-sessions-result", 30000);
+}
+
+export async function dbLoadChatSessions(): Promise<any[]> {
+  const res = await sendAndWait("db-load-chat-sessions", {}, "db-load-chat-sessions-result");
+  return res.sessions ?? [];
+}
+
+export async function dbDeleteChatSessions(): Promise<void> {
+  await sendAndWait("db-delete-chat-sessions", {}, "db-delete-chat-sessions-result");
+}

@@ -53,6 +53,8 @@ interface AgentState {
   agentEditHistory: Array<{ turn: number; tool: string; summary: string }>;
   /** Running turn counter for edit history */
   agentTurn: number;
+  /** Whether sessions have been loaded from SQLite */
+  sessionsInitialized: boolean;
 
   createSession: () => string;
   selectSession: (id: string) => void;
@@ -126,11 +128,18 @@ function persistSessions(sessions: ChatSession[]) {
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
     }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    import("@/lib/dbIPC").then(({ dbSaveChatSessions }) => dbSaveChatSessions(trimmed)).catch(() => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    });
   } catch {}
 }
 
-function loadSessions(): ChatSession[] {
+async function loadSessions(): Promise<ChatSession[]> {
+  try {
+    const { dbLoadChatSessions } = await import("@/lib/dbIPC");
+    const sessions = await dbLoadChatSessions();
+    if (sessions.length > 0) return sessions as ChatSession[];
+  } catch {}
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
@@ -547,14 +556,16 @@ async function streamViaBackend(
 }
 
 export const useAgentStore = create<AgentState>((set, get) => ({
-  sessions: loadSessions(),
+  sessions: [],
   currentSessionId: null,
   draft: "",
   isStreaming: false,
   streamError: null,
   model: localStorage.getItem("filmidi_agent_model") ?? "qwen3.7-plus",
+  errorCount: 0,
   agentEditHistory: [],
   agentTurn: 0,
+  sessionsInitialized: false,
 
   createSession: () => {
     const id = makeId();
@@ -756,5 +767,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     return !s.isStreaming && s.draft.trim().length > 0;
   },
 }));
+
+// Load sessions asynchronously after store creation
+loadSessions().then((sessions) => {
+  useAgentStore.setState({ sessions, sessionsInitialized: true });
+});
 
 export { AVAILABLE_MODELS };

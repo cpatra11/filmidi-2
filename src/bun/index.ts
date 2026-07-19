@@ -106,6 +106,12 @@ db.run(`CREATE TABLE IF NOT EXISTS project_data (
   generation_log TEXT,
   chat_history TEXT
 )`);
+db.run(`CREATE TABLE IF NOT EXISTS chat_sessions (
+  id TEXT PRIMARY KEY,
+  session_data TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)`);
 
 function projectRowToEntry(row: any): any {
   return {
@@ -246,6 +252,36 @@ transport.registerHandler((msg: any) => {
     case "db-delete-project-data": {
       db.run("DELETE FROM project_data WHERE id = ?", [msg.id]);
       transport.send({ type: "db-delete-project-data-result", ok: true });
+      break;
+    }
+
+    // ─── Chat sessions ────────────────────────────────────────
+    case "db-save-chat-sessions": {
+      const { sessions } = msg;
+      // Upsert all sessions
+      const upsert = db.prepare(`INSERT OR REPLACE INTO chat_sessions (id, session_data, created_at, updated_at)
+        VALUES (?, ?, ?, ?)`);
+      const now = Date.now();
+      for (const s of (sessions as any[]) ?? []) {
+        upsert.run(s.id, JSON.stringify(s), s.createdAt ?? now, now);
+      }
+      // Delete sessions not in the list
+      if (Array.isArray(sessions) && sessions.length > 0) {
+        const ids = sessions.map((s: any) => s.id);
+        db.run(`DELETE FROM chat_sessions WHERE id NOT IN (${ids.map(() => "?").join(",")})`, ids);
+      }
+      transport.send({ type: "db-save-chat-sessions-result", ok: true });
+      break;
+    }
+    case "db-load-chat-sessions": {
+      const rows = db.query("SELECT session_data FROM chat_sessions ORDER BY updated_at DESC LIMIT 20").all() as any[];
+      const sessions = rows.map((r: any) => JSON.parse(r.session_data));
+      transport.send({ type: "db-load-chat-sessions-result", sessions });
+      break;
+    }
+    case "db-delete-chat-sessions": {
+      db.run("DELETE FROM chat_sessions");
+      transport.send({ type: "db-delete-chat-sessions-result", ok: true });
       break;
     }
 
