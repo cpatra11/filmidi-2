@@ -683,11 +683,11 @@ export function AgentPanel() {
                 onClick={() => setShowModelPicker((v) => !v)}
                 className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-[#aaaacc] hover:text-[#ccccee] cursor-pointer"
               >
-                {model}
+                {AVAILABLE_MODELS.find((m) => m.id === model)?.name ?? model}
                 <ChevronDown className="w-2.5 h-2.5" />
               </button>
               {showModelPicker && (
-                <div className="absolute bottom-full left-0 mb-1 bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg shadow-lg overflow-hidden z-50 min-w-[140px]">
+                <div className="absolute bottom-full left-0 mb-1 bg-[#0A0A0A] border border-[#1C1C1C] rounded-lg shadow-lg overflow-y-auto z-50 min-w-[160px] max-h-[260px]">
                   {AVAILABLE_MODELS.map((m) => (
                     <button
                       key={m.id}
@@ -695,7 +695,8 @@ export function AgentPanel() {
                         setModel(m.id);
                         setShowModelPicker(false);
                       }}
-                      className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer ${model === m.id ? "bg-white/10 text-[#e0e0ee]" : "text-[#aaaacc] hover:bg-white/5"}`}
+                      className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer truncate ${model === m.id ? "bg-white/10 text-[#e0e0ee]" : "text-[#aaaacc] hover:bg-white/5"}`}
+                      title={m.name}
                     >
                       {m.name}
                     </button>
