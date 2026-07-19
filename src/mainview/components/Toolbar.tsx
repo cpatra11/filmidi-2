@@ -138,7 +138,10 @@ export function Toolbar() {
                 if (frame > startFrame && frame < startFrame + durFrames) {
                   const splitOffset = (frame - startFrame) / fps;
                   const origDur = layer.duration || layer.sourceDuration || 5;
-                  toAdd.push({ ...layer, id: `${layer.id}-r-${Date.now()}`, name: `${layer.name || "Clip"} (R)`, startTime: layer.startTime + splitOffset, sourceStart: (layer.sourceStart || 0) + splitOffset, sourceDuration: origDur - splitOffset, duration: origDur - splitOffset });
+                  const linkId = layer.settings?.linkId;
+                  const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
+                  toAdd.push({ ...layer, id: `${layer.id}-r-${Date.now()}`, name: `${layer.name || "Clip"} (R)`, startTime: layer.startTime + splitOffset, sourceStart: (layer.sourceStart || 0) + splitOffset, sourceDuration: origDur - splitOffset, duration: origDur - splitOffset, settings: { ...layer.settings, linkId: rightLinkId || linkId } });
+                  if (rightLinkId) layer.settings.linkId = rightLinkId;
                   layer.duration = splitOffset;
                   layer.sourceDuration = splitOffset;
                 }

@@ -598,16 +598,17 @@ export async function executeTool(
               const remainDur = (durFrames - (atFrame - startFrame)) / fps;
               // Resize original (left part)
               await resizeLayerCommand(commit, layerId, splitDur);
-              // Add right part — preserve linkId if present
+              // Add right part — generate NEW linkId so right parts don't share with left parts
               const linkId = getLayerLinkId(layer);
+              const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
               const newLayerId = await addLayerCommand(commit, {
                 type: layer.type as string,
                 source: layer.settings?.source as string,
                 sourceDuration: remainDur,
                 startTime: (layer.settings?.startTime ?? 0) + splitDur,
               });
-              if (linkId && newLayerId) {
-                await setSettingCommand(commit, newLayerId, "linkId", linkId);
+              if (rightLinkId && newLayerId) {
+                await setSettingCommand(commit, newLayerId, "linkId", rightLinkId);
               }
               // Also split the linked partner at the same frame
               const partner = findLinkedPartnerIn(allLayers, layerId);
@@ -624,8 +625,8 @@ export async function executeTool(
                     sourceDuration: pRemainDur,
                     startTime: (partner.settings?.startTime ?? 0) + pSplitDur,
                   });
-                  if (linkId && pNewId) {
-                    await setSettingCommand(commit, pNewId, "linkId", linkId);
+                  if (rightLinkId && pNewId) {
+                    await setSettingCommand(commit, pNewId, "linkId", rightLinkId);
                   }
                 }
               }
@@ -647,14 +648,15 @@ export async function executeTool(
             const remainDur = (durFrames - (frame - startFrame)) / fps;
             await resizeLayerCommand(commit, layer.id, splitDur);
             const linkId = getLayerLinkId(layer);
+            const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
             const newLayerId = await addLayerCommand(commit, {
               type: layer.type as string,
               source: layer.settings?.source as string,
               sourceDuration: remainDur,
               startTime: (layer.settings?.startTime ?? 0) + splitDur,
             });
-            if (linkId && newLayerId) {
-              await setSettingCommand(commit, newLayerId, "linkId", linkId);
+            if (rightLinkId && newLayerId) {
+              await setSettingCommand(commit, newLayerId, "linkId", rightLinkId);
             }
           }
         }

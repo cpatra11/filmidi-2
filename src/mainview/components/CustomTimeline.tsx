@@ -671,6 +671,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           const splitDur = (frame - startFrame) / fps;
           const remainDur = (endFrame - frame) / fps;
           const linkId = getLayerLinkId(layer);
+          const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
           const partner = findLinkedPartnerIn(video.layers ?? [], layer.id);
           const razorEditor = useEditorStore.getState();
           // Single commit for atomic undo
@@ -683,7 +684,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
               pRemainDur: layerTimelineBounds(partner).end - frame / fps,
               pStartTime: layerTimelineBounds(partner).start + (frame / fps - layerTimelineBounds(partner).start),
             } : null,
-            linkId,
+            rightLinkId,
             type: layer.type,
             source: layer.settings?.source as string,
             partnerType: partner?.type,
@@ -694,16 +695,16 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
             // Resize primary
             const pri = draft.layers?.find((x: any) => x.id === commitData.primary.id);
             if (pri) pri.settings.sourceDuration = commitData.primary.splitDur;
-            // Add right part for primary
+            // Add right part for primary — use new rightLinkId
             const newLayer = { ...createLayerJSON({ type: commitData.type, source: commitData.source, sourceDuration: commitData.primary.remainDur, startTime: commitData.primary.startTime }) };
-            if (commitData.linkId) newLayer.settings.linkId = commitData.linkId;
+            if (commitData.rightLinkId) newLayer.settings.linkId = commitData.rightLinkId;
             draft.layers?.push(newLayer);
             // Handle partner
             if (commitData.partner) {
               const part = draft.layers?.find((x: any) => x.id === commitData.partner.id);
               if (part) part.settings.sourceDuration = commitData.partner.pSplitDur;
               const pNew = { ...createLayerJSON({ type: commitData.partnerType!, source: commitData.partnerSource, sourceDuration: commitData.partner.pRemainDur, startTime: commitData.partner.pStartTime }) };
-              if (commitData.linkId) pNew.settings.linkId = commitData.linkId;
+              if (commitData.rightLinkId) pNew.settings.linkId = commitData.rightLinkId;
               draft.layers?.push(pNew);
             }
           }, { label: "Razor split" });

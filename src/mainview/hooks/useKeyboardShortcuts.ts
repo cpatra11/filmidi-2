@@ -255,6 +255,8 @@ function splitAtPlayhead() {
           const endFrame = startFrame + durFrames;
           if (frame > startFrame && frame < endFrame) {
             const splitOffset = (frame - startFrame) / fps;
+            const linkId = layer.settings?.linkId;
+            const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
             toAdd.push({
               ...layer,
               id: `${layer.id}-r-${Date.now()}`,
@@ -263,7 +265,9 @@ function splitAtPlayhead() {
               sourceStart: (layer.sourceStart || 0) + splitOffset,
               sourceDuration: (layer.duration || layer.sourceDuration || 5) - splitOffset,
               duration: (layer.duration || layer.sourceDuration || 5) - splitOffset,
+              settings: { ...layer.settings, linkId: rightLinkId || linkId },
             });
+            if (rightLinkId) layer.settings.linkId = rightLinkId;
             layer.duration = splitOffset;
             layer.sourceDuration = splitOffset;
           }
