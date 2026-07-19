@@ -47,6 +47,14 @@ function getDisplayName(urlOrFile: string | File | undefined): string {
   return urlOrFile.name.replace(/\.[^.]+$/, "") || "Clip";
 }
 
+/** Set a layer's track via direct commit (not setPropertyCommand) */
+function setLayerTrack(commit: any, layerId: string, track: number) {
+  commit((draft: any) => {
+    const l = draft.layers?.find((x: any) => x.id === layerId);
+    if (l) l.track = Math.max(0, Math.floor(track));
+  }, { label: "Set track" });
+}
+
 function VHandle() {
   return (
     <Separator className="w-[3px] bg-transparent hover:bg-white/20 active:bg-white/40 transition-colors cursor-col-resize shrink-0" />
@@ -100,19 +108,19 @@ export function Layout() {
             cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
             cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
             const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
-            await cmds.setPropertyCommand(editor.commit, audioLayerId, "track", audioTrack);
-            await cmds.setPropertyCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+            setLayerTrack(editor.commit, audioLayerId, audioTrack);
+            await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
             await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
             const layerId = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
-            await cmds.setPropertyCommand(editor.commit, layerId, "track", videoTrack);
-            await cmds.setPropertyCommand(editor.commit, layerId, "name", clipName);
+            setLayerTrack(editor.commit, layerId, videoTrack);
+            await cmds.setSettingCommand(editor.commit, layerId, "name", clipName);
             await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
             await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
           } else {
             const l = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
             if (l) {
               const { commands: cmds } = await import("@videoflow/react-video-editor");
-              await cmds.setPropertyCommand(editor.commit, l, "track", nextTrack("audio", 0));
+              setLayerTrack(editor.commit, l, nextTrack("audio", 0));
             }
           }
         }
@@ -402,19 +410,19 @@ export function Layout() {
           cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
           cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
           const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
-          await cmds.setPropertyCommand(editor.commit, audioLayerId, "track", audioTrack);
-          await cmds.setPropertyCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+          setLayerTrack(editor.commit, audioLayerId, audioTrack);
+          await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
           const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
-          await cmds.setPropertyCommand(editor.commit, layerId, "track", videoTrack);
-          await cmds.setPropertyCommand(editor.commit, layerId, "name", clipName);
+          setLayerTrack(editor.commit, layerId, videoTrack);
+          await cmds.setSettingCommand(editor.commit, layerId, "name", clipName);
           await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
           await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
         } else {
           const l = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
           if (l) {
             const { commands: cmds } = await import("@videoflow/react-video-editor");
-            await cmds.setPropertyCommand(editor.commit, l, "track", nextTrack("audio", 0));
+            setLayerTrack(editor.commit, l, nextTrack("audio", 0));
           }
         }
       }
@@ -448,16 +456,16 @@ export function Layout() {
           type: "audio", source: data.url, sourceDuration: data.duration || 5, startTime,
         });
         if (audioLayerId) {
-          await cmds.setPropertyCommand(editor.commit, audioLayerId, "track", audioTrack);
-          await cmds.setPropertyCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+          setLayerTrack(editor.commit, audioLayerId, audioTrack);
+          await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
         }
         const videoLayerId = await addLayerCommand(editor.commit, {
           type: data.type, source: data.url, sourceDuration: data.duration || 5, startTime,
         });
         if (videoLayerId) {
-          await cmds.setPropertyCommand(editor.commit, videoLayerId, "track", videoTrack);
-          await cmds.setPropertyCommand(editor.commit, videoLayerId, "name", clipName);
+          setLayerTrack(editor.commit, videoLayerId, videoTrack);
+          await cmds.setSettingCommand(editor.commit, videoLayerId, "name", clipName);
           await setLayerLinkId(editor.commit, videoLayerId, linkId, setSettingCommand);
           await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
         }
@@ -551,12 +559,12 @@ export function Layout() {
                                 cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
                                 cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
                                 const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
-                                await cmds.setPropertyCommand(editor.commit, audioLayerId2, "track", audioTrack);
-                                await cmds.setPropertyCommand(editor.commit, audioLayerId2, "name", `${clipName} Audio`);
+                                setLayerTrack(editor.commit, audioLayerId2, audioTrack);
+                                await cmds.setSettingCommand(editor.commit, audioLayerId2, "name", `${clipName} Audio`);
                                 await setLayerLinkId(editor.commit, audioLayerId2, linkId, setSettingCommand);
                                 const layerId2 = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
-                                await cmds.setPropertyCommand(editor.commit, layerId2, "track", videoTrack);
-                                await cmds.setPropertyCommand(editor.commit, layerId2, "name", clipName);
+                                setLayerTrack(editor.commit, layerId2, videoTrack);
+                                await cmds.setSettingCommand(editor.commit, layerId2, "name", clipName);
                                 await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);
                                 await cmds.setPropertyCommand(editor.commit, layerId2, "mute", true);
                               } else {

@@ -252,6 +252,14 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
   return result;
 }
 
+/** Set a layer's track — must mutate layer.track directly, not layer.properties.track */
+function setTrack(commitFn: any, layerId: string, track: number) {
+  commitFn((draft: any) => {
+    const l = draft.layers?.find((x: any) => x.id === layerId);
+    if (l) l.track = Math.max(0, Math.floor(track));
+  }, { label: "Set track" });
+}
+
 // ─── TOOL EXECUTOR ────────────────────────────────────────────────
 
 export async function executeTool(
@@ -780,8 +788,8 @@ export async function executeTool(
               startTime: layer.settings?.startTime ?? 0,
             });
             if (newAudioId) {
-              await cmds.setPropertyCommand(commit, newAudioId, "track", audioTrack);
-              await cmds.setPropertyCommand(commit, newAudioId, "name", `${clipName} Audio`);
+              setTrack(commit, newAudioId, audioTrack);
+              await cmds.setSettingCommand(commit, newAudioId, "name", `${clipName} Audio`);
               await setLayerLinkId(commit, newAudioId, linkId, setSettingCommand);
             }
             await setLayerLinkId(commit, layer.id, linkId, setSettingCommand);
@@ -967,9 +975,9 @@ export async function executeTool(
               },
             });
             if (captionLayerId) {
+              setTrack(commit, captionLayerId, textTrack);
               const { commands: cmds } = await import("@videoflow/react-video-editor");
-              await cmds.setPropertyCommand(commit, captionLayerId, "track", textTrack);
-              await cmds.setPropertyCommand(commit, captionLayerId, "name", displayText.slice(0, 40));
+              await cmds.setSettingCommand(commit, captionLayerId, "name", displayText.slice(0, 40));
             }
             totalCaptions++;
           }
