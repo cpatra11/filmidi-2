@@ -4,13 +4,13 @@ import { X, Film } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const PRESETS = [
-  { label: "HD 1080p", w: 1920, h: 1080, desc: "16:9" },
-  { label: "HD 720p", w: 1280, h: 720, desc: "16:9" },
-  { label: "4K UHD", w: 3840, h: 2160, desc: "16:9" },
-  { label: "Vertical 1080p", w: 1080, h: 1920, desc: "9:16" },
-  { label: "Square 1:1", w: 1080, h: 1080, desc: "1:1" },
-  { label: "Custom", w: 0, h: 0, desc: "Set manually" },
+const ASPECT_RATIOS = [
+  { label: "16:9", w: 1920, h: 1080, desc: "Widescreen" },
+  { label: "9:16", w: 1080, h: 1920, desc: "Vertical / Stories" },
+  { label: "1:1", w: 1080, h: 1080, desc: "Square" },
+  { label: "4:3", w: 1440, h: 1080, desc: "Classic" },
+  { label: "3:4", w: 1080, h: 1440, desc: "Portrait" },
+  { label: "21:9", w: 2560, h: 1080, desc: "Ultrawide" },
 ];
 
 const FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 48, 50, 60];
@@ -28,24 +28,19 @@ interface NewProjectDialogProps {
 
 export function NewProjectDialog({ open, onOpenChange, onCreate }: NewProjectDialogProps) {
   const [name, setName] = useState("Untitled Project");
-  const [selectedPreset, setSelectedPreset] = useState(0);
-  const [customW, setCustomW] = useState("1920");
-  const [customH, setCustomH] = useState("1080");
+  const [selectedRatio, setSelectedRatio] = useState(0);
   const [fps, setFps] = useState(30);
 
-  const preset = PRESETS[selectedPreset];
-  const isCustom = selectedPreset === PRESETS.length - 1;
-  const width = isCustom ? parseInt(customW, 10) || 1920 : preset.w;
-  const height = isCustom ? parseInt(customH, 10) || 1080 : preset.h;
+  const ratio = ASPECT_RATIOS[selectedRatio];
 
   const handleCreate = () => {
-    onCreate({ name: name.trim() || "Untitled Project", width, height, fps });
+    onCreate({ name: name.trim() || "Untitled Project", width: ratio.w, height: ratio.h, fps });
     onOpenChange(false);
   };
 
   const handleReset = () => {
     setName("Untitled Project");
-    setSelectedPreset(0);
+    setSelectedRatio(0);
     setFps(30);
   };
 
@@ -53,7 +48,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreate }: NewProjectDia
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) handleReset(); onOpenChange(o); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[420px] rounded-xl bg-[#0A0A0A] border border-white/10 shadow-2xl overflow-hidden">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[400px] rounded-xl bg-[#0A0A0A] border border-white/10 shadow-2xl overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
             <div className="flex items-center gap-2.5">
@@ -84,45 +79,26 @@ export function NewProjectDialog({ open, onOpenChange, onCreate }: NewProjectDia
               />
             </div>
 
-            {/* Resolution presets */}
+            {/* Aspect ratio */}
             <div>
-              <label className="block text-xs font-medium text-white/60 mb-2">Resolution</label>
+              <label className="block text-xs font-medium text-white/60 mb-2">Aspect Ratio</label>
               <div className="grid grid-cols-3 gap-2">
-                {PRESETS.map((p, i) => (
+                {ASPECT_RATIOS.map((r, i) => (
                   <button
                     key={i}
-                    onClick={() => setSelectedPreset(i)}
+                    onClick={() => setSelectedRatio(i)}
                     className={cn(
-                      "px-3 py-2 rounded-lg border text-left transition-all",
-                      selectedPreset === i
+                      "px-3 py-2.5 rounded-lg border text-center transition-all",
+                      selectedRatio === i
                         ? "border-white/40 bg-white/10 text-white"
                         : "border-white/10 text-white/50 hover:border-white/20 hover:text-white/70"
                     )}
                   >
-                    <div className="text-xs font-medium">{p.label}</div>
-                    <div className="text-[10px] text-white/40 mt-0.5">{p.desc}</div>
+                    <div className="text-sm font-medium">{r.label}</div>
+                    <div className="text-[10px] text-white/40 mt-0.5">{r.desc}</div>
                   </button>
                 ))}
               </div>
-              {isCustom && (
-                <div className="flex gap-2 mt-2">
-                  <input
-                    type="number"
-                    value={customW}
-                    onChange={(e) => setCustomW(e.target.value)}
-                    placeholder="Width"
-                    className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30"
-                  />
-                  <span className="flex items-center text-white/30 text-xs">×</span>
-                  <input
-                    type="number"
-                    value={customH}
-                    onChange={(e) => setCustomH(e.target.value)}
-                    placeholder="Height"
-                    className="w-full px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-white placeholder:text-white/30 outline-none focus:border-white/30"
-                  />
-                </div>
-              )}
             </div>
 
             {/* FPS */}
