@@ -12,6 +12,9 @@ interface AppState {
   snapEnabled: boolean;
   setSnapEnabled: (enabled: boolean) => void;
 
+  trackHeight: number;
+  setTrackHeight: (height: number) => void;
+
   showAgentPanel: boolean;
   toggleAgentPanel: () => void;
 
@@ -37,6 +40,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   snapEnabled: true,
   setSnapEnabled: (enabled) => set({ snapEnabled: enabled }),
+
+  trackHeight: 40,
+  setTrackHeight: (height) => set({ trackHeight: Math.max(24, Math.min(80, height)) }),
 
   showAgentPanel: true,
   toggleAgentPanel: () => set((s) => ({ showAgentPanel: !s.showAgentPanel })),

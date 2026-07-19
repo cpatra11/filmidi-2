@@ -498,6 +498,19 @@
   clip-path: polygon(0% 0%, 100% 0%, 100% 100%);
 }
 
+/* ─── Clip thumbnail ─────────────────────────────────────────── */
+
+.ct-clip-thumb {
+  position: absolute;
+  inset: 1px;
+  background-size: cover;
+  background-position: center;
+  border-radius: 3px;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
 .ct-clip-transition[data-edge="end"] .ct-transition-handle {
   left: -5px;
 }

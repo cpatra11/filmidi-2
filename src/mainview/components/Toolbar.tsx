@@ -232,6 +232,19 @@ export function Toolbar() {
         useEditorStore.getState().setViewport({ timelineScale: 1, previewZoom: 1 });
       }} />
 
+      {/* Track height */}
+      <div style={{ display: "flex", alignItems: "center", gap: 3, marginLeft: 4 }}>
+        <span style={{ fontSize: 10, opacity: 0.4, cursor: "default" }}>TH</span>
+        <input
+          type="range"
+          min="24" max="80" step="2"
+          value={useAppStore.getState().trackHeight}
+          onChange={(e) => useAppStore.getState().setTrackHeight(parseInt(e.target.value, 10))}
+          style={{ width: 40, accentColor: "#888", cursor: "pointer" }}
+          title="Track height"
+        />
+      </div>
+
       <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
 
       {/* Delete */}

@@ -22,7 +22,6 @@ import { getLayerLinkId, findLinkedPartnerIn } from "@/lib/linkUtils";
 import { useAppStore } from "@/store/useAppStore";
 import "./CustomTimeline.css";
 
-const TRACK_HEIGHT = 40;
 const PADDING_RIGHT = 800;
 const HEADER_WIDTH = 180;
 const RULER_HEIGHT = 26;
@@ -176,6 +175,35 @@ function TimelineClip({
   const isLocked = (layer.settings as any)?.locked === true;
   const isAudio = layer.type === "audio";
   const isVideo = layer.type === "video";
+  const showThumbnail = (isVideo || layer.type === "image") && width > 60;
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+
+  // Lazy-load thumbnail from first frame
+  useEffect(() => {
+    if (!showThumbnail) return;
+    const source = layer.settings?.source as string;
+    if (!source) return;
+    let cancelled = false;
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.src = source;
+    video.onloadeddata = () => {
+      if (cancelled) return;
+      video.currentTime = Math.min(video.duration || 0, (layer.settings?.sourceStart ?? 0) + 0.1);
+    };
+    video.onseeked = () => {
+      if (cancelled) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 160;
+      canvas.height = video.videoHeight || 90;
+      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      setThumbnailUrl(canvas.toDataURL("image/jpeg", 0.5));
+      video.remove();
+    };
+    video.onerror = () => { video.remove(); };
+    return () => { cancelled = true; video.remove(); };
+  }, [layer.id, layer.settings?.source, layer.settings?.sourceStart, showThumbnail]);
 
   return (
     <div
@@ -198,6 +226,12 @@ function TimelineClip({
           onHandlePointerDown(e, layer, "start");
         }}
       />
+      {showThumbnail && thumbnailUrl && (
+        <div
+          className="ct-clip-thumb"
+          style={{ backgroundImage: `url(${thumbnailUrl})` }}
+        />
+      )}
       <div className="ct-clip-label">
         {isLocked && <span className="ct-clip-lock-icon">🔒</span>}
         {hasLink && <span className="ct-chain-icon">🔗</span>}
@@ -301,6 +335,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const { fps, duration: videoDuration } = video;
   const scale = viewport.timelineScale;
   const isPlaying = useEditor((s) => s.isPlaying);
+  const trackHeight = useAppStore((s) => s.trackHeight);
 
   // Group offset for nested group editing
   const groupOffset = useMemo(() => {
@@ -703,7 +738,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         if (!moved) return;
 
         const deltaTime = dx / scale;
-        const deltaTrack = Math.round(-dy / TRACK_HEIGHT);
+        const deltaTrack = Math.round(-dy / trackHeight);
 
         // Compute new positions with snapping
         const snapEnabled = useAppStore.getState().snapEnabled;
@@ -1039,7 +1074,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                 key={`vt-${trackIdx}`}
                 className="ct-track-row"
                 data-disabled={disabled || undefined}
-                style={{ height: TRACK_HEIGHT }}
+                style={{ height: trackHeight }}
               >
                 {row.map((layer) => (
                   <TimelineClip
@@ -1074,7 +1109,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                 key={`at-${trackIdx}`}
                 className="ct-track-row ct-track-row-audio"
                 data-disabled={disabled || undefined}
-                style={{ height: TRACK_HEIGHT }}
+                style={{ height: trackHeight }}
               >
                 {row.map((layer) => (
                   <TimelineClip
