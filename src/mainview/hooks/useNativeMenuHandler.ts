@@ -6,6 +6,15 @@ import { useHelpStore } from "@/store/useHelpStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { commands } from "@videoflow/react-video-editor";
+import {
+  importMediaFromPicker,
+  openHelp,
+  openProjectHome,
+  saveCurrentProject,
+  saveProjectAsCopy,
+  sendFeedback,
+  showMcpInstructions,
+} from "@/lib/menuActions";
 
 const { addLayerCommand } = commands;
 
@@ -16,12 +25,16 @@ function handleMenuAction(action: string) {
       useProjectStore.getState().addProject("Untitled Project");
       break;
     case "open-project":
+      openProjectHome();
       break;
     case "save-project":
+      void saveCurrentProject();
       break;
     case "save-as":
+      void saveProjectAsCopy();
       break;
     case "import-media":
+      void importMediaFromPicker();
       break;
     case "export":
       useExportStore.getState().open();
@@ -156,24 +169,14 @@ function handleMenuAction(action: string) {
       useSettingsStore.getState().open();
       break;
     case "open-help":
-      useHelpStore.getState().open();
+      openHelp();
       break;
     case "open-mcp": {
-      const msg = [
-        "Filmidi Editor — MCP Server",
-        "",
-        "The MCP server is running on port 19790.",
-        "Endpoint: http://127.0.0.1:19790/mcp",
-        "",
-        "To connect from Claude Desktop:",
-        "1. Open Claude Desktop Settings",
-        "2. Add an MCP server with URL:",
-        "   http://127.0.0.1:19790/mcp",
-        "3. Start the Filmidi Editor app first",
-        "",
-        "To test: curl http://127.0.0.1:19790/health",
-      ].join("\n");
-      alert(msg);
+      showMcpInstructions();
+      break;
+    }
+    case "send-feedback": {
+      sendFeedback();
       break;
     }
     default:

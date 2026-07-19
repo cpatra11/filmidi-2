@@ -17,11 +17,18 @@ import {
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useExportStore } from "@/store/useExportStore";
-import { useSettingsStore } from "@/store/useSettingsStore";
-import { useHelpStore } from "@/store/useHelpStore";
 import { useAppStore } from "@/store/useAppStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { commands } from "@videoflow/react-video-editor";
+import {
+  importMediaFromPicker,
+  openHelp,
+  openProjectHome,
+  saveCurrentProject,
+  saveProjectAsCopy,
+  sendFeedback,
+  showMcpInstructions,
+} from "@/lib/menuActions";
 
 const { addLayerCommand } = commands;
 
@@ -47,11 +54,11 @@ interface MenuBarProps {
 function getFileMenuItems(): MenuItem[] {
   return [
     { label: "New Project", shortcut: "⌘N", icon: <FileText size={14} />, action: () => useProjectStore.getState().addProject("Untitled Project") },
-    { label: "Open Project", shortcut: "⌘O", icon: <FileText size={14} /> },
-    { label: "Save Project", shortcut: "⌘S", icon: <FileText size={14} /> },
-    { label: "Save As", shortcut: "⇧⌘S", icon: <FileText size={14} /> },
+    { label: "Open Project", shortcut: "⌘O", icon: <FileText size={14} />, action: openProjectHome },
+    { label: "Save Project", shortcut: "⌘S", icon: <FileText size={14} />, action: () => { void saveCurrentProject(); } },
+    { label: "Save As", shortcut: "⇧⌘S", icon: <FileText size={14} />, action: () => { void saveProjectAsCopy(); } },
     { label: "", divider: true },
-    { label: "Import Media", shortcut: "⌘I", icon: <FileText size={14} /> },
+    { label: "Import Media", shortcut: "⌘I", icon: <FileText size={14} />, action: () => { void importMediaFromPicker(); } },
     { label: "Export", shortcut: "⌘E", icon: <FileText size={14} />, action: () => useExportStore.getState().open() },
     { label: "", divider: true },
     { label: "Home", icon: <Home size={14} />, action: () => useProjectStore.getState().openProject(null) },
@@ -201,10 +208,10 @@ function getViewMenuItems(): MenuItem[] {
 
 function getHelpMenuItems(): MenuItem[] {
   return [
-    { label: "Keyboard Shortcuts", shortcut: "?", icon: <Keyboard size={14} />, action: () => useHelpStore.getState().open() },
-    { label: "MCP Instructions", icon: <MessageSquare size={14} /> },
+    { label: "Keyboard Shortcuts", shortcut: "?", icon: <Keyboard size={14} />, action: openHelp },
+    { label: "MCP Instructions", icon: <MessageSquare size={14} />, action: showMcpInstructions },
     { label: "", divider: true },
-    { label: "Send Feedback", icon: <HelpCircle size={14} /> },
+    { label: "Send Feedback", icon: <HelpCircle size={14} />, action: sendFeedback },
   ];
 }
 

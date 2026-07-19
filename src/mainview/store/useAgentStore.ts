@@ -27,7 +27,7 @@ export interface AgentMessage {
 }
 
 export interface MentionRef {
-  type: "mediaAsset" | "timelineClip" | "timelineRange";
+  type: "mediaAsset" | "mediaFolder" | "timelineClip" | "timelineRange";
   id: string;
   name: string;
   /** base64 data URL — set only for image media assets */
@@ -103,10 +103,10 @@ const AVAILABLE_MODELS = [
   // Qwen — newest first
   { id: "qwen3.8-max-preview", name: "Qwen 3.8 Max (Preview)" },
   { id: "qwen3.7-max",         name: "Qwen 3.7 Max" },
-  { id: "qwen3.7-plus",        name: "Qwen 3.7 Plus" },
+  { id: "qwen3.7-plus",        name: "Qwen 3.7 Plus (Recommended)" },
   { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview" },
   { id: "qwen3.6-plus",        name: "Qwen 3.6 Plus" },
-  { id: "qwen3.6-flash",       name: "Qwen 3.6 Flash" },
+  { id: "qwen3.6-flash",       name: "Qwen 3.6 Flash (Fallback)" },
   { id: "qwen3.5-flash",       name: "Qwen 3.5 Flash" },
   // Third-party
   { id: "deepseek-v4-pro",     name: "DeepSeek V4 Pro" },
@@ -115,6 +115,96 @@ const AVAILABLE_MODELS = [
   { id: "glm-5.2",             name: "GLM 5.2" },
   { id: "minimax-m2.5",        name: "MiniMax M2.5" },
 ];
+
+type AgentTaskIntent =
+  | "edit"
+  | "caption"
+  | "search"
+  | "organize"
+  | "generate"
+  | "inspect"
+  | "general";
+
+function detectAgentIntent(text: string, mentions: MentionRef[]): AgentTaskIntent {
+  const lower = text.toLowerCase();
+  const hasTimelineMentions = mentions.some((m) => m.type === "timelineClip" || m.type === "timelineRange");
+  const hasMediaMentions = mentions.some((m) => m.type === "mediaAsset" || m.type === "mediaFolder");
+
+  if (/(caption|subtitle|transcrib|transcript|remove words|word-level|word level|filler|voiceover|srt)/.test(lower)) {
+    return "caption";
+  }
+  if (/(organi[sz]e|folder|sort media|move to folder|rename media|library cleanup)/.test(lower)) {
+    return "organize";
+  }
+  if (/(generate|create|render|make me|ai video|ai image|ai audio|music|b-?roll)/.test(lower)) {
+    return "generate";
+  }
+  if (/(search|find|locate|where is|show me|look for|hunt down)/.test(lower) && !/(edit|cut|trim|split|move|timeline)/.test(lower)) {
+    return "search";
+  }
+  if (/(inspect|analy[sz]e|preview|color|beat|what do you see|what's in|what is in)/.test(lower)) {
+    return "inspect";
+  }
+  if (/(edit|timeline|cut|trim|split|move|drag|place|reorder|layout|sync|mute|transition|caption)/.test(lower) || hasTimelineMentions) {
+    return "edit";
+  }
+  if (hasMediaMentions) {
+    return "search";
+  }
+  return "general";
+}
+
+function buildTaskRoutingText(intent: AgentTaskIntent): string {
+  const shared = [
+    "Prefer the fewest tool calls that preserve correctness.",
+    "Batch independent reads together and batch related mutations together.",
+    "Reuse tool output instead of re-reading the same state.",
+    "For timeline work, move linked video/audio pairs together and keep edits aligned to the edit.",
+    "Preferred chat model for complex edit work: qwen3.7-plus. Use qwen3.6-flash only for lightweight lookups or quick inspection.",
+  ];
+
+  const byIntent: Record<AgentTaskIntent, string[]> = {
+    edit: [
+      "Call get_timeline once, inspect the current structure, then batch timeline mutations.",
+      "Use move_clips for drag-style repositioning, split_clips for cut points, remove_clips for deletes, and add_clips for placements.",
+      "For captions or text overlays, keep layers on one dedicated track per run.",
+    ],
+    caption: [
+      "For captions, transcribe the whole relevant clip set unless the user explicitly asks for only a segment.",
+      "Prefer the audio layer when video and audio are linked. Use extract_audio first only if the audio layer is missing.",
+      "Build readable phrases on word boundaries and keep all captions from a run on one caption track.",
+    ],
+    search: [
+      "Use search_media before inspecting assets one by one.",
+      "Call get_media once, then inspect only the best matches.",
+    ],
+    organize: [
+      "Call get_media and list_folders once, then batch folder and rename operations.",
+      "Do not move or rename the same asset repeatedly.",
+    ],
+    generate: [
+      "Before generation, call list_models for the relevant type.",
+      "Propose the prompt, model, duration, and aspect ratio, then wait for confirmation before generating.",
+    ],
+    inspect: [
+      "Use get_timeline, inspect_timeline, inspect_media, and inspect_color rather than guessing.",
+    ],
+    general: [
+      "If the task is ambiguous, ask one focused question instead of guessing.",
+    ],
+  };
+
+  return [...shared, ...byIntent[intent]].map((line) => `- ${line}`).join("\n");
+}
+
+function buildSystemPrompt(basePrompt: string, intent: AgentTaskIntent, editHistoryText: string): string {
+  return `${basePrompt}
+
+# Task routing
+${buildTaskRoutingText(intent)}
+
+${editHistoryText}`.trim();
+}
 
 
 async function getApiKey(): Promise<string | null> {
@@ -240,7 +330,7 @@ function resolveMentions(text: string): {
     return names.length > 0 ? names.join(", ") : _match;
   });
 
-  // Resolve @folder:xxx patterns — find all assets in folder
+  // Resolve @folder:xxx patterns — expand the folder into its assets
   const folderPattern = /@folder:(\S+)/g;
   cleaned = cleaned.replace(folderPattern, (_match, folderId) => {
     const folder = mediaStore.folders.find((f) => f.id === folderId || f.name.toLowerCase() === folderId.toLowerCase());
@@ -696,7 +786,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       ? "cloud"
       : useSettingsStore.getState().audioProcessingMode;
 
-    const systemMsg = `You are a creative AI assistant connected to Filmidi, an AI-native video editor. Help the user build and edit their project by calling the tools available to you.
+    const baseSystemMsg = `You are a creative AI assistant connected to Filmidi, an AI-native video editor. Help the user build and edit their project by calling the tools available to you.
 
 # Core model
 - The timeline has a fixed fps and resolution. All timing is in FRAMES, not seconds: frame = seconds × fps.
@@ -704,22 +794,22 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - A clip references a media asset and occupies [startFrame, startFrame + durationFrames) on its track.
 - Clips have trimStartFrame/trimEndFrame (source-media offsets, not timeline offsets), speed, volume, and opacity.
 - Media assets live in a project library and are referenced by ID. They may be user-imported or AI-generated.
-- IDs are returned as short prefixes. Pass them back exactly as given — never pad, complete, or guess a longer form.
+- IDs are returned as short prefixes. Pass them back exactly as given - never pad, complete, or guess a longer form.
 
 # Always do
 - Call get_timeline before making edits to check current state (totalFrames, trackCount, fps, currentFrame, track/clip structure).
-- Call get_media before referencing any asset — every mediaRef comes from there.
-- Before describing any user-supplied asset, call inspect_media and describe what you actually see — never paraphrase the filename.
+- Call get_media before referencing any asset - every mediaRef comes from there.
+- Before describing any user-supplied asset, call inspect_media and describe what you actually see - never paraphrase the filename.
 - To find a moment across the library ("the sunset shot", "where she mentions the budget"), call search_media before inspecting files one by one.
 
 # Editing
 - Placements must match track type: video on video tracks, audio on audio tracks.
-- Preview composition — where clips sit and how big they are on the canvas — is apply_layout's job, not set_clip_properties. Any split screen, picture-in-picture, grid, or layout: pick a named layout, assign a clip to each slot. Never hand-position with set_clip_properties transform to build a layout.
+- Preview composition - where clips sit and how big they are on the canvas - is apply_layout's job, not set_clip_properties. Any split screen, picture-in-picture, grid, or layout: pick a named layout, assign a clip to each slot. Never hand-position with set_clip_properties transform to build a layout.
 - New layouts available: sideBySide, pip, grid2x2, threeUp, sidebar, center, letterbox.
 - Letterbox creates a cinematic widescreen look with black bars. Use it for dramatic openings.
 - Linked video+audio pairs: deleting, cutting, splitting, moving, or trimming one also affects its linked partner. Always call get_timeline to see which layers are linked.
-- Edits are undoable and effectively free. Don't ask permission for individual edits — just explain what you changed.
-- Transcript-driven cuts (filler words, duplicate/retake removal): read the WORD-level get_transcript end-to-end as prose at least once, then cut with remove_words. After a cut, indices shift — re-read get_transcript before the next remove_words.
+- Edits are undoable and effectively free. Don't ask permission for individual edits - just explain what you changed.
+- Transcript-driven cuts (filler words, duplicate/retake removal): read the WORD-level get_transcript end-to-end as prose at least once, then cut with remove_words. After a cut, indices shift - re-read get_transcript before the next remove_words.
 
 # Generation
 - Costs real money and is not undoable. Propose the prompt, model, duration, and aspect ratio, then wait for confirmation before calling generate_video, generate_image, or generate_audio.
@@ -729,7 +819,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - Available models across all types: use list_models to discover image, video, audio, and upscale models.
 
 # Audio Processing
-- Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable — tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
+- Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable - tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
 - To add captions: FIRST call extract_audio on video clips to create audio layers, THEN call add_captions on the audio layer.
 - extract_audio creates a linked audio layer with the same timing. Deleting or moving the video also affects the linked audio.
 
@@ -741,9 +831,12 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - When the user asks to export/render/save, call export_project. Default mode is video. Use mode=xml for timeline XML and mode=filmidi for a self-contained .filmidi package.
 
 # Communication
-- Default to one or two sentences. Lead with the outcome; report the result, not the process. The user watches the timeline change, so never narrate steps ("let me…", "now I'll…").
+- Default to one or two sentences. Lead with the outcome; report the result, not the process. The user watches the timeline change, so never narrate steps ("let me...", "now I'll...").
 - No preamble, no numbered play-by-play, no restating the plan back. Match the app's calm, terse voice: never chatty, never marketing.
-- When the user is vague about aesthetic direction, ask one focused question instead of guessing.${editHistoryText}`;
+- When the user is vague about aesthetic direction, ask one focused question instead of guessing.`;
+
+    const intent = detectAgentIntent(cleaned, mentions);
+    const systemMsg = buildSystemPrompt(baseSystemMsg, intent, editHistoryText);
 
     // Route: cloud users → backend API (key on server), direct users → Bun IPC (key in Bun)
     const useBackend = isBackendUser && account.sessionToken;

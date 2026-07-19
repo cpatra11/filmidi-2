@@ -7,6 +7,7 @@
  */
 
 import { useAccountStore } from "@/store/useAccountStore";
+import { logTranscript } from "./transcriptLogger";
 
 export interface TranscriptionWord {
   text: string;
@@ -47,6 +48,12 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
+  logTranscript("info", "transcribeAudio", "request", {
+    url: audioUrl.slice(0, 120),
+    hasApiKey: !!apiKey,
+    options,
+  });
+
   // Convert blob URLs to accessible URLs before routing
   let resolvedUrl = audioUrl;
   if (audioUrl.startsWith("blob:")) {
@@ -62,15 +69,22 @@ export async function transcribeAudio(
     });
     const [_, base64] = dataUrl.split(",");
     resolvedUrl = await uploadAudioForASR(base64, blob.type || "video/mp4");
+    logTranscript("info", "transcribeAudio", "uploaded blob for ASR", {
+      source: audioUrl.slice(0, 80),
+      resolvedUrl: resolvedUrl.slice(0, 120),
+      mimeType: blob.type || "video/mp4",
+    });
   }
 
   const account = useAccountStore.getState();
   const isBackendUser = account.isSignedIn();
 
   if (isBackendUser && account.sessionToken) {
+    logTranscript("info", "transcribeAudio", "route", { mode: "backend", resolvedUrl: resolvedUrl.slice(0, 120) });
     return transcribeViaBackend(resolvedUrl, account.sessionToken, options);
   }
 
+  logTranscript("info", "transcribeAudio", "route", { mode: "bun", resolvedUrl: resolvedUrl.slice(0, 120) });
   return transcribeViaDashScope(resolvedUrl, apiKey, options);
 }
 
@@ -105,6 +119,7 @@ async function transcribeViaBackend(
   const submitData = await submitResp.json();
   const taskId: string | undefined = submitData.taskId;
   if (!taskId) throw new Error("No taskId in backend transcription response");
+  logTranscript("info", "transcribeAudio", "backend submitted", { taskId });
 
   // Poll for completion
   for (let attempt = 0; attempt < 150; attempt++) {
@@ -119,9 +134,16 @@ async function transcribeViaBackend(
 
     const pollData = await pollResp.json();
     const status: string = pollData.status;
+    logTranscript("debug", "transcribeAudio", "backend poll", { taskId, attempt: attempt + 1, status });
 
     if (status === "succeeded") {
-      return parseTranscriptionResult(pollData.result, options);
+      const parsed = parseTranscriptionResult(pollData.result, options);
+      logTranscript("info", "transcribeAudio", "backend result parsed", {
+        taskId,
+        transcriptCount: parsed.segments.length,
+        wordCount: parsed.words.length,
+      });
+      return parsed;
     }
 
     if (status === "failed") {
@@ -146,7 +168,12 @@ async function transcribeViaDashScope(
   const { transcribeOnBun } = await import("@/lib/agentIPC");
   const resultJson = await transcribeOnBun(audioUrl, apiKey);
   const resultData = JSON.parse(resultJson) as Record<string, unknown>;
-  return parseTranscriptionResult(resultData, options);
+  const parsed = parseTranscriptionResult(resultData, options);
+  logTranscript("info", "transcribeAudio", "bun result parsed", {
+    transcriptCount: parsed.segments.length,
+    wordCount: parsed.words.length,
+  });
+  return parsed;
 }
 
 function parseTranscriptionResult(
@@ -189,7 +216,10 @@ function parseTranscriptionResult(
         }
       }
     }
-    for (const w of sentenceWords) {
+    const segmentWords = sentenceWords.length > 0 ? sentenceWords : (text
+      ? [{ text, begin_time: start * 1000, end_time: end * 1000 }]
+      : []);
+    for (const w of segmentWords) {
       const wText = (w.text as string) ?? "";
       // Convert milliseconds to seconds
       const wStart = ((w.start_time as number) ?? (w.begin_time as number) ?? (w.start as number) ?? start * 1000) / 1000;
@@ -207,6 +237,13 @@ function parseTranscriptionResult(
 
     segments.push({ text, start, end, speaker });
   }
+
+  logTranscript("debug", "transcribeAudio", "parsed transcript payload", {
+    transcriptCount: transcripts.length,
+    wordCount: words.length,
+    segmentCount: segments.length,
+    language: options?.language ?? null,
+  });
 
   return {
     text: segments.map((s) => s.text).join(" "),

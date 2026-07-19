@@ -14,7 +14,6 @@ import {
   computeMagnets,
   snapTime,
   DEFAULT_SNAP_PIXELS,
-  packLayersIntoTracks,
   createLayerJSON,
   type LayerJSON,
   type Magnet,
@@ -373,8 +372,9 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     return video.tracks ?? [];
   }, [video.tracks]);
 
-  // Separate layers into video/audio sections
-  const { videoLayers, audioLayers, videoTrackMap, audioTrackMap } = useMemo(() => {
+  // Keep the editor's real track assignments. Packing by overlap would make
+  // the timeline disagree with agent commands and track controls.
+  const { videoLayers, audioLayers } = useMemo(() => {
     const vLayers: LayerJSON[] = [];
     const aLayers: LayerJSON[] = [];
     for (const l of layers) {
@@ -385,56 +385,33 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       }
     }
 
-    // Compute track assignments for each section
-    const vTracks = packLayersIntoTracks(vLayers);
-    const aTracks = packLayersIntoTracks(aLayers);
-
-    const vMap = new Map<LayerJSON, number>();
-    const aMap = new Map<LayerJSON, number>();
-    vLayers.forEach((l, i) => vMap.set(l, vTracks[i]));
-    aLayers.forEach((l, i) => aMap.set(l, aTracks[i]));
-
-    return {
-      videoLayers: vLayers,
-      audioLayers: aLayers,
-      videoTrackMap: vMap,
-      audioTrackMap: aMap,
-    };
+    return { videoLayers: vLayers, audioLayers: aLayers };
   }, [layers]);
 
-  // Group video/audio layers into track rows
+  // Group video/audio layers into rows keyed by their actual global track.
   const { videoRows, audioRows } = useMemo(() => {
-    const groupIntoRows = (
-      ls: LayerJSON[],
-      trackMap: Map<LayerJSON, number>,
-    ): LayerJSON[][] => {
-      if (ls.length === 0) return [];
-      const maxTrack = ls.reduce(
-        (max, l) => Math.max(max, trackMap.get(l) ?? 0),
-        0,
-      );
-      const rows: LayerJSON[][] = Array.from(
-        { length: maxTrack + 1 },
-        () => [],
-      );
-      for (const l of ls) {
-        const t = trackMap.get(l) ?? 0;
-        rows[t].push(l);
+    const groupIntoRows = (ls: LayerJSON[]) => {
+      const grouped = new Map<number, LayerJSON[]>();
+      for (const layer of ls) {
+        const track = Math.max(0, Math.floor(layer.track ?? 0));
+        const row = grouped.get(track) ?? [];
+        row.push(layer);
+        grouped.set(track, row);
       }
-      rows.forEach((row) =>
-        row.sort(
-          (a, b) =>
-            (a.settings.startTime ?? 0) - (b.settings.startTime ?? 0),
-        ),
-      );
-      return rows;
+      return Array.from(grouped.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([trackIdx, row]) => ({
+          trackIdx,
+          layers: row.sort((a, b) =>
+            (a.settings.startTime ?? 0) - (b.settings.startTime ?? 0)),
+        }));
     };
 
     return {
-      videoRows: groupIntoRows(videoLayers, videoTrackMap),
-      audioRows: groupIntoRows(audioLayers, audioTrackMap),
+      videoRows: groupIntoRows(videoLayers),
+      audioRows: groupIntoRows(audioLayers),
     };
-  }, [videoLayers, audioLayers, videoTrackMap, audioTrackMap]);
+  }, [videoLayers, audioLayers]);
 
   const videoTrackCount = videoRows.length;
   const audioTrackCount = audioRows.length;
@@ -654,6 +631,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const handleClipPointerDown = useCallback(
     (e: React.PointerEvent, layer: LayerJSON) => {
       e.stopPropagation();
+      e.preventDefault();
 
       // Block interaction on locked clips
       if ((layer.settings as any)?.locked) return;
@@ -695,16 +673,44 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
             // Resize primary
             const pri = draft.layers?.find((x: any) => x.id === commitData.primary.id);
             if (pri) pri.settings.sourceDuration = commitData.primary.splitDur;
-            // Add right part for primary — use new rightLinkId
-            const newLayer = { ...createLayerJSON({ type: commitData.type, source: commitData.source, sourceDuration: commitData.primary.remainDur, startTime: commitData.primary.startTime }) };
-            if (commitData.rightLinkId) newLayer.settings.linkId = commitData.rightLinkId;
+            // Add the right part while preserving source position and clip attributes.
+            const newLayer = {
+              ...createLayerJSON({
+                ...layer,
+                type: commitData.type,
+                source: commitData.source,
+                sourceDuration: commitData.primary.remainDur,
+                startTime: commitData.primary.startTime,
+                properties: layer.properties,
+              } as any),
+              ...JSON.parse(JSON.stringify(layer)),
+              id: `split-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              track: layer.track ?? 0,
+              settings: {
+                ...JSON.parse(JSON.stringify(layer.settings)),
+                startTime: commitData.primary.startTime,
+                sourceStart: (layer.settings.sourceStart ?? 0) + commitData.primary.splitDur * Math.abs(layer.settings.speed ?? 1),
+                sourceDuration: commitData.primary.remainDur,
+                ...(commitData.rightLinkId ? { linkId: commitData.rightLinkId } : {}),
+              },
+            };
             draft.layers?.push(newLayer);
             // Handle partner
             if (commitData.partner) {
               const part = draft.layers?.find((x: any) => x.id === commitData.partner.id);
               if (part) part.settings.sourceDuration = commitData.partner.pSplitDur;
-              const pNew = { ...createLayerJSON({ type: commitData.partnerType!, source: commitData.partnerSource, sourceDuration: commitData.partner.pRemainDur, startTime: commitData.partner.pStartTime }) };
-              if (commitData.rightLinkId) pNew.settings.linkId = commitData.rightLinkId;
+              const pNew = {
+                ...JSON.parse(JSON.stringify(partner)),
+                id: `split-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                track: partner.track ?? 0,
+                settings: {
+                  ...JSON.parse(JSON.stringify(partner.settings)),
+                  startTime: commitData.partner.pStartTime,
+                  sourceStart: (partner.settings.sourceStart ?? 0) + (frame / fps - layerTimelineBounds(partner).start) * Math.abs(partner.settings.speed ?? 1),
+                  sourceDuration: commitData.partner.pRemainDur,
+                  ...(commitData.rightLinkId ? { linkId: commitData.rightLinkId } : {}),
+                },
+              };
               draft.layers?.push(pNew);
             }
           }, { label: "Razor split" });
@@ -725,14 +731,16 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       const startClientX = e.clientX;
       const startClientY = e.clientY;
       let moved = false;
+      const pointerId = e.pointerId;
 
       // Store initial positions of all selected layers + their linked partners
       const selectedIds = e.shiftKey || e.metaKey || e.ctrlKey
         ? useEditorStore.getState().selection.layerIds
         : [layer.id];
 
-      // Expand selection to include linked partners
-      const allLayers = video.layers ?? [];
+      // Expand selection to include linked partners from the live store. The
+      // render snapshot can be stale immediately after a linked pair is added.
+      const allLayers = useEditorStore.getState().video.layers ?? [];
       const moveIds = new Set<string>(selectedIds);
       for (const id of selectedIds) {
         const partner = findLinkedPartnerIn(allLayers, id);
@@ -752,6 +760,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       }
 
       const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
         const dx = ev.clientX - startClientX;
         const dy = ev.clientY - startClientY;
         if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
@@ -771,22 +780,28 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         ) : [];
 
         const newPositions: Array<{ id: string; startTime: number; track: number }> = [];
+        let sharedTime: number | null = null;
         for (const id of moveIdArray) {
           const initial = initialPositions.get(id);
           if (!initial) continue;
           let newTime = initial.startTime + deltaTime;
           if (snapEnabled) {
-            const snap = snapTime(newTime, magnets, scale, DEFAULT_SNAP_PIXELS);
+            const snap = snapTime(sharedTime ?? newTime, magnets, scale, DEFAULT_SNAP_PIXELS);
             if (snap) {
               newTime = snap.time;
+              sharedTime = snap.time;
               setSnapGuideTime(snap.time);
             } else {
+              sharedTime = sharedTime ?? newTime;
               setSnapGuideTime(null);
             }
           } else {
+            sharedTime = sharedTime ?? newTime;
             setSnapGuideTime(null);
           }
-          newTime = Math.max(0, Math.min(availableDuration, newTime));
+          const layer = allLayers.find((candidate) => candidate.id === id);
+          const clipDuration = layer ? layerTimelineBounds(layer).end - layerTimelineBounds(layer).start : 0;
+          newTime = Math.max(0, Math.min(Math.max(0, availableDuration - clipDuration), newTime));
           const newTrack = Math.max(0, initial.track + deltaTrack);
           newPositions.push({ id, startTime: newTime, track: newTrack });
         }
@@ -1029,8 +1044,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         {/* Sticky headers column */}
         <div className="ct-headers">
           {/* Video track headers (reverse order: highest index = top) */}
-          {Array.from({ length: videoTrackCount }, (_, i) => videoTrackCount - 1 - i).map(
-            (trackIdx) => {
+          {videoRows.slice().reverse().map(({ trackIdx }) => {
               const meta = trackMeta[trackIdx];
               const name = meta?.name ?? `V${trackIdx + 1}`;
               const enabled = meta?.enabled !== false;
@@ -1047,8 +1061,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                   onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
                 />
               );
-            },
-          )}
+          })}
 
           {/* Separator */}
           {videoTrackCount > 0 && audioTrackCount > 0 && (
@@ -1056,11 +1069,9 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           )}
 
           {/* Audio track headers (reverse order: highest index = top) */}
-          {Array.from({ length: audioTrackCount }, (_, i) => audioTrackCount - 1 - i).map(
-            (i) => {
-              const trackIdx = i + videoTrackCount;
+          {audioRows.slice().reverse().map(({ trackIdx }) => {
               const meta = trackMeta[trackIdx];
-              const name = meta?.name ?? `A${i + 1}`;
+              const name = meta?.name ?? `A${trackIdx + 1}`;
               const enabled = meta?.enabled !== false;
               return (
                 <TrackHeader
@@ -1077,8 +1088,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                   onToggleSolo={() => handleTrackSolo(trackIdx, (meta as any)?.solo === true)}
                 />
               );
-            },
-          )}
+          })}
         </div>
 
         {/* Tracks area */}
@@ -1097,8 +1107,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           }}
         >
           {/* Video track rows (reverse order) */}
-          {videoRows.map((row, displayIdx) => {
-            const trackIdx = videoTrackCount - 1 - displayIdx;
+          {videoRows.slice().reverse().map(({ trackIdx, layers: row }) => {
             const meta = trackMeta[trackIdx];
             const disabled = meta?.enabled === false;
             return (
@@ -1131,9 +1140,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           )}
 
           {/* Audio track rows (reverse order) */}
-          {audioRows.map((row, displayIdx) => {
-            const trackIdx = audioTrackCount - 1 - displayIdx;
-            const globalTrackIdx = trackIdx + videoTrackCount;
+          {audioRows.slice().reverse().map(({ trackIdx, layers: row }) => {
+            const globalTrackIdx = trackIdx;
             const meta = trackMeta[globalTrackIdx];
             const disabled = meta?.enabled === false;
             return (

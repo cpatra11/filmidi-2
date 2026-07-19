@@ -9,6 +9,7 @@ import { useNativeMenuHandler } from "./hooks/useNativeMenuHandler";
 import { useMCPHandler } from "./hooks/useMCPHandler";
 import { useProjectStore } from "./store/useProjectStore";
 import { useProjectSaveStore } from "./store/useProjectSaveStore";
+import { useEditorStore } from "@videoflow/react-video-editor";
 import type { VideoJSON } from "@videoflow/react-video-editor";
 
 const queryClient = new QueryClient();
@@ -168,6 +169,46 @@ function App() {
       const saved = await useProjectSaveStore.getState().loadProject(currentProjectId);
       setVideoData((saved?.timeline ?? defaultVideo) as VideoJSON);
     })();
+  }, [currentProjectId]);
+
+  // Persist every editor mutation, including edits made by the timeline and agent.
+  useEffect(() => {
+    if (!currentProjectId) return;
+    let cancelled = false;
+    let baseData = {
+      mediaManifest: [] as unknown,
+      generationLog: [] as unknown,
+      chatHistory: [] as unknown,
+    };
+
+    const saveStore = useProjectSaveStore.getState();
+    void saveStore.loadProject(currentProjectId).then((saved) => {
+      if (cancelled) return;
+      baseData = {
+        mediaManifest: saved?.mediaManifest ?? [],
+        generationLog: saved?.generationLog ?? [],
+        chatHistory: saved?.chatHistory ?? [],
+      };
+      saveStore.scheduleAutoSave(() => ({
+        timeline: useEditorStore.getState().video,
+        ...baseData,
+      }));
+    });
+
+    const unsubscribe = useEditorStore.subscribe(() => {
+      if (cancelled) return;
+      const current = useProjectSaveStore.getState();
+      current.scheduleAutoSave(() => ({
+        timeline: useEditorStore.getState().video,
+        ...baseData,
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      useProjectSaveStore.getState().cancelAutoSave();
+    };
   }, [currentProjectId]);
 
   return (

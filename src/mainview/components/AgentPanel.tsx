@@ -418,24 +418,29 @@ export function AgentPanel() {
   const [mentionTriggerPos, setMentionTriggerPos] = useState(0);
 
   const session = currentSession();
+  const mediaAssets = useMediaPanelStore((s) => s.assets);
+  const mediaFolders = useMediaPanelStore((s) => s.folders);
+  const timelineLayers = useEditorStore((s) => s.video.layers ?? []);
 
   // Build mention suggestions from media + timeline
   const mentionSuggestions = useMemo(() => {
     if (!mentionQuery && !showMentions) return [];
     const q = mentionQuery.toLowerCase().trim();
-    const mediaStore = useMediaPanelStore.getState();
-    const editorStore = useEditorStore.getState();
+    const items: { type: "mediaAsset" | "mediaFolder" | "timelineClip"; id: string; name: string }[] = [];
 
-    const items: { type: "mediaAsset" | "timelineClip"; id: string; name: string }[] = [];
+    for (const folder of mediaFolders) {
+      if (!q || folder.name.toLowerCase().includes(q)) {
+        items.push({ type: "mediaFolder", id: folder.id, name: folder.name });
+      }
+    }
 
-    for (const a of mediaStore.assets) {
+    for (const a of mediaAssets) {
       if (!q || a.name.toLowerCase().includes(q)) {
         items.push({ type: "mediaAsset", id: a.id, name: a.name });
       }
     }
 
-    const layers = editorStore.video.layers ?? [];
-    for (const l of layers) {
+    for (const l of timelineLayers) {
       const name = (l as Record<string, unknown>).name as string ?? (l as { id: string }).id.slice(0, 8);
       if (!q || name.toLowerCase().includes(q)) {
         items.push({ type: "timelineClip", id: (l as { id: string }).id, name });
@@ -443,7 +448,7 @@ export function AgentPanel() {
     }
 
     return items.slice(0, 20);
-  }, [mentionQuery, showMentions]);
+  }, [mentionQuery, showMentions, mediaAssets, mediaFolders, timelineLayers]);
 
   // Handle input change with @-mention detection
   const handleInputChange = useCallback(
@@ -457,16 +462,19 @@ export function AgentPanel() {
       const atIdx = textBefore.lastIndexOf("@");
 
       if (atIdx !== -1) {
-        // Check there's no space before the @ (or it's at start)
-        const afterAt = textBefore.slice(atIdx + 1);
-        // Only trigger if we're still typing the query (no space yet)
-        if (!afterAt.includes(" ")) {
-          setMentionQuery(afterAt);
-          setShowMentions(true);
-          setMentionIndex(0);
-          setMentionTriggerPos(atIdx);
+        // @ must start a token, but the searchable name may contain spaces.
+        const charBeforeAt = textBefore[atIdx - 1];
+        if (charBeforeAt && !/\s/.test(charBeforeAt)) {
+          setShowMentions(false);
+          setMentionQuery("");
           return;
         }
+        const afterAt = textBefore.slice(atIdx + 1);
+        setMentionQuery(afterAt);
+        setShowMentions(true);
+        setMentionIndex(0);
+        setMentionTriggerPos(atIdx);
+        return;
       }
 
       setShowMentions(false);
@@ -522,16 +530,14 @@ export function AgentPanel() {
   };
 
   const insertMention = useCallback(
-    (item: { type: "mediaAsset" | "timelineClip"; id: string; name: string }) => {
+    (item: { type: "mediaAsset" | "mediaFolder" | "timelineClip"; id: string; name: string }) => {
       const textarea = textareaRef.current;
       if (!textarea) return;
       const value = draft;
       const before = value.slice(0, mentionTriggerPos);
-      const after = value.slice(mentionTriggerPos);
-      // Find the end of the @-token
-      const spaceIdx = after.indexOf(" ");
-      const rest = spaceIdx === -1 ? "" : after.slice(spaceIdx);
-      const prefix = item.type === "mediaAsset" ? "asset" : "clip";
+      const cursorPos = textarea.selectionStart ?? value.length;
+      const rest = value.slice(cursorPos);
+      const prefix = item.type === "mediaAsset" ? "asset" : item.type === "mediaFolder" ? "folder" : "clip";
       const replacement = `@${prefix}:${item.id}`;
       const newValue = before + replacement + rest;
       setDraft(newValue);
@@ -660,14 +666,16 @@ export function AgentPanel() {
                         : "text-[#aaaacc] hover:bg-white/5"
                       }`}
                   >
-                    {item.type === "mediaAsset" ? (
+                    {item.type === "mediaFolder" ? (
+                      <FolderOpen className="w-3 h-3 shrink-0" />
+                    ) : item.type === "mediaAsset" ? (
                       <Video className="w-3 h-3 shrink-0" />
                     ) : (
                       <Film className="w-3 h-3 shrink-0" />
                     )}
                     <span className="truncate">{item.name}</span>
                     <span className="text-[9px] text-[#555577] shrink-0 ml-auto">
-                      {item.type === "mediaAsset" ? "media" : "clip"}
+                      {item.type === "mediaFolder" ? "folder" : item.type === "mediaAsset" ? "media" : "clip"}
                     </span>
                   </button>
                 ))}

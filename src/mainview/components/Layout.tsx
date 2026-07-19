@@ -288,27 +288,38 @@ export function Layout() {
             const processLayers = (layers: any[]) => {
               for (const layer of layers) {
                 if (idSet.has(layer.id)) {
-                  const startFrame = Math.round(layer.startTime * fps3);
-                  const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps3);
+                  const startTime = layer.settings?.startTime ?? layer.startTime ?? 0;
+                  const sourceStart = layer.settings?.sourceStart ?? layer.sourceStart ?? 0;
+                  const sourceDuration = layer.settings?.sourceDuration ?? layer.sourceDuration ?? layer.duration ?? 5;
+                  const speed = Math.abs(layer.settings?.speed ?? layer.speed ?? 1);
+                  const startFrame = Math.round(startTime * fps3);
+                  const durFrames = Math.round((sourceDuration / Math.max(speed, 0.0001)) * fps3);
                   const endFrame = startFrame + durFrames;
                   if (frame > startFrame && frame < endFrame) {
                     const splitOffset = (frame - startFrame) / fps3;
-                    const origDur = layer.duration || layer.sourceDuration || 5;
+                    const origDur = sourceDuration;
                     const linkId = layer.settings?.linkId;
                     const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
                     toAdd.push({
                       ...layer,
                       id: `${layer.id}-r-${Date.now()}`,
                       name: `${layer.name} (R)`,
-                      startTime: layer.startTime + splitOffset,
-                      sourceStart: (layer.sourceStart || 0) + splitOffset,
-                      sourceDuration: origDur - splitOffset,
-                      duration: origDur - splitOffset,
-                      settings: { ...layer.settings, linkId: rightLinkId || linkId },
+                      startTime: startTime + splitOffset,
+                      sourceStart: sourceStart + splitOffset * speed,
+                      sourceDuration: origDur - splitOffset * speed,
+                      duration: (origDur - splitOffset * speed) / Math.max(speed, 0.0001),
+                      settings: {
+                        ...layer.settings,
+                        startTime: startTime + splitOffset,
+                        sourceStart: sourceStart + splitOffset * speed,
+                        sourceDuration: origDur - splitOffset * speed,
+                        linkId: rightLinkId || linkId,
+                      },
                     });
                     if (rightLinkId) layer.settings.linkId = rightLinkId;
+                    layer.settings.sourceDuration = splitOffset * speed;
                     layer.duration = splitOffset;
-                    layer.sourceDuration = splitOffset;
+                    layer.sourceDuration = splitOffset * speed;
                   }
                 } else if (layer.type === "group" && Array.isArray(layer.children)) {
                   processLayers(layer.children);

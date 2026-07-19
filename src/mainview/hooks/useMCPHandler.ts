@@ -38,11 +38,18 @@ export function useMCPHandler() {
           // Execute async — don't block the message handler
           executeTool(toolName, args ?? {})
             .then((result) => {
+              let isError = false;
+              try {
+                const parsed = JSON.parse(result);
+                isError = !!parsed?.error;
+              } catch {
+                // Non-JSON tool responses are successful text responses.
+              }
               const response: MCPToolResultMessage = {
                 type: "mcp-tool-result",
                 requestId,
                 result,
-                isError: false,
+                isError,
               };
               bridge.postMessage(JSON.stringify(response));
             })

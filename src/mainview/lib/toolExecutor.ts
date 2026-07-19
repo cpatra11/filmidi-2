@@ -4,6 +4,7 @@ import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { useAccountStore } from "@/store/useAccountStore";
 import { transcribeAudio } from "./cloudTranscription";
+import { logTranscript } from "./transcriptLogger";
 import { getSecureApiKey } from "./secureApiKey";
 import { submitGeneration, waitForTask } from "./generationApi";
 import type { LayerJSON, VideoJSON } from "@videoflow/core";
@@ -171,11 +172,12 @@ export function getTimelineContext(): string {
       id: l.id,
       type: l.type ?? "unknown",
       name: l.name ?? l.id.slice(0, 8),
-      startTime: l.settings?.startTime ?? 0,
-      sourceDuration: l.settings?.sourceDuration ?? 5,
+      startTime: getLayerTiming(l).startTime,
+      sourceStart: getLayerTiming(l).sourceStart,
+      sourceDuration: getLayerTiming(l).sourceDuration,
       enabled: l.settings?.enabled ?? true,
       track: l.track ?? 0,
-      source: l.settings?.source,
+      source: l.settings?.source ?? l.source,
     })),
   });
 }
@@ -191,6 +193,35 @@ export function getMediaContext(): string {
       folderId: (a as Record<string, unknown>).folderId,
     })),
   });
+}
+
+function getLayerTiming(layer: any) {
+  const settings = (layer?.settings ?? {}) as Record<string, unknown>;
+  return {
+    startTime: (settings.startTime as number | undefined) ?? layer?.startTime ?? 0,
+    sourceStart: (settings.sourceStart as number | undefined) ?? layer?.sourceStart ?? 0,
+    sourceDuration:
+      (settings.sourceDuration as number | undefined) ??
+      layer?.sourceDuration ??
+      layer?.duration ??
+      5,
+    speed: (settings.speed as number | undefined) ?? layer?.speed ?? 1,
+  };
+}
+
+function getLayerSource(layer: any): string | undefined {
+  return (layer?.settings?.source as string | undefined) ?? (layer?.source as string | undefined);
+}
+
+function getCaptionTrack(layers: any[]): number {
+  const existing = layers
+    .filter((l: any) => l.type === "text" || l.type === "captions")
+    .map((l: any) => Number.isFinite(l.track) ? Math.max(0, Math.floor(l.track)) : 20)
+    .filter((track: number) => Number.isFinite(track));
+  if (existing.length > 0) {
+    return Math.min(...existing);
+  }
+  return 20;
 }
 
 function refreshPreview() {
@@ -258,6 +289,35 @@ function setTrack(commitFn: any, layerId: string, track: number) {
     const l = draft.layers?.find((x: any) => x.id === layerId);
     if (l) l.track = Math.max(0, Math.floor(track));
   }, { label: "Set track" });
+}
+
+function copySplitLayer(
+  commitFn: any,
+  newLayerId: string,
+  sourceLayer: LayerJSON,
+  sourceStart: number,
+  sourceDuration: number,
+  startTime: number,
+  linkId?: string,
+) {
+  commitFn((draft: any) => {
+    const created = draft.layers?.find((layer: any) => layer.id === newLayerId);
+    if (!created) return;
+    created.track = sourceLayer.track ?? 0;
+    created.properties = JSON.parse(JSON.stringify(sourceLayer.properties ?? {}));
+    if (sourceLayer.effects) created.effects = JSON.parse(JSON.stringify(sourceLayer.effects));
+    if (sourceLayer.animations) created.animations = JSON.parse(JSON.stringify(sourceLayer.animations));
+    if (sourceLayer.transitionIn) created.transitionIn = JSON.parse(JSON.stringify(sourceLayer.transitionIn));
+    if (sourceLayer.transitionOut) created.transitionOut = JSON.parse(JSON.stringify(sourceLayer.transitionOut));
+    created.settings = {
+      ...created.settings,
+      ...JSON.parse(JSON.stringify(sourceLayer.settings ?? {})),
+      startTime,
+      sourceStart,
+      sourceDuration,
+      ...(linkId ? { linkId } : {}),
+    };
+  }, { label: "Copy split layer attributes" });
 }
 
 // ─── TOOL EXECUTOR ────────────────────────────────────────────────
@@ -434,12 +494,14 @@ export async function executeTool(
           const startFrame = (entry.startFrame as number) ?? 0;
           const startTime = (entry.startTime as number) ?? startFrame / fps;
           const sourceDuration = (entry.sourceDuration as number) ?? (entry.durationFrames as number ? (entry.durationFrames as number) / fps : undefined) ?? asset.duration ?? 5;
+          const requestedTrack = entry.trackIndex ?? entry.track;
           const layerId = await addLayerCommand(commit, {
             type: asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio",
             source: asset.url,
             sourceDuration,
             startTime: startTime || startFrame / fps,
           });
+          if (requestedTrack !== undefined) setTrack(commit, layerId, Number(requestedTrack));
           // Separate video+audio tracks for video assets — linked via linkId
           if (asset.type === "video") {
             const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -453,6 +515,10 @@ export async function executeTool(
               sourceDuration,
               startTime: startTime || startFrame / fps,
             });
+            if (requestedTrack !== undefined) {
+              // The application reserves the lower track range for audio.
+              setTrack(commit, audioLayerId, Math.max(0, Number(requestedTrack) - 10));
+            }
             await setLayerLinkId(commit, audioLayerId, linkId, setSettingCommand);
           }
           results.push({ layerId, mediaRef, startTime: startTime || startFrame / fps, sourceDuration });
@@ -481,12 +547,14 @@ export async function executeTool(
           if (!asset) continue;
           const startTime = ((entry.startFrame as number) ?? 0) / fps;
           const sourceDuration = (entry.durationFrames as number ? (entry.durationFrames as number) / fps : undefined) ?? asset.duration ?? 5;
+          const requestedTrack = entry.trackIndex ?? entry.track;
           const layerId = await addLayerCommand(commit, {
             type: asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio",
             source: asset.url,
             sourceDuration,
             startTime,
           });
+          if (requestedTrack !== undefined) setTrack(commit, layerId, Number(requestedTrack));
           // Separate video+audio tracks for video assets — linked via linkId
           if (asset.type === "video") {
             const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -500,6 +568,9 @@ export async function executeTool(
               sourceDuration,
               startTime,
             });
+            if (requestedTrack !== undefined) {
+              setTrack(commit, audioLayerId, Math.max(0, Number(requestedTrack) - 10));
+            }
             await setLayerLinkId(commit, audioLayerId, linkId, setSettingCommand);
           }
         }
@@ -583,13 +654,14 @@ export async function executeTool(
           }));
         }
         const { findLinkedPartnerIn, getLayerLinkId } = await import("@/lib/linkUtils");
-        const allLayers = editor.video.layers ?? [];
         const beforeSnap = snapshotTimeline();
         if (cuts && cuts.length > 0) {
           for (const cut of cuts) {
             const layerId = cut.layerId as string;
             const atFrame = cut.atFrame as number;
-            const layer = editor.video.layers.find((l) => l.id === layerId);
+            const currentEditor = useEditorStore.getState();
+            const currentLayers = currentEditor.video.layers ?? [];
+            const layer = currentLayers.find((l) => l.id === layerId);
             if (!layer) continue;
             const startFrame = Math.round((layer.settings?.startTime ?? 0) * fps);
             const durFrames = Math.round((layer.settings?.sourceDuration ?? 0) * fps);
@@ -603,15 +675,18 @@ export async function executeTool(
               const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
               const newLayerId = await addLayerCommand(commit, {
                 type: layer.type as string,
-                source: layer.settings?.source as string,
+                source: getLayerSource(layer),
                 sourceDuration: remainDur,
                 startTime: (layer.settings?.startTime ?? 0) + splitDur,
+                properties: layer.properties,
               });
-              if (rightLinkId && newLayerId) {
-                await setSettingCommand(commit, newLayerId, "linkId", rightLinkId);
-              }
+              if (newLayerId) copySplitLayer(commit, newLayerId, layer,
+                (layer.settings?.sourceStart ?? 0) + splitDur * Math.abs(layer.settings?.speed ?? 1),
+                remainDur,
+                (layer.settings?.startTime ?? 0) + splitDur,
+                rightLinkId || undefined);
               // Also split the linked partner at the same frame
-              const partner = findLinkedPartnerIn(allLayers, layerId);
+              const partner = findLinkedPartnerIn(currentLayers, layerId);
               if (partner) {
                 const pStartFrame = Math.round((partner.settings?.startTime ?? 0) * fps);
                 const pDurFrames = Math.round((partner.settings?.sourceDuration ?? 0) * fps);
@@ -621,13 +696,16 @@ export async function executeTool(
                   await resizeLayerCommand(commit, partner.id, pSplitDur);
                   const pNewId = await addLayerCommand(commit, {
                     type: partner.type as string,
-                    source: partner.settings?.source as string,
+                    source: getLayerSource(partner),
                     sourceDuration: pRemainDur,
                     startTime: (partner.settings?.startTime ?? 0) + pSplitDur,
+                    properties: partner.properties,
                   });
-                  if (rightLinkId && pNewId) {
-                    await setSettingCommand(commit, pNewId, "linkId", rightLinkId);
-                  }
+                  if (pNewId) copySplitLayer(commit, pNewId, partner,
+                    (partner.settings?.sourceStart ?? 0) + pSplitDur * Math.abs(partner.settings?.speed ?? 1),
+                    pRemainDur,
+                    (partner.settings?.startTime ?? 0) + pSplitDur,
+                    rightLinkId || undefined);
                 }
               }
             }
@@ -636,7 +714,7 @@ export async function executeTool(
           // Split all under playhead
           const frame = editor.currentFrame;
           const time = frame / fps;
-          const toSplit = editor.video.layers.filter((l) => {
+          const toSplit = useEditorStore.getState().video.layers.filter((l) => {
             const st = l.settings?.startTime ?? 0;
             const dur = l.settings?.sourceDuration ?? 5;
             return time > st && time < st + dur;
@@ -651,13 +729,16 @@ export async function executeTool(
             const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
             const newLayerId = await addLayerCommand(commit, {
               type: layer.type as string,
-              source: layer.settings?.source as string,
+              source: getLayerSource(layer),
               sourceDuration: remainDur,
               startTime: (layer.settings?.startTime ?? 0) + splitDur,
+              properties: layer.properties,
             });
-            if (rightLinkId && newLayerId) {
-              await setSettingCommand(commit, newLayerId, "linkId", rightLinkId);
-            }
+            if (newLayerId) copySplitLayer(commit, newLayerId, layer,
+              (layer.settings?.sourceStart ?? 0) + splitDur * Math.abs(layer.settings?.speed ?? 1),
+              remainDur,
+              (layer.settings?.startTime ?? 0) + splitDur,
+              rightLinkId || undefined);
           }
         }
         refreshPreview();
@@ -686,8 +767,8 @@ export async function executeTool(
           if (clip.settings) {
             const sets = clip.settings as Record<string, unknown>;
             for (const [key, value] of Object.entries(sets)) {
-              await setPropertyCommand(commit, layerId, key, value);
-              if (partner) await setPropertyCommand(commit, partner.id, key, value);
+              await setSettingCommand(commit, layerId, key, value);
+              if (partner) await setSettingCommand(commit, partner.id, key, value);
             }
           }
         }
@@ -761,7 +842,7 @@ export async function executeTool(
 
         let extracted = 0;
         for (const layer of videoLayers) {
-          const source = layer.settings?.source as string;
+          const source = getLayerSource(layer);
           if (!source) continue;
           try {
             const resp = await fetch(source);
@@ -859,7 +940,7 @@ export async function executeTool(
       case "add_captions": {
         const targetClipIds = input.clipIds as string[] | undefined;
         const language = input.language as string | undefined;
-        const maxWords = (input.maxWords as number) ?? 3;
+        const maxWords = (input.maxWords as number) ?? 6;
         const textCase = (input.textCase as string) ?? "auto";
         const animation = input.animation as string | undefined;
         const highlightColor = input.highlightColor as string | undefined;
@@ -909,6 +990,13 @@ export async function executeTool(
           return JSON.stringify({ error: "A Qwen API key or Filmidi Pro account is required for captions. Add a key in Settings > Agent." });
         }
 
+        logTranscript("info", "add_captions", "start", {
+          clipIds: targetClipIds ?? "entire timeline",
+          language: language ?? null,
+          maxWords,
+          textCase,
+        });
+
 
 
         const { getCachedTranscript, setCachedTranscript } = await import("./transcriptCache");
@@ -916,9 +1004,40 @@ export async function executeTool(
         let totalCaptions = 0;
         let transcribeErrors = 0;
         const transcribeErrorMessages: string[] = [];
+        const sentenceEndRe = /[.?!…]+["')\]]*$/;
+        const pauseThresholdSeconds = 0.7;
+
+        const buildCaptionPhrases = (words: Array<{ text: string; start: number; end: number }>, limit: number) => {
+          const phrases: Array<Array<{ text: string; start: number; end: number }>> = [];
+          let current: Array<{ text: string; start: number; end: number }> = [];
+          let lastEnd = 0;
+
+          const flush = () => {
+            if (current.length > 0) phrases.push(current);
+            current = [];
+          };
+
+          for (const word of words) {
+            const gap = current.length > 0 ? word.start - lastEnd : 0;
+            const prevText = current[current.length - 1]?.text ?? "";
+            const hardBreak = current.length >= limit;
+            const sentenceBreak = current.length > 0 && sentenceEndRe.test(prevText);
+            const pauseBreak = current.length > 0 && gap >= pauseThresholdSeconds;
+            if (current.length > 0 && (hardBreak || sentenceBreak || pauseBreak)) {
+              flush();
+            }
+            current.push(word);
+            lastEnd = word.end;
+          }
+
+          flush();
+          return phrases;
+        };
+
+        const captionTrack = getCaptionTrack(layers);
 
         for (const layer of captionTargets) {
-          const source = layer.settings?.source as string;
+          const source = getLayerSource(layer);
           if (!source) continue;
 
           let transcript = await getCachedTranscript(source, language);
@@ -926,29 +1045,54 @@ export async function executeTool(
             try {
               transcript = await transcribeAudio(source, apiKey || "", { language });
               await setCachedTranscript(source, transcript, language);
+              logTranscript("info", "add_captions", "transcribed clip", {
+                clipId: layer.id,
+                source: source.slice(0, 80),
+                wordCount: transcript.words.length,
+                segmentCount: transcript.segments.length,
+              });
             } catch (e) {
               const errMsg = e instanceof Error ? e.message : String(e);
-              console.warn("[add_captions] Transcription failed for", source.slice(0, 60), errMsg);
+              logTranscript("error", "add_captions", "transcription failed", {
+                clipId: layer.id,
+                source: source.slice(0, 80),
+                error: errMsg,
+              });
               transcribeErrorMessages.push(errMsg);
               transcribeErrors++;
               continue;
             }
+          } else {
+            logTranscript("info", "add_captions", "cache hit", {
+              clipId: layer.id,
+              source: source.slice(0, 80),
+              wordCount: transcript.words.length,
+              segmentCount: transcript.segments.length,
+            });
           }
 
-          const clipStartFrame = Math.round((layer.settings?.startTime ?? 0) * fps);
-          const clipSourceStart = layer.settings?.sourceStart ?? 0;
-          const clipDuration = layer.settings?.sourceDuration ?? 5;
-          const clipSpeed = layer.settings?.speed ?? 1;
+          const { startTime: clipStartTime, sourceStart: clipSourceStart, sourceDuration: clipSourceDuration, speed: clipSpeed } = getLayerTiming(layer);
+          const effectiveSpeed = Math.max(Math.abs(clipSpeed), MIN_SPEED);
+          const clipStartFrame = Math.round(clipStartTime * fps);
           const visibleStart = clipSourceStart;
-          const visibleEnd = clipSourceStart + clipDuration * clipSpeed;
+          const visibleEnd = clipSourceStart + clipSourceDuration;
 
           const toTimeline = (sourceSeconds: number) =>
-            Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / Math.max(clipSpeed, 0.0001));
+            Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / effectiveSpeed);
 
           const visibleWords = transcript.words.filter((w) => {
             if (w.start === undefined || w.end === undefined) return false;
             if (w.end <= w.start) return false; // bad/zero timestamps
             return w.end >= visibleStart && w.start <= visibleEnd;
+          });
+          logTranscript("debug", "add_captions", "clip window", {
+            clipId: layer.id,
+            sourceStart: visibleStart,
+            sourceEnd: visibleEnd,
+            clipStartFrame,
+            effectiveSpeed,
+            matchedWords: visibleWords.length,
+            totalWords: transcript.words.length,
           });
 
           // Fallback: if time-filtering yields nothing, use ALL words
@@ -958,14 +1102,37 @@ export async function executeTool(
           });
 
           if (wordsToUse.length === 0) {
-            console.warn("[add_captions] No transcribable words for", source.slice(0, 60));
+            logTranscript("warn", "add_captions", "no transcribable words", {
+              clipId: layer.id,
+              source: source.slice(0, 80),
+            });
             continue;
           }
+          if (visibleWords.length === 0) {
+            logTranscript("warn", "add_captions", "using full transcript fallback", {
+              clipId: layer.id,
+              source: source.slice(0, 80),
+              wordCount: transcript.words.length,
+            });
+          }
 
-          // Split into phrases of maxWords
-          for (let i = 0; i < wordsToUse.length; i += maxWords) {
-            const phrase = wordsToUse.slice(i, i + maxWords);
-            const text = phrase.map((w) => w.text).join(" ");
+          const phrases = buildCaptionPhrases(
+            wordsToUse.map((w) => ({
+              text: w.text,
+              start: w.start ?? 0,
+              end: w.end ?? 0,
+            })),
+            Math.max(2, maxWords)
+          );
+
+          const normalizeCaptionText = (text: string) =>
+            text
+              .replace(/\s+([,.;:!?%])/g, "$1")
+              .replace(/\s+'\s+/g, "'")
+              .trim();
+
+          for (const phrase of phrases) {
+            const text = normalizeCaptionText(phrase.map((w) => w.text).join(" "));
             if (!text.trim()) continue;
 
             // Apply text case
@@ -977,7 +1144,6 @@ export async function executeTool(
             const endFrame = Math.max(startFrame + 1, toTimeline(phrase[phrase.length - 1].end ?? phrase[0].end ?? 1));
             const durationSeconds = Math.max(0.5, (endFrame - startFrame) / fps);
 
-            const textTrack = 20 + (editor.video.layers ?? []).filter((l: any) => l.type === "text" || l.type === "captions").length;
             const captionLayerId = await addLayerCommand(commit, {
               type: "text",
               startTime: startFrame / fps,
@@ -988,7 +1154,7 @@ export async function executeTool(
               },
             });
             if (captionLayerId) {
-              setTrack(commit, captionLayerId, textTrack);
+              setTrack(commit, captionLayerId, captionTrack);
               const { commands: cmds } = await import("@videoflow/react-video-editor");
               await cmds.setSettingCommand(commit, captionLayerId, "name", displayText.slice(0, 40));
             }
@@ -997,6 +1163,10 @@ export async function executeTool(
         }
 
         refreshPreview();
+        logTranscript("info", "add_captions", "done", {
+          totalCaptions,
+          transcribeErrors,
+        });
         if (totalCaptions === 0 && transcribeErrors > 0) {
           const details = transcribeErrorMessages.length > 0
             ? ` Errors: ${transcribeErrorMessages.slice(0, 3).join("; ")}`
@@ -1032,7 +1202,7 @@ export async function executeTool(
         let globalIndex = 0;
 
         for (const layer of audioLayers) {
-          const source = layer.settings?.source as string;
+          const source = getLayerSource(layer);
           if (!source) continue;
 
           let transcript = await getCachedTranscript(source);
@@ -1043,16 +1213,15 @@ export async function executeTool(
             } catch { continue; }
           }
 
-          const clipStartFrame = Math.round((layer.settings?.startTime ?? 0) * fps);
-          const clipSourceStart = layer.settings?.sourceStart ?? 0;
-          const clipDuration = layer.settings?.sourceDuration ?? 5;
-          const clipSpeed = layer.settings?.speed ?? 1;
+          const { startTime: clipStartTime, sourceStart: clipSourceStart, sourceDuration: clipSourceDuration, speed: clipSpeed } = getLayerTiming(layer);
+          const effectiveSpeed = Math.max(Math.abs(clipSpeed), MIN_SPEED);
+          const clipStartFrame = Math.round(clipStartTime * fps);
           const visibleStart = clipSourceStart;
-          const visibleEnd = clipSourceStart + clipDuration * clipSpeed;
-          const clipEndFrame = clipStartFrame + Math.round(clipDuration * fps);
+          const visibleEnd = clipSourceStart + clipSourceDuration;
+          const clipEndFrame = clipStartFrame + Math.round((clipSourceDuration / effectiveSpeed) * fps);
 
           const toTimeline = (sourceSeconds: number) =>
-            Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / Math.max(clipSpeed, 0.0001));
+            Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / effectiveSpeed);
 
           for (const word of transcript.words) {
             if (word.start === undefined || word.end === undefined) continue;
@@ -1118,8 +1287,10 @@ export async function executeTool(
         for (const [clipId, clipWords] of byClip) {
           const layer = layers.find((l: any) => l.id === clipId);
           if (!layer) continue;
-          const clipStartFrame = Math.round((layer.settings?.startTime ?? 0) * fps);
-          const clipEndFrame = clipStartFrame + Math.round((layer.settings?.sourceDuration ?? 0) * fps);
+          const { startTime: clipStartTime, sourceDuration: clipSourceDuration, speed: clipSpeed } = getLayerTiming(layer);
+          const effectiveSpeed = Math.max(Math.abs(clipSpeed), MIN_SPEED);
+          const clipStartFrame = Math.round(clipStartTime * fps);
+          const clipEndFrame = clipStartFrame + Math.round((clipSourceDuration / effectiveSpeed) * fps);
 
           const ranges = planWordCuts(clipWords, fps, clipStartFrame, clipEndFrame, cutAggressiveness);
           if (ranges.length === 0) continue;
@@ -1320,7 +1491,8 @@ export async function executeTool(
         const layers = editor.video.layers ?? [];
         const refLayer = layers.find((l: any) => l.id === referenceClipId);
         if (!refLayer) return JSON.stringify({ error: `Reference clip not found: ${referenceClipId}` });
-        if (!refLayer.settings?.source) return JSON.stringify({ error: "Reference clip has no source." });
+        const refSource = getLayerSource(refLayer);
+        if (!refSource) return JSON.stringify({ error: "Reference clip has no source." });
 
         const targets = targetClipId
           ? [targetClipId]
@@ -1338,12 +1510,13 @@ export async function executeTool(
         for (const tId of targets) {
           const targetLayer = layers.find((l: any) => l.id === tId);
           if (!targetLayer) { failed.push({ clipId: tId, reason: "Clip not found" }); continue; }
-          if (!targetLayer.settings?.source) { failed.push({ clipId: tId, reason: "No source" }); continue; }
+          const targetSource = getLayerSource(targetLayer);
+          if (!targetSource) { failed.push({ clipId: tId, reason: "No source" }); continue; }
 
           try {
             const result = await syncAudioClips(
-              refLayer.settings.source as string,
-              targetLayer.settings.source as string,
+              refSource,
+              targetSource,
               tId,
               {
                 searchWindowSeconds,
@@ -1478,6 +1651,12 @@ export async function executeTool(
         }
 
 
+        logTranscript("info", "get_transcript", "start", {
+          clipId: clipId ?? "entire timeline",
+          startFrame: startFrame ?? null,
+          endFrame: endFrame ?? null,
+          language: language ?? null,
+        });
 
         const { getCachedTranscript, setCachedTranscript } = await import("./transcriptCache");
 
@@ -1486,7 +1665,7 @@ export async function executeTool(
         let transcriptionSource = "cloud";
 
         for (const layer of targetLayers) {
-          const source = layer.settings?.source as string;
+          const source = getLayerSource(layer);
           if (!source) continue;
 
           // Check cache first
@@ -1496,21 +1675,38 @@ export async function executeTool(
             try {
               transcript = await transcribeAudio(source, apiKey || "", { language });
               await setCachedTranscript(source, transcript, language);
+              logTranscript("info", "get_transcript", "transcribed clip", {
+                clipId: layer.id,
+                source: source.slice(0, 80),
+                wordCount: transcript.words.length,
+                segmentCount: transcript.segments.length,
+              });
             } catch (e) {
+              logTranscript("error", "get_transcript", "transcription failed", {
+                clipId: layer.id,
+                source: source.slice(0, 80),
+                error: e instanceof Error ? e.message : String(e),
+              });
               continue; // skip this clip
             }
+          } else {
+            logTranscript("info", "get_transcript", "cache hit", {
+              clipId: layer.id,
+              source: source.slice(0, 80),
+              wordCount: transcript.words.length,
+              segmentCount: transcript.segments.length,
+            });
           }
 
           // Map source seconds to timeline frames
-          const clipStartFrame = Math.round((layer.settings?.startTime ?? 0) * fps);
-          const clipSourceStart = layer.settings?.sourceStart ?? 0;
-          const clipDuration = layer.settings?.sourceDuration ?? 5;
-          const clipSpeed = layer.settings?.speed ?? 1;
+          const { startTime: clipStartTime, sourceStart: clipSourceStart, sourceDuration: clipSourceDuration, speed: clipSpeed } = getLayerTiming(layer);
+          const effectiveSpeed = Math.max(Math.abs(clipSpeed), MIN_SPEED);
+          const clipStartFrame = Math.round(clipStartTime * fps);
           const visibleStart = clipSourceStart;
-          const visibleEnd = clipSourceStart + clipDuration * clipSpeed;
+          const visibleEnd = clipSourceStart + clipSourceDuration;
 
           const toTimeline = (sourceSeconds: number): number => {
-            return Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / Math.max(clipSpeed, MIN_SPEED));
+            return Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / effectiveSpeed);
           };
 
           const clipWords: Array<[number, string, number, number]> = [];
@@ -1529,13 +1725,22 @@ export async function executeTool(
             clipWords.push([globalWordIndex, word.text, timelineStart, timelineEnd]);
             globalWordIndex++;
           }
+          logTranscript("debug", "get_transcript", "clip window", {
+            clipId: layer.id,
+            sourceStart: visibleStart,
+            sourceEnd: visibleEnd,
+            clipStartFrame,
+            clipEndFrame: clipStartFrame + Math.round((clipSourceDuration / effectiveSpeed) * fps),
+            matchedWords: clipWords.length,
+            totalWords: transcript.words.length,
+          });
 
           if (clipWords.length > 0) {
             allWords.push({
               clipId: layer.id,
               trackIndex: layer.track ?? 0,
               startFrame: clipStartFrame,
-              endFrame: clipStartFrame + Math.round(clipDuration * fps),
+              endFrame: clipStartFrame + Math.round((clipSourceDuration / effectiveSpeed) * fps),
               words: clipWords,
             });
           }
@@ -1558,6 +1763,12 @@ export async function executeTool(
           response.wordsNote = `First ${WORD_LIMIT} of ${totalWords} words returned. Use startFrame/endFrame to page.`;
         }
 
+        logTranscript("info", "get_transcript", "done", {
+          clipCount: allWords.length,
+          totalWords,
+          capped,
+          transcriptionSource,
+        });
         return JSON.stringify(response);
       }
       case "search_media": {

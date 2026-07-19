@@ -5,7 +5,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "get_timeline",
     description:
-      "Read the full project state: settings (fps, resolution, duration, totalFrames, canGenerate), track list, all layers/clips with timing, properties, keyframes, effects, transitions. Call this first to understand the current edit before making changes. Page with startFrame/endFrame for long timelines.",
+      "Read the full project state: settings (fps, resolution, duration, totalFrames, canGenerate), track list, all layers/clips with timing, properties, keyframes, effects, transitions. Call this once per turn before timeline edits, then reuse the result. Page with startFrame/endFrame for long timelines.",
     input_schema: {
       type: "object",
       properties: {
@@ -18,7 +18,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "get_media",
     description:
-      "List every media asset in the project library: id, name, type (video/audio/image), url, duration, thumbnail, folderId. Use before add_clips to know what's available. Filter by type if needed.",
+      "List every media asset in the project library: id, name, type (video/audio/image), url, duration, thumbnail, folderId. Use once before library edits or placements, then reuse the result. Filter by type if needed.",
     input_schema: {
       type: "object",
       properties: {
@@ -173,7 +173,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "move_clips",
     description:
-      "Reposition clips on the timeline — change their startFrame and/or track. Can move multiple clips at once. Linked partners follow the frame delta.",
+      "Reposition clips on the timeline - change their startFrame and/or track. Use for drag-style moves. Can move multiple clips at once. Linked partners follow the frame delta.",
     input_schema: {
       type: "object",
       properties: {
@@ -409,7 +409,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "add_captions",
     description:
-      "Transcribe spoken audio (on-device or cloud) and create styled caption clips on a text track. Supports per-word animations, censor profanity, max words, text case. If adding for entire timeline, omit clipIds.",
+      "Transcribe spoken audio (on-device or cloud) and create styled caption clips on a single text track for the current run. Supports per-word animations, censor profanity, max words, text case. If adding for the whole timeline, omit clipIds and transcribe every relevant clip in one pass.",
     input_schema: {
       type: "object",
       properties: {
@@ -629,7 +629,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "search_media",
     description:
-      "Search across the media library by visual content or spoken words. Describe what's on screen or quote words said. Returns ranked asset IDs with source-second time ranges. Hits are ready to convert into add_clips trims.",
+      "Search across the media library by visual content or spoken words. Describe what's on screen or quote words said. Returns ranked asset IDs with source-second time ranges. Use before inspecting files one by one. Hits are ready to convert into add_clips trims.",
     input_schema: {
       type: "object",
       properties: {
@@ -721,7 +721,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "organize_media",
     description:
-      "Automatically organize media assets into structured folders by type (Video, Audio, Images) and optionally by AI-generated status. Call this when the user asks to organize their media library.",
+      "Automatically organize media assets into structured folders by type (Video, Audio, Images) and optionally by AI-generated status. Call this when the user asks to organize their media library, then batch follow-up folder moves or renames.",
     input_schema: {
       type: "object",
       properties: {
@@ -852,7 +852,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "list_models",
     description:
-      "List available AI models for chat and generation. Filter by type (chat, video, image, audio). Call before any generation tool.",
+      "List available AI models for chat and generation. Filter by type (chat, video, image, audio). Call before any generation tool, then use the returned model ids exactly.",
     input_schema: {
       type: "object",
       properties: {

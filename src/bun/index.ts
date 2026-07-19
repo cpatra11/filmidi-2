@@ -2,7 +2,7 @@ import { BrowserWindow, Updater } from "electrobun/bun";
 import Electrobun from "electrobun/bun";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 
 const DEV_SERVER_PORT = 5173;
@@ -98,7 +98,56 @@ db.run(`CREATE TABLE IF NOT EXISTS projects (
   created_at INTEGER NOT NULL,
   last_opened_at INTEGER NOT NULL,
   thumbnail TEXT
-)`);
+  )`);
+
+const TRANSCRIPT_LOG_DIR = join(import.meta.dir, "../../log");
+const TRANSCRIPT_LOG_FILE = join(TRANSCRIPT_LOG_DIR, "transcript log.txt");
+
+function writeTranscriptLog(level: "debug" | "info" | "warn" | "error", scope: string, message: string, details?: unknown) {
+  try {
+    mkdirSync(TRANSCRIPT_LOG_DIR, { recursive: true });
+    const timestamp = new Date().toISOString();
+    const detailText = details === undefined ? "" : ` ${typeof details === "string" ? details : (() => {
+      try { return JSON.stringify(details); } catch { return String(details); }
+    })()}`;
+    appendFileSync(
+      TRANSCRIPT_LOG_FILE,
+      `[${timestamp}] [${level}] [${scope}] ${message}${detailText}\n`,
+    );
+  } catch (err) {
+    console.error("[transcript-log] failed to write", err);
+  }
+}
+
+function sqlValue(value: unknown): string | number | bigint | boolean | Uint8Array | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value;
+  }
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+  if (value instanceof Date) return value.toISOString();
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function sqlParams(values: unknown[]): Array<string | number | bigint | boolean | Uint8Array | null> {
+  return values.map((value) => sqlValue(value));
+}
+
+async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 db.run(`CREATE TABLE IF NOT EXISTS project_data (
   id TEXT PRIMARY KEY,
   timeline TEXT,
@@ -208,7 +257,7 @@ transport.registerHandler((msg: any) => {
       const now = Date.now();
       db.run(`INSERT OR REPLACE INTO projects (id, name, width, height, fps, created_at, last_opened_at)
         VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?)`,
-        [id, name ?? "Untitled", width ?? 1920, height ?? 1080, fps ?? 30, id, now, now]);
+        sqlParams([id, name ?? "Untitled", width ?? 1920, height ?? 1080, fps ?? 30, id, now, now]));
       transport.send({ type: "db-save-project-result", ok: true });
       break;
     }
@@ -230,12 +279,12 @@ transport.registerHandler((msg: any) => {
       if (!projectId) { transport.send({ type: "db-save-project-data-result", ok: false }); break; }
       db.run(`INSERT OR REPLACE INTO project_data (id, timeline, media_manifest, generation_log, chat_history)
         VALUES (?, ?, ?, ?, ?)`,
-        [projectId,
+        sqlParams([projectId,
          timeline != null ? JSON.stringify(timeline) : null,
          mediaManifest != null ? JSON.stringify(mediaManifest) : null,
          generationLog != null ? JSON.stringify(generationLog) : null,
-         chatHistory != null ? JSON.stringify(chatHistory) : null]);
-      if (thumbnail) db.run("UPDATE projects SET thumbnail = ? WHERE id = ?", [thumbnail, projectId]);
+         chatHistory != null ? JSON.stringify(chatHistory) : null]));
+      if (thumbnail) db.run("UPDATE projects SET thumbnail = ? WHERE id = ?", sqlParams([thumbnail, projectId]));
       transport.send({ type: "db-save-project-data-result", ok: true });
       break;
     }
@@ -270,12 +319,12 @@ transport.registerHandler((msg: any) => {
       const now = Date.now();
       const validSessions = ((sessions as any[]) ?? []).filter((s: any) => s && s.id);
       for (const s of validSessions) {
-        upsert.run(s.id, JSON.stringify(s), s.createdAt ?? now, now);
+        upsert.run(...sqlParams([s.id, JSON.stringify(s), s.createdAt ?? now, now]));
       }
       // Delete sessions not in the list
       if (validSessions.length > 0) {
         const ids = validSessions.map((s: any) => s.id);
-        db.run(`DELETE FROM chat_sessions WHERE id NOT IN (${ids.map(() => "?").join(",")})`, ids);
+        db.run(`DELETE FROM chat_sessions WHERE id NOT IN (${ids.map(() => "?").join(",")})`, sqlParams(ids));
       }
       transport.send({ type: "db-save-chat-sessions-result", ok: true });
       break;
@@ -300,7 +349,7 @@ transport.registerHandler((msg: any) => {
 
     case "upload-audio-for-asr": {
       // Upload audio blob to a public URL for ASR.
-      // Tries tempfile.org first (public HTTPS URL), then fallbacks.
+      // Tries the local backend first, then public mirrors, then a local file fallback.
       (async () => {
         try {
           const { base64Data, mimeType, requestId } = msg;
@@ -313,15 +362,32 @@ transport.registerHandler((msg: any) => {
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
           const fileName = `filmidi-audio-${Date.now()}${ext}`;
 
-          // 1. Try catbox.moe (free, no auth, no expiry)
+          // 1. Try backend upload first.
+          try {
+            const formData = new FormData();
+            formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
+            const resp = await fetchWithTimeout("http://localhost:3000/api/v1/uploads", {
+              method: "POST",
+              body: formData,
+            }, 12_000);
+            if (resp.ok) {
+              const data = await resp.json() as any;
+              if (typeof data?.url === "string" && data.url) {
+                transport.send({ type: "upload-audio-result", requestId, url: data.url });
+                return;
+              }
+            }
+          } catch (_) {}
+
+          // 2. Try catbox.moe (free, no auth, no expiry)
           try {
             const formData = new FormData();
             formData.append("reqtype", "fileupload");
             formData.append("fileToUpload", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
-            const resp = await fetch("https://catbox.moe/user/api.php", {
+            const resp = await fetchWithTimeout("https://catbox.moe/user/api.php", {
               method: "POST",
               body: formData,
-            });
+            }, 12_000);
             if (resp.ok) {
               const url = (await resp.text()).trim();
               if (url && url.startsWith("https://")) {
@@ -331,15 +397,15 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          // 2. Try tempfile.org
+          // 3. Try tempfile.org
           try {
             const formData = new FormData();
             formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
             formData.append("expiryHours", "1");
-            const resp = await fetch("https://tempfile.org/api/upload/local", {
+            const resp = await fetchWithTimeout("https://tempfile.org/api/upload/local", {
               method: "POST",
               body: formData,
-            });
+            }, 12_000);
             if (resp.ok) {
               const data = await resp.json() as any;
               if (data?.success && data?.files?.[0]?.id) {
@@ -350,14 +416,14 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          // 3. Try backend upload (UploadThing)
+          // 4. Try backend upload (UploadThing)
           try {
             const formData = new FormData();
             formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
-            const resp = await fetch("http://localhost:3000/api/v1/uploads", {
+            const resp = await fetchWithTimeout("http://localhost:3000/api/v1/uploads", {
               method: "POST",
               body: formData,
-            });
+            }, 12_000);
             if (resp.ok) {
               const data = await resp.json() as any;
               if (data?.url) {
@@ -367,7 +433,7 @@ transport.registerHandler((msg: any) => {
             }
           } catch (_) {}
 
-          // 4. Last resort: file:// URL
+          // 5. Last resort: local file for debugging.
           const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
           mkdirSync(tempDir, { recursive: true });
           const filePath = join(tempDir, fileName);
@@ -386,9 +452,19 @@ transport.registerHandler((msg: any) => {
         try {
           const { audioUrl, apiKey, requestId } = msg;
           if (!audioUrl || !apiKey || !requestId) {
+            writeTranscriptLog("error", "transcribe-audio", "Missing required fields", {
+              hasAudioUrl: !!audioUrl,
+              hasApiKey: !!apiKey,
+              hasRequestId: !!requestId,
+            });
             transport.send({ type: "transcription-result", requestId, error: "Missing audioUrl, apiKey, or requestId" });
             return;
           }
+
+          writeTranscriptLog("info", "transcribe-audio", "start", {
+            requestId,
+            audioUrl: audioUrl.slice(0, 120),
+          });
 
           const ASR_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/asr/transcription";
           const POLL_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/tasks";
@@ -410,6 +486,11 @@ transport.registerHandler((msg: any) => {
 
           if (!submitResp.ok) {
             const err = await submitResp.text();
+            writeTranscriptLog("error", "transcribe-audio", "submit failed", {
+              requestId,
+              status: submitResp.status,
+              error: err,
+            });
             transport.send({ type: "transcription-result", requestId, error: `ASR submit failed (${submitResp.status}): ${err}` });
             return;
           }
@@ -417,9 +498,15 @@ transport.registerHandler((msg: any) => {
           const submitData = await submitResp.json();
           const taskId = submitData?.output?.task_id;
           if (!taskId) {
+            writeTranscriptLog("error", "transcribe-audio", "missing task_id", {
+              requestId,
+              submitData,
+            });
             transport.send({ type: "transcription-result", requestId, error: "No task_id in ASR response" });
             return;
           }
+
+          writeTranscriptLog("info", "transcribe-audio", "submitted", { requestId, taskId });
 
           // Poll for completion
           for (let attempt = 0; attempt < 150; attempt++) {
@@ -428,10 +515,24 @@ transport.registerHandler((msg: any) => {
               const pollResp = await fetch(`${POLL_ENDPOINT}/${taskId}`, {
                 headers: { Authorization: `Bearer ${apiKey}` },
               });
-              if (!pollResp.ok) continue;
+              if (!pollResp.ok) {
+                writeTranscriptLog("warn", "transcribe-audio", "poll http error", {
+                  requestId,
+                  taskId,
+                  attempt: attempt + 1,
+                  status: pollResp.status,
+                });
+                continue;
+              }
 
               const pollData = await pollResp.json();
               const status = pollData?.output?.task_status;
+              writeTranscriptLog("debug", "transcribe-audio", "poll", {
+                requestId,
+                taskId,
+                attempt: attempt + 1,
+                status,
+              });
 
               if (status === "SUCCEEDED") {
                 // Try multiple result URL paths (different models use different formats)
@@ -442,30 +543,59 @@ transport.registerHandler((msg: any) => {
                   (typeof pollData?.output?.results?.[0]?.url === "string" ? pollData.output.results[0].url : null);
                 if (!resultUrl) {
                   // Send back raw poll data for debugging
+                  writeTranscriptLog("error", "transcribe-audio", "succeeded but no result URL", {
+                    requestId,
+                    taskId,
+                    pollOutput: pollData.output,
+                  });
                   transport.send({ type: "transcription-result", requestId, error: `No transcription URL. Poll data: ${JSON.stringify(pollData.output)}` });
                   return;
                 }
                 const resultResp = await fetch(resultUrl);
                 const resultData = await resultResp.text();
-                console.log("[transcribe-audio] result (first 500 chars):", resultData.slice(0, 500));
+                writeTranscriptLog("info", "transcribe-audio", "result received", {
+                  requestId,
+                  taskId,
+                  bytes: resultData.length,
+                });
+                writeTranscriptLog("debug", "transcribe-audio", "result preview", resultData.slice(0, 500));
                 transport.send({ type: "transcription-result", requestId, result: resultData });
                 return;
               }
 
               if (status === "FAILED") {
+                writeTranscriptLog("error", "transcribe-audio", "task failed", {
+                  requestId,
+                  taskId,
+                  output: pollData.output,
+                });
                 transport.send({ type: "transcription-result", requestId, error: `ASR task failed: ${JSON.stringify(pollData.output)}` });
                 return;
               }
             } catch (_) {
               // Poll error — retry
+              writeTranscriptLog("warn", "transcribe-audio", "poll threw, retrying", {
+                requestId,
+                taskId,
+                attempt: attempt + 1,
+              });
             }
           }
 
+          writeTranscriptLog("error", "transcribe-audio", "timed out", { requestId, taskId });
           transport.send({ type: "transcription-result", requestId, error: "ASR task timed out" });
         } catch (err: any) {
+          writeTranscriptLog("error", "transcribe-audio", "unexpected error", err?.message ?? err);
           transport.send({ type: "transcription-result", requestId: msg.requestId, error: err?.message ?? String(err) });
         }
       })();
+      break;
+    }
+    case "transcript-log": {
+      const payload = msg.payload as { level?: "debug" | "info" | "warn" | "error"; scope?: string; message?: string; details?: unknown; timestamp?: string } | undefined;
+      if (payload?.scope && payload?.message) {
+        writeTranscriptLog(payload.level ?? "info", payload.scope, payload.message, payload.details);
+      }
       break;
     }
 

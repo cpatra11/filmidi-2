@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { dbListProjects, dbSaveProject, dbDeleteProject, dbUpdateProjectName } from "@/lib/dbIPC";
+import { useAppStore } from "./useAppStore";
 
 export interface ProjectEntry {
   id: string;
@@ -18,7 +19,11 @@ interface ProjectState {
   showNewProjectDialog: boolean;
 
   loadProjects: () => Promise<void>;
-  addProject: (name: string, settings?: { width?: number; height?: number; fps?: number }) => Promise<string>;
+  addProject: (
+    name: string,
+    settings?: { width?: number; height?: number; fps?: number },
+    options?: { select?: boolean }
+  ) => string;
   openProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<void>;
   renameProject: (id: string, name: string) => Promise<void>;
@@ -45,7 +50,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  addProject: async (name: string, settings?: { width?: number; height?: number; fps?: number }) => {
+  addProject: (name: string, settings?: { width?: number; height?: number; fps?: number }, options?: { select?: boolean }) => {
     const id = generateId();
     const now = Date.now();
     const entry: ProjectEntry = {
@@ -55,11 +60,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       fps: settings?.fps ?? 30,
       createdAt: now, lastOpenedAt: now,
     };
-    try {
-      await dbSaveProject(entry);
-    } catch {}
+    dbSaveProject(entry).catch(() => {});
     const updated = [entry, ...get().projects];
-    set({ projects: updated, currentProjectId: id });
+    set({ projects: updated, currentProjectId: options?.select === false ? get().currentProjectId : id });
+    if (options?.select !== false) {
+      useAppStore.getState().setProjectName(name);
+    }
     return id;
   },
 
@@ -70,6 +76,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     ) : get().projects;
     if (id) dbSaveProject({ id, name: get().projects.find((p) => p.id === id)?.name ?? "Untitled" }).catch(() => {});
     set({ projects: updated, currentProjectId: id });
+    if (id) {
+      useAppStore.getState().setProjectName(get().projects.find((p) => p.id === id)?.name ?? "Untitled Project");
+    }
   },
 
   deleteProject: async (id: string) => {
