@@ -84,7 +84,7 @@ export async function dbDeleteProjectData(id: string): Promise<void> {
 
 /** Chat sessions */
 export async function dbSaveChatSessions(sessions: any[]): Promise<void> {
-  await sendAndWait("db-save-chat-sessions", { sessions }, "db-save-chat-sessions-result", 30000);
+  await sendAndWait("db-save-chat-sessions", { sessions: sessions ?? [] }, "db-save-chat-sessions-result", 30000);
 }
 
 export async function dbLoadChatSessions(): Promise<any[]> {

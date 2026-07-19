@@ -262,12 +262,13 @@ transport.registerHandler((msg: any) => {
       const upsert = db.prepare(`INSERT OR REPLACE INTO chat_sessions (id, session_data, created_at, updated_at)
         VALUES (?, ?, ?, ?)`);
       const now = Date.now();
-      for (const s of (sessions as any[]) ?? []) {
+      const validSessions = ((sessions as any[]) ?? []).filter((s: any) => s && s.id);
+      for (const s of validSessions) {
         upsert.run(s.id, JSON.stringify(s), s.createdAt ?? now, now);
       }
       // Delete sessions not in the list
-      if (Array.isArray(sessions) && sessions.length > 0) {
-        const ids = sessions.map((s: any) => s.id);
+      if (validSessions.length > 0) {
+        const ids = validSessions.map((s: any) => s.id);
         db.run(`DELETE FROM chat_sessions WHERE id NOT IN (${ids.map(() => "?").join(",")})`, ids);
       }
       transport.send({ type: "db-save-chat-sessions-result", ok: true });
