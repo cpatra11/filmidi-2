@@ -1,4 +1,4 @@
-import { Component, useEffect, type ReactNode } from "react";
+import { Component, useEffect, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "./components/Layout";
@@ -105,6 +105,7 @@ function App() {
   useKeyboardShortcuts();
   useNativeMenuHandler();
   useMCPHandler();
+  const [isLoading, setIsLoading] = useState(true);
 
   // Electrobun's Bun-side executes window.__electrobun.receiveMessageFromHost(msg).
   // However, the frontend overrides window.__electrobun.receiveMessageFromBun.
@@ -126,6 +127,11 @@ function App() {
     }
   }, []);
 
+  // Load projects from SQLite on startup
+  useEffect(() => {
+    useProjectStore.getState().loadProjects().finally(() => setIsLoading(false));
+  }, []);
+
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
 
   // Sync project ID to save store and initialize data for new projects
@@ -133,34 +139,46 @@ function App() {
     if (!currentProjectId) return;
     const saveStore = useProjectSaveStore.getState();
     saveStore.setCurrentProject(currentProjectId);
-    const savedData = saveStore.loadProject(currentProjectId);
-    if (!savedData) {
-      // Use project settings from the store
-      const project = useProjectStore.getState().projects.find((p) => p.id === currentProjectId);
-      saveStore.saveProject({
-        timeline: {
-          ...defaultVideo,
-          name: project?.name ?? "Untitled",
-          width: project?.width ?? 1920,
-          height: project?.height ?? 1080,
-          fps: project?.fps ?? 30,
-        },
-        mediaManifest: [],
-        generationLog: [],
-        chatHistory: [],
-      });
-    }
+    (async () => {
+      const savedData = await saveStore.loadProject(currentProjectId);
+      if (!savedData) {
+        // Use project settings from the store
+        const project = useProjectStore.getState().projects.find((p) => p.id === currentProjectId);
+        await saveStore.saveProject({
+          timeline: {
+            ...defaultVideo,
+            name: project?.name ?? "Untitled",
+            width: project?.width ?? 1920,
+            height: project?.height ?? 1080,
+            fps: project?.fps ?? 30,
+          },
+          mediaManifest: [],
+          generationLog: [],
+          chatHistory: [],
+        });
+      }
+    })();
   }, [currentProjectId]);
 
   // Load saved project data or use default
-  const savedData = currentProjectId ? useProjectSaveStore.getState().loadProject(currentProjectId) : null;
-  const videoData = savedData?.timeline ?? defaultVideo;
+  const [videoData, setVideoData] = useState<VideoJSON>(defaultVideo);
+  useEffect(() => {
+    if (!currentProjectId) { setVideoData(defaultVideo); return; }
+    (async () => {
+      const saved = await useProjectSaveStore.getState().loadProject(currentProjectId);
+      setVideoData((saved?.timeline ?? defaultVideo) as VideoJSON);
+    })();
+  }, [currentProjectId]);
 
   return (
     <CrashBoundary>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          {currentProjectId ? (
+          {isLoading ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#050505", color: "#666", fontSize: 13 }}>
+              Loading...
+            </div>
+          ) : currentProjectId ? (
             <>
               <VideoFlowInit video={videoData as VideoJSON} />
               <Layout />

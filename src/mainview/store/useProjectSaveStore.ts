@@ -1,7 +1,7 @@
 import { create } from "zustand";
+import { dbSaveProjectData, dbLoadProjectData, dbDeleteProjectData } from "@/lib/dbIPC";
 
 const AUTOSAVE_DELAY_MS = 3000;
-const PROJECT_DATA_PREFIX = "filmidi_project_data_";
 
 export interface ProjectData {
   timeline: unknown;
@@ -23,34 +23,13 @@ interface ProjectSaveState {
   markDirty: () => void;
   markClean: () => void;
   saveProject: (data: ProjectData) => Promise<void>;
-  loadProject: (id: string) => ProjectData | null;
-  deleteProjectData: (id: string) => void;
+  loadProject: (id: string) => Promise<ProjectData | null>;
+  deleteProjectData: (id: string) => Promise<void>;
   scheduleAutoSave: (dataGetter: () => ProjectData | null) => void;
   cancelAutoSave: () => void;
   setAutoSaveEnabled: (enabled: boolean) => void;
-  exportProject: (id: string) => ProjectData | null;
-  importProject: (id: string, data: ProjectData) => void;
-}
-
-function getDataKey(id: string): string {
-  return `${PROJECT_DATA_PREFIX}${id}`;
-}
-
-function writeProjectData(id: string, data: ProjectData): void {
-  try {
-    localStorage.setItem(getDataKey(id), JSON.stringify(data));
-  } catch (e) {
-    console.error("Failed to save project data:", e);
-  }
-}
-
-function readProjectData(id: string): ProjectData | null {
-  try {
-    const raw = localStorage.getItem(getDataKey(id));
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  exportProject: (id: string) => Promise<ProjectData | null>;
+  importProject: (id: string, data: ProjectData) => Promise<void>;
 }
 
 export const useProjectSaveStore = create<ProjectSaveState>((set, get) => ({
@@ -73,18 +52,25 @@ export const useProjectSaveStore = create<ProjectSaveState>((set, get) => ({
   saveProject: async (data: ProjectData) => {
     const { currentProjectId } = get();
     if (!currentProjectId) return;
-
     set({ isSaving: true });
-    writeProjectData(currentProjectId, data);
-    set({ isSaving: false, isDirty: false, lastSavedAt: Date.now() });
+    try {
+      await dbSaveProjectData(currentProjectId, data);
+      set({ isSaving: false, isDirty: false, lastSavedAt: Date.now() });
+    } catch {
+      set({ isSaving: false });
+    }
   },
 
-  loadProject: (id: string) => {
-    return readProjectData(id);
+  loadProject: async (id: string) => {
+    try {
+      return await dbLoadProjectData(id);
+    } catch {
+      return null;
+    }
   },
 
-  deleteProjectData: (id: string) => {
-    localStorage.removeItem(getDataKey(id));
+  deleteProjectData: async (id: string) => {
+    try { await dbDeleteProjectData(id); } catch {}
   },
 
   scheduleAutoSave: (dataGetter: () => ProjectData | null) => {
@@ -95,7 +81,7 @@ export const useProjectSaveStore = create<ProjectSaveState>((set, get) => ({
     const timer = setTimeout(() => {
       const data = dataGetter();
       if (data) {
-        writeProjectData(currentProjectId, data);
+        dbSaveProjectData(currentProjectId, data).catch(() => {});
         set({ isDirty: false, lastSavedAt: Date.now(), autoSaveTimer: null });
       }
     }, AUTOSAVE_DELAY_MS);
@@ -104,19 +90,16 @@ export const useProjectSaveStore = create<ProjectSaveState>((set, get) => ({
 
   cancelAutoSave: () => {
     const { autoSaveTimer } = get();
-    if (autoSaveTimer) {
-      clearTimeout(autoSaveTimer);
-      set({ autoSaveTimer: null });
-    }
+    if (autoSaveTimer) { clearTimeout(autoSaveTimer); set({ autoSaveTimer: null }); }
   },
 
   setAutoSaveEnabled: (enabled) => set({ isAutoSaveEnabled: enabled }),
 
-  exportProject: (id: string) => {
-    return readProjectData(id);
+  exportProject: async (id: string) => {
+    try { return await dbLoadProjectData(id); } catch { return null; }
   },
 
-  importProject: (id: string, data: ProjectData) => {
-    writeProjectData(id, data);
+  importProject: async (id: string, data: ProjectData) => {
+    try { await dbSaveProjectData(id, data); } catch {}
   },
 }));

@@ -82,6 +82,44 @@ function saveCredentials() {
 // Load existing credentials on startup
 loadCredentials();
 
+// ─── SQLite Database ─────────────────────────────────────────────
+import { Database } from "bun:sqlite";
+
+const DB_DIR = join(homedir(), "Library", "Application Support", "com.filmidi.editor");
+mkdirSync(DB_DIR, { recursive: true });
+const db = new Database(join(DB_DIR, "projects.db"));
+db.run("PRAGMA journal_mode=WAL");
+db.run(`CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  width INTEGER DEFAULT 1920,
+  height INTEGER DEFAULT 1080,
+  fps REAL DEFAULT 30,
+  created_at INTEGER NOT NULL,
+  last_opened_at INTEGER NOT NULL,
+  thumbnail TEXT
+)`);
+db.run(`CREATE TABLE IF NOT EXISTS project_data (
+  id TEXT PRIMARY KEY,
+  timeline TEXT,
+  media_manifest TEXT,
+  generation_log TEXT,
+  chat_history TEXT
+)`);
+
+function projectRowToEntry(row: any): any {
+  return {
+    id: row.id,
+    name: row.name,
+    width: row.width,
+    height: row.height,
+    fps: row.fps,
+    createdAt: row.created_at,
+    lastOpenedAt: row.last_opened_at,
+    thumbnailUrl: row.thumbnail ?? undefined,
+  };
+}
+
 // ─── Agent cancellation support ──────────────────────────────────
 let currentAgentController: AbortController | null = null;
 
@@ -149,6 +187,65 @@ transport.registerHandler((msg: any) => {
         Electrobun.Utils.openExternal(msg.authUrl);
         transport.send({ type: "sign-in-browser-opened" });
       }
+      break;
+    }
+
+    // ─── SQLite project persistence ───────────────────────────
+    case "db-list-projects": {
+      const rows = db.query("SELECT * FROM projects ORDER BY last_opened_at DESC").all();
+      transport.send({ type: "db-list-projects-result", projects: rows.map(projectRowToEntry) });
+      break;
+    }
+    case "db-save-project": {
+      const { id, name, width, height, fps } = msg;
+      const now = Date.now();
+      db.run(`INSERT OR REPLACE INTO projects (id, name, width, height, fps, created_at, last_opened_at)
+        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?)`,
+        [id, name, width ?? 1920, height ?? 1080, fps ?? 30, id, now, now]);
+      transport.send({ type: "db-save-project-result", ok: true });
+      break;
+    }
+    case "db-delete-project": {
+      db.run("DELETE FROM projects WHERE id = ?", [msg.id]);
+      db.run("DELETE FROM project_data WHERE id = ?", [msg.id]);
+      transport.send({ type: "db-delete-project-result", ok: true });
+      break;
+    }
+    case "db-update-project-name": {
+      db.run("UPDATE projects SET name = ? WHERE id = ?", [msg.name, msg.id]);
+      transport.send({ type: "db-update-project-name-result", ok: true });
+      break;
+    }
+    case "db-save-project-data": {
+      const { projectId, timeline, mediaManifest, generationLog, chatHistory, thumbnail } = msg;
+      db.run(`INSERT OR REPLACE INTO project_data (id, timeline, media_manifest, generation_log, chat_history)
+        VALUES (?, ?, ?, ?, ?)`,
+        [projectId,
+         timeline ? JSON.stringify(timeline) : null,
+         mediaManifest ? JSON.stringify(mediaManifest) : null,
+         generationLog ? JSON.stringify(generationLog) : null,
+         chatHistory ? JSON.stringify(chatHistory) : null]);
+      if (thumbnail) db.run("UPDATE projects SET thumbnail = ? WHERE id = ?", [thumbnail, projectId]);
+      transport.send({ type: "db-save-project-data-result", ok: true });
+      break;
+    }
+    case "db-load-project-data": {
+      const row = db.query("SELECT * FROM project_data WHERE id = ?").get(msg.id) as any;
+      if (row) {
+        transport.send({ type: "db-load-project-data-result", data: {
+          timeline: row.timeline ? JSON.parse(row.timeline) : null,
+          mediaManifest: row.media_manifest ? JSON.parse(row.media_manifest) : null,
+          generationLog: row.generation_log ? JSON.parse(row.generation_log) : null,
+          chatHistory: row.chat_history ? JSON.parse(row.chat_history) : null,
+        }});
+      } else {
+        transport.send({ type: "db-load-project-data-result", data: null });
+      }
+      break;
+    }
+    case "db-delete-project-data": {
+      db.run("DELETE FROM project_data WHERE id = ?", [msg.id]);
+      transport.send({ type: "db-delete-project-data-result", ok: true });
       break;
     }
 
