@@ -126,7 +126,11 @@ export async function requestNativeMedia<T = unknown>(
     if (response.error) {
       return null;
     }
-    return (response.result as T | null) ?? null;
+    // Bun forwards the complete Swift response inside `result`, while the
+    // direct sidecar bridge exposes the task payload directly. Accept both
+    // shapes so extracted audio/data URLs are not silently dropped.
+    const nested = response.result as any;
+    return ((nested?.result !== undefined ? nested.result : nested) as T | null) ?? null;
   } catch (error) {
     console.warn(`[native-media] ${task} failed via Bun bridge, falling back`, error);
     return null;
