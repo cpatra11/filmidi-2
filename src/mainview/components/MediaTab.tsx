@@ -33,6 +33,7 @@ import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
 import { getMediaDuration } from "@/lib/mediaDuration";
 import { AssetThumbnail } from "./AssetThumbnail";
+import { importMediaFiles } from "@/lib/menuActions";
 import { FolderTile } from "./FolderTile";
 
 const thumbnailSizes = [
@@ -83,30 +84,8 @@ export function MediaTab() {
   };
 
   const importFiles = useCallback(async (files: FileList | File[]) => {
-    const store = useMediaPanelStore.getState();
-    const editor = useEditorStore.getState();
     const fileArr = Array.from(files);
-    for (let i = 0; i < fileArr.length; i++) {
-      const file = fileArr[i];
-      const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
-      const duration = await getMediaDuration(file, type);
-      const id = `asset-${Date.now()}-${i}`;
-      const url = URL.createObjectURL(file);
-      store.addAsset({
-        id,
-        name: file.name,
-        type,
-        url,
-        duration,
-        isGenerated: false,
-        folderId: store.currentFolderId,
-        createdAt: Date.now(),
-      });
-      if (editor.mediaImporter) {
-        editor.mediaImporter([file], { startTime: 0, track: 0 });
-      }
-    }
-    store.showToast(`Imported ${fileArr.length} file${fileArr.length > 1 ? "s" : ""}`);
+    await importMediaFiles(fileArr);
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {

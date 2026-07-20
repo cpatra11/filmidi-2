@@ -28,6 +28,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { getMediaDuration } from "@/lib/mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
+import { extractMovAudio } from "@/lib/movAudio";
 import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead } from "@/lib/timelineAddActions";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -375,6 +376,7 @@ export function Layout() {
         const duration = await getMediaDuration(file, type);
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const url = URL.createObjectURL(file);
+        const audioUrl = type === "video" ? await extractMovAudio(file) : null;
         mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         const isVideoFile = type === "video";
         if (isVideoFile) {
@@ -389,7 +391,7 @@ export function Layout() {
           const audioTrack = findAvailableTrack(
             useEditorStore.getState().video.layers ?? [], "audio", startTime, duration, trackAtDrop("audio"),
           );
-          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl ?? url, sourceDuration: duration, startTime });
           setLayerTrack(editor.commit, audioLayerId, audioTrack);
           await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
@@ -541,6 +543,7 @@ export function Layout() {
                               const duration = await getMediaDuration(file, type);
                               const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
                               const url = URL.createObjectURL(file);
+                              const audioUrl = type === "video" ? await extractMovAudio(file) : null;
                               store.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
                               if (type === "video") {
                                 const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -550,7 +553,7 @@ export function Layout() {
                                 const clipName = getDisplayName(file);
                                 const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, duration);
                                 const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration);
-                                const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+                                const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl ?? url, sourceDuration: duration, startTime });
                                 setLayerTrack(editor.commit, audioLayerId2, audioTrack);
                                 await cmds.setSettingCommand(editor.commit, audioLayerId2, "name", `${clipName} Audio`);
                                 await setLayerLinkId(editor.commit, audioLayerId2, linkId, setSettingCommand);
