@@ -1555,13 +1555,21 @@ export async function executeTool(
         if (!texts || texts.length === 0) return JSON.stringify({ error: "No texts provided" });
         const results: string[] = [];
         for (const t of texts) {
+          const startTime = ((t.startFrame as number) ?? 0) / fps;
+          const duration = ((t.durationFrames as number) ?? 90) / fps;
+          const requestedTrack = t.trackIndex as number | undefined;
+          const track = requestedTrack === undefined
+            ? findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration)
+            : normalizeTrackForKind(requestedTrack, "video");
           const layerId = await addLayerCommand(commit, {
             type: "text",
-            startTime: ((t.startFrame as number) ?? 0) / fps,
-            sourceDuration: ((t.durationFrames as number) ?? 90) / fps,
+            track,
+            startTime,
+            sourceDuration: duration,
+            settings: { startTime, sourceDuration: duration, enabled: true },
             properties: {
               text: t.content as string,
-              fontSize: (t.fontSize as number) ?? 0.1,
+              fontSize: (t.fontSize as number) ?? 6,
               fontFamily: (t.fontName as string) ?? "sans-serif",
               color: (t.color as string) ?? "#ffffff",
               fontWeight: t.isBold ? "bold" : "normal",
@@ -1573,13 +1581,6 @@ export async function executeTool(
               ],
             },
           });
-          const startTime = ((t.startFrame as number) ?? 0) / fps;
-          const duration = ((t.durationFrames as number) ?? 90) / fps;
-          const requestedTrack = t.trackIndex as number | undefined;
-          const track = requestedTrack === undefined
-            ? findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration)
-            : requestedTrack;
-          setTrack(commit, layerId, track);
           results.push(layerId);
         }
         refreshPreview();
@@ -1595,11 +1596,17 @@ export async function executeTool(
           const durationFrames = Math.max(1, Math.floor((shape.durationFrames as number) ?? 90));
           const startTime = startFrame / fps;
           const duration = durationFrames / fps;
+          const requestedTrack = shape.trackIndex as number | undefined;
+          const track = requestedTrack === undefined
+            ? findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration)
+            : normalizeTrackForKind(requestedTrack, "video");
           const layerId = await addLayerCommand(commit, {
             type: "shape",
             source: "color",
+            track,
             startTime,
             sourceDuration: duration,
+            settings: { startTime, sourceDuration: duration, enabled: true },
             properties: {
               fill: (shape.color as string) ?? "#000000",
               width: (shape.width as number) ?? 1,
@@ -1608,11 +1615,6 @@ export async function executeTool(
             },
             extraSettings: { shapeType: (shape.shapeType as string) ?? "rectangle" },
           });
-          const requestedTrack = shape.trackIndex as number | undefined;
-          const track = requestedTrack === undefined
-            ? findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration)
-            : requestedTrack;
-          setTrack(commit, layerId, track);
           results.push(layerId);
         }
         refreshPreview();

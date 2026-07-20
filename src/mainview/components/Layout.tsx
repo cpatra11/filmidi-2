@@ -23,7 +23,6 @@ import { SettingsDialog } from "./SettingsDialog";
 import { HelpDialog } from "./HelpDialog";
 import { SaveAsDialog } from "./SaveAsDialog";
 import { AboutDialog } from "./AboutDialog";
-import { TextDialog } from "./TextDialog";
 import { TourOverlay } from "./TourOverlay";
 import { useAppStore } from "@/store/useAppStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
@@ -634,7 +633,6 @@ export function Layout() {
       <HelpDialog />
       <SaveAsDialog />
       <AboutDialog />
-      <TextDialog />
       <TourOverlay />
     </div>
   );

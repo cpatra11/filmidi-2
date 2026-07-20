@@ -1,31 +1,23 @@
 import { commands, useEditorStore } from "@videoflow/react-video-editor";
-import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
-import { useTextDialogStore } from "@/store/useTextDialogStore";
+import { findAvailableTrack } from "@/lib/timelineMove";
 
 const { addLayerCommand } = commands;
 
-function setLayerTrack(commit: any, layerId: string, track: number, kind: "audio" | "video") {
-  commit((draft: any) => {
-    const layer = draft.layers?.find((item: any) => item.id === layerId);
-    if (layer) layer.track = normalizeTrackForKind(track, kind);
-  }, { label: "Set track" });
-}
-
-export async function addTextLayerAtPlayhead(): Promise<void> {
+export async function addTextLayerAtPlayhead(text = "Text"): Promise<void> {
   const editor = useEditorStore.getState();
   const fps = editor.video.fps || 30;
-  const text = await useTextDialogStore.getState().open();
-  if (!text) return;
-
   const startTime = editor.currentFrame / fps;
   const duration = 3;
+  const track = findAvailableTrack(editor.video.layers ?? [], "video", startTime, duration);
   const layerId = await addLayerCommand(editor.commit, {
     type: "text",
+    track,
     startTime,
     sourceDuration: duration,
+    settings: { startTime, sourceDuration: duration, enabled: true },
     properties: {
-      text: text.trim(),
-      fontSize: 0.12,
+      text: text.trim() || "Text",
+      fontSize: 6,
       fontFamily: "Inter",
       color: "#ffffff",
       fontWeight: "700",
@@ -35,8 +27,6 @@ export async function addTextLayerAtPlayhead(): Promise<void> {
   });
 
   if (!layerId) return;
-  const track = findAvailableTrack(editor.video.layers ?? [], "video", startTime, duration);
-  setLayerTrack(editor.commit, layerId, track, "video");
   editor.selectLayers([layerId]);
   editor.bridge?.seek(editor.currentFrame);
 }
@@ -47,10 +37,13 @@ export async function addMatteLayerAtPlayhead(shapeType: string = "rectangle"): 
   const hex = "#000000";
   const startTime = editor.currentFrame / fps;
   const duration = editor.video.duration || 5;
+  const track = findAvailableTrack(editor.video.layers ?? [], "video", startTime, duration);
   const layerId = await addLayerCommand(editor.commit, {
     type: "shape",
+    track,
     startTime,
     sourceDuration: duration,
+    settings: { startTime, sourceDuration: duration, enabled: true },
     properties: {
       fill: hex,
       width: "100%",
@@ -61,8 +54,6 @@ export async function addMatteLayerAtPlayhead(shapeType: string = "rectangle"): 
   });
 
   if (!layerId) return;
-  const track = findAvailableTrack(editor.video.layers ?? [], "video", startTime, duration);
-  setLayerTrack(editor.commit, layerId, track, "video");
   editor.selectLayers([layerId]);
   editor.bridge?.seek(editor.currentFrame);
 }
