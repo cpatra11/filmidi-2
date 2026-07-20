@@ -12,7 +12,7 @@ if (isMac) {
 
 export default {
   app: {
-    name: "Filmidi Editor",
+    name: "Filmidi",
     identifier: "com.filmidi.editor",
     version: "0.0.1",
   },
