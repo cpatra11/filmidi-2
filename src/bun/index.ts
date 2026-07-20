@@ -884,7 +884,7 @@ const menuTemplate: any[] = [
     ? [
         {
           submenu: [
-            { label: "About Filmidi", role: "about" },
+            { label: "About Filmidi", action: "about" },
             { type: "separator" as const },
       {
         label: "Settings",

@@ -4,6 +4,7 @@ import { useExportStore } from "@/store/useExportStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { useHelpStore } from "@/store/useHelpStore";
 import { useProjectStore } from "@/store/useProjectStore";
+import { useAboutStore } from "@/store/useAboutStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import {
   importMediaFromPicker,
@@ -27,6 +28,9 @@ import {
 
 function handleMenuAction(action: string) {
   switch (action) {
+    case "about":
+      useAboutStore.getState().open();
+      break;
     // File
     case "new-project":
       useProjectStore.getState().addProject("Untitled Project");

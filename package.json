@@ -2,6 +2,12 @@
   "name": "filmidi-editor",
   "version": "0.0.1",
   "description": "Filmidi video editor powered by Electrobun and VideoFlow",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cpatra11/filmidi-q.git"
+  },
+  "homepage": "https://github.com/cpatra11/filmidi-q",
   "scripts": {
     "postinstall": "bun run patches/patch-dom-renderer.ts && bun run patches/patch-video-editor.ts && bun run patches/patch-video-layer.ts && bun run patches/patch-track-normalization.ts",
     "build:sidecar": "bash scripts/build-sidecar.sh",
