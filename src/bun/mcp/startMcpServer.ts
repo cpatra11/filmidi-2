@@ -232,6 +232,17 @@ const TOOLS: ToolDef[] = [
       }, required: ["ranges"],
     },
   },
+  {
+    name: "remove_silence",
+    description: "Remove dead air from speech clips using their existing transcript. Deletes only pauses longer than the threshold and ripples linked timeline media together.",
+    inputSchema: {
+      type: "object", properties: {
+        clipIds: { type: "array", items: { type: "string" }, description: "Optional audio/video clip ids." },
+        minPauseSeconds: { type: "number", description: "Optional minimum pause length. Defaults to 0.5 seconds." },
+        language: { type: "string", description: "Optional transcript language hint." },
+      }, required: [],
+    },
+  },
 
   // ─── Keyframes (1) ───
   {
