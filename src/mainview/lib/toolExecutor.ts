@@ -190,6 +190,12 @@ export function getTimelineContext(): string {
       enabled: layer.settings?.enabled ?? true,
       track: layer.track ?? 0,
       source: layer.settings?.source ?? layer.source,
+      properties: layer.properties ?? {},
+      keyframes: layer.animations ?? [],
+      effects: layer.effects ?? [],
+      transitionIn: layer.transitionIn ?? null,
+      transitionOut: layer.transitionOut ?? null,
+      linkId: layer.settings?.linkId ?? layer.linkId ?? null,
     };
     }),
   });
@@ -888,7 +894,7 @@ function mapTranscriptWordsToTimeline(layer: any, transcript: { words: Array<{ t
 
 // ─── TOOL EXECUTOR ────────────────────────────────────────────────
 
-export async function executeTool(
+async function executeToolInternal(
   name: string,
   input: Record<string, unknown>,
 ): Promise<string> {
@@ -1472,6 +1478,17 @@ export async function executeTool(
         const property = input.property as string;
         const keyframes = input.keyframes as Array<{ time: number; value: unknown; easing?: string }>;
         if (!clipId || !property) return JSON.stringify({ error: "clipId and property required" });
+        if (!Array.isArray(keyframes)) return JSON.stringify({ error: "keyframes must be an array" });
+        const layer = useEditorStore.getState().video.layers?.find((l: any) => l.id === clipId) as any;
+        if (!layer) return JSON.stringify({ error: `Clip not found: ${clipId}` });
+        const allowedEasing = new Set(["step", "linear", "easeIn", "easeOut", "easeInOut"]);
+        for (const kf of keyframes) {
+          if (!Number.isFinite(Number(kf.time)) || Number(kf.time) < 0) return JSON.stringify({ error: "Keyframe times must be non-negative source seconds" });
+          if (kf.easing && !allowedEasing.has(kf.easing)) return JSON.stringify({ error: `Unsupported easing: ${kf.easing}` });
+        }
+        keyframes.sort((a, b) => Number(a.time) - Number(b.time));
+        const maxTime = Number(layer.settings?.sourceDuration ?? 0);
+        if (maxTime > 0 && keyframes.some((kf) => Number(kf.time) > maxTime)) return JSON.stringify({ error: "Keyframe time exceeds clip duration" });
         for (const kf of keyframes) {
           await setKeyframeCommand(commit, clipId, property, kf.time, kf.value, kf.easing as string);
         }
@@ -2179,7 +2196,7 @@ export async function executeTool(
 
       // ─── COLOR / EFFECTS ────────────────────────────────────────
       case "apply_color": {
-        const clipIds = input.clipIds as string[];
+        const clipIds = (input.clipIds as string[] | undefined) ?? (typeof input.clipId === "string" ? [input.clipId as string] : []);
         if (!clipIds || clipIds.length === 0) return JSON.stringify({ error: "No clipIds provided" });
         for (const id of clipIds) {
           if (input.brightness !== undefined) await setPropertyCommand(commit, id, "filterBrightness", 1 + (input.brightness as number));
@@ -2191,25 +2208,110 @@ export async function executeTool(
       }
 
       case "apply_effect": {
-        const clipIds = input.clipIds as string[];
-        const effectName = input.effect as string;
-        if (!clipIds || clipIds.length === 0 || !effectName) return JSON.stringify({ error: "clipIds and effect required" });
-        for (const id of clipIds) {
-          await addEffectCommand(commit, id, effectName);
-          if (input.params) {
-            const params = input.params as Record<string, unknown>;
-            const layers = editor.video.layers ?? [];
-            const layer = layers.find((l) => l.id === id);
-            if (layer?.effects) {
-              const idx = layer.effects.length - 1;
-              for (const [k, v] of Object.entries(params)) {
-                await setEffectParamCommand(commit, id, idx, k, v);
+        const clipIds = (input.clipIds as string[] | undefined) ?? (typeof input.clipId === "string" ? [input.clipId as string] : []);
+        const operation = String(input.operation ?? "add");
+        const effectName = input.effect as string | undefined;
+        if (!clipIds || clipIds.length === 0) return JSON.stringify({ error: "clipIds required" });
+
+        // Keep the original MCP shape working for clients that send add/remove/reorder arrays.
+        if (input.operation === undefined && (Array.isArray(input.add) || Array.isArray(input.remove) || Array.isArray(input.reorder))) {
+          for (const id of clipIds) {
+            for (const entry of (Array.isArray(input.add) ? input.add : []) as any[]) {
+              const name = String(entry?.effectType ?? entry?.effect ?? "");
+              if (!name) continue;
+              const layer = useEditorStore.getState().video.layers?.find((l: any) => l.id === id) as any;
+              const index = Array.isArray(layer?.effects) ? layer.effects.length : 0;
+              await addEffectCommand(commit, id, name);
+              for (const [key, value] of Object.entries((entry?.params ?? {}) as Record<string, unknown>)) {
+                await setEffectParamCommand(commit, id, index, key, value);
               }
             }
+            for (const name of (Array.isArray(input.remove) ? input.remove : []) as string[]) {
+              const layer = useEditorStore.getState().video.layers?.find((l: any) => l.id === id) as any;
+              const index = (layer?.effects ?? []).findIndex((effect: any) => effect?.effect === name || effect?.name === name);
+              if (index >= 0) await removeEffectCommand(commit, id, index, name);
+            }
+            const desired = (Array.isArray(input.reorder) ? input.reorder : []) as string[];
+            for (let target = 0; target < desired.length; target++) {
+              const layer = useEditorStore.getState().video.layers?.find((l: any) => l.id === id) as any;
+              const effects = Array.isArray(layer?.effects) ? layer.effects : [];
+              const current = effects.findIndex((effect: any) => effect?.effect === desired[target] || effect?.name === desired[target]);
+              if (current >= 0 && current !== target) await (commands as any).moveEffectCommand(commit, id, current, target);
+            }
+          }
+          refreshPreview();
+          return JSON.stringify({ effectOperation: "legacy", clipCount: clipIds.length });
+        }
+        if (operation === "add" && !effectName) return JSON.stringify({ error: "effect required for add" });
+        const effectIndex = Number(input.effectIndex ?? -1);
+        const toIndex = Number(input.toIndex ?? -1);
+        for (const id of clipIds) {
+          const layer = useEditorStore.getState().video.layers?.find((l: any) => l.id === id) as any;
+          const effects = Array.isArray(layer?.effects) ? layer.effects : [];
+          if (operation === "add") {
+            await addEffectCommand(commit, id, effectName!);
+            const idx = effects.length;
+            for (const [k, v] of Object.entries((input.params ?? {}) as Record<string, unknown>)) {
+              await setEffectParamCommand(commit, id, idx, k, v);
+            }
+          } else if (operation === "update") {
+            if (!Number.isInteger(effectIndex) || effectIndex < 0 || effectIndex >= effects.length) return JSON.stringify({ error: `Invalid effectIndex for ${id}` });
+            for (const [k, v] of Object.entries((input.params ?? {}) as Record<string, unknown>)) {
+              await setEffectParamCommand(commit, id, effectIndex, k, v);
+            }
+          } else if (operation === "remove") {
+            if (!Number.isInteger(effectIndex) || effectIndex < 0 || effectIndex >= effects.length) return JSON.stringify({ error: `Invalid effectIndex for ${id}` });
+            await removeEffectCommand(commit, id, effectIndex, String(effects[effectIndex]?.effect ?? effectName ?? "effect"));
+          } else if (operation === "reorder") {
+            if (!Number.isInteger(effectIndex) || !Number.isInteger(toIndex) || effectIndex < 0 || toIndex < 0 || effectIndex >= effects.length || toIndex >= effects.length) return JSON.stringify({ error: `Invalid effect reorder for ${id}` });
+            await (commands as any).moveEffectCommand(commit, id, effectIndex, toIndex);
+          } else if (operation === "enable" || operation === "disable") {
+            if (!Number.isInteger(effectIndex) || effectIndex < 0 || effectIndex >= effects.length) return JSON.stringify({ error: `Invalid effectIndex for ${id}` });
+            await (commands as any).setEffectEnabledCommand(commit, id, effectIndex, operation === "enable");
+          } else if (operation === "clear") {
+            for (let index = effects.length - 1; index >= 0; index--) {
+              await removeEffectCommand(commit, id, index, String(effects[index]?.effect ?? "effect"));
+            }
+          } else {
+            return JSON.stringify({ error: `Unknown effect operation: ${operation}` });
           }
         }
         refreshPreview();
-        return JSON.stringify({ effectApplied: effectName, clipCount: clipIds.length });
+        return JSON.stringify({ effectOperation: operation, effect: effectName ?? null, clipCount: clipIds.length });
+      }
+
+      case "set_transition": {
+        const clipIds = (input.clipIds as string[] | undefined) ?? (typeof input.clipId === "string" ? [input.clipId as string] : []);
+        const edge = input.edge as "in" | "out";
+        if (!Array.isArray(clipIds) || clipIds.length === 0 || (edge !== "in" && edge !== "out")) return JSON.stringify({ error: "clipIds and edge ('in' or 'out') are required" });
+        if (input.clear === true) {
+          for (const id of clipIds) await setTransitionCommand(commit, id, edge, null);
+          refreshPreview();
+          return JSON.stringify({ transitionCleared: true, edge, clipCount: clipIds.length });
+        }
+        const transition = String(input.transition ?? "");
+        const duration = Number(input.duration ?? 0.5);
+        if (!transition) return JSON.stringify({ error: "transition is required unless clear=true" });
+        if (!Number.isFinite(duration) || duration <= 0) return JSON.stringify({ error: "duration must be greater than zero" });
+        for (const id of clipIds) {
+          const layer = useEditorStore.getState().video.layers?.find((l: any) => l.id === id) as any;
+          const clipDuration = Number(layer?.settings?.sourceDuration ?? 0);
+          if (clipDuration > 0 && duration > clipDuration) return JSON.stringify({ error: `Transition duration exceeds clip duration for ${id}` });
+          const spec: any = {
+            transition,
+            duration,
+            params: (input.params ?? {}) as Record<string, unknown>,
+          };
+          if (input.easing !== undefined) spec.easing = input.easing as any;
+          await setTransitionCommand(commit, id, edge, spec);
+        }
+        refreshPreview();
+        return JSON.stringify({ transitionSet: transition, edge, duration, clipCount: clipIds.length });
+      }
+
+      case "list_transitions": {
+        const { listTransitions } = await import("@videoflow/renderer-browser");
+        return JSON.stringify({ transitions: listTransitions() });
       }
 
       // ─── AUDIO ANALYSIS ─────────────────────────────────────────
@@ -3244,4 +3346,61 @@ export async function executeTool(
     const msg = err instanceof Error ? err.message : String(err);
     return JSON.stringify({ error: msg });
   }
+}
+
+const READ_ONLY_AGENT_TOOLS = new Set([
+  "get_timeline", "get_media", "inspect_timeline", "inspect_media", "inspect_color",
+  "list_models", "list_transitions", "list_multicam_sources", "get_projects",
+]);
+
+function timelineVerificationSnapshot() {
+  const video = useEditorStore.getState().video as any;
+  return {
+    duration: video.duration,
+    layerCount: video.layers?.length ?? 0,
+    layers: (video.layers ?? []).map((layer: any) => ({
+      id: layer.id,
+      type: layer.type,
+      track: layer.track ?? 0,
+      startTime: layer.settings?.startTime ?? 0,
+      sourceDuration: layer.settings?.sourceDuration ?? 0,
+      enabled: layer.settings?.enabled !== false,
+      properties: layer.properties ?? {},
+      animations: layer.animations ?? [],
+      effects: layer.effects ?? [],
+      transitionIn: layer.transitionIn ?? null,
+      transitionOut: layer.transitionOut ?? null,
+    })),
+  };
+}
+
+/** Execute an agent tool and prove that the timeline state was observed afterward. */
+export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+  if (READ_ONLY_AGENT_TOOLS.has(name)) return executeToolInternal(name, input);
+  const before = timelineVerificationSnapshot();
+  const result = await executeToolInternal(name, input);
+  let parsed: any;
+  try { parsed = JSON.parse(result); } catch { return result; }
+  if (!parsed || parsed.error) return result;
+
+  const after = timelineVerificationSnapshot();
+  const beforeJson = JSON.stringify(before);
+  const afterJson = JSON.stringify(after);
+  const requestedIds = [
+    ...(Array.isArray(input.clipIds) ? input.clipIds : []),
+    ...(typeof input.clipId === "string" ? [input.clipId] : []),
+    ...(Array.isArray(input.entries) ? input.entries.map((entry: any) => entry?.clipId).filter(Boolean) : []),
+  ];
+  const existingIds = new Set(after.layers.map((layer: any) => layer.id));
+  parsed.verification = {
+    timelineRead: true,
+    changed: beforeJson !== afterJson,
+    layerCount: after.layerCount,
+    requestedClipIdsPresent: requestedIds.filter((id) => existingIds.has(id)),
+    missingClipIds: requestedIds.filter((id) => !existingIds.has(id)),
+  };
+  if (parsed.verification.missingClipIds.length > 0) {
+    parsed.verification.warning = "One or more requested clip ids are not present after the operation.";
+  }
+  return JSON.stringify(parsed);
 }

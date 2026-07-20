@@ -592,7 +592,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "apply_effect",
     description:
-      "Add a visual effect to one or more clips. Effects include: gaussianBlur, motionBlur, glow, bloom, vignette, duotone, chromaticAberration, rgbSplit, pixelate, filmGrain, and many more. See VideoFlow effect catalog.",
+      "Add, update, remove, reorder, or enable/disable visual effects on clips. Use the VideoFlow effect catalog and inspect get_timeline after editing.",
     input_schema: {
       type: "object",
       properties: {
@@ -601,14 +601,40 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           items: { type: "string" },
           description: "Clip ids to apply effect to.",
         },
-        effect: { type: "string", description: "Effect name (e.g. 'gaussianBlur', 'vignette')." },
+        effect: { type: "string", description: "Effect name when adding (e.g. 'gaussianBlur', 'vignette')." },
+        operation: { type: "string", enum: ["add", "update", "remove", "reorder", "enable", "disable", "clear"], description: "Optional operation; defaults to add." },
+        effectIndex: { type: "integer", description: "Effect index for update/remove/enable/disable." },
+        toIndex: { type: "integer", description: "Destination index for reorder." },
         params: {
           type: "object",
           description: "Optional — effect-specific parameters.",
         },
       },
-      required: ["clipIds", "effect"],
+      required: ["clipIds"],
     },
+  },
+  {
+    name: "set_transition",
+    description:
+      "Set, update, or clear a VideoFlow transition at a clip's in or out edge. Use list_transitions first when the preset name is unknown. Verify the transition in get_timeline afterward.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clipIds: { type: "array", items: { type: "string" }, description: "Clip ids to update." },
+        edge: { type: "string", enum: ["in", "out"], description: "Clip edge." },
+        transition: { type: "string", description: "Registered VideoFlow transition preset." },
+        duration: { type: "number", description: "Duration in seconds." },
+        easing: { type: "string", description: "Optional easing name." },
+        params: { type: "object", description: "Optional transition parameters." },
+        clear: { type: "boolean", description: "Clear the transition at the selected edge." },
+      },
+      required: ["clipIds", "edge"],
+    },
+  },
+  {
+    name: "list_transitions",
+    description: "List registered VideoFlow transition presets and their supported layer categories and parameters.",
+    input_schema: { type: "object", properties: {}, required: [] },
   },
 
   // ─── AUDIO ANALYSIS (3) ──────────────────────────────────────────

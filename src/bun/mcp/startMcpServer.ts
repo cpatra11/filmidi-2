@@ -397,15 +397,42 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "apply_effect",
-    description: "Add, reorder, or remove effects on a clip.",
+    description: "Add, update, remove, reorder, or enable/disable effects on one or more clips.",
     inputSchema: {
       type: "object", properties: {
-        clipId: { type: "string" },
+        clipIds: { type: "array", items: { type: "string" } },
+        clipId: { type: "string", description: "Legacy single-clip form." },
+        effect: { type: "string" },
+        operation: { type: "string", enum: ["add", "update", "remove", "reorder", "enable", "disable", "clear"] },
+        effectIndex: { type: "integer" },
+        toIndex: { type: "integer" },
+        params: { type: "object" },
         add: { type: "array", items: { type: "object", properties: { effectType: { type: "string" }, params: { type: "object" } } } },
         remove: { type: "array", items: { type: "string" } },
         reorder: { type: "array", items: { type: "string" } },
-      }, required: ["clipId"],
+      }, required: [],
     },
+  },
+  {
+    name: "set_transition",
+    description: "Set, update, or clear a transition at the in or out edge of clips.",
+    inputSchema: {
+      type: "object", properties: {
+        clipIds: { type: "array", items: { type: "string" } },
+        clipId: { type: "string", description: "Legacy single-clip form." },
+        edge: { type: "string", enum: ["in", "out"] },
+        transition: { type: "string" },
+        duration: { type: "number" },
+        easing: { type: "string" },
+        params: { type: "object" },
+        clear: { type: "boolean" },
+      }, required: ["edge"],
+    },
+  },
+  {
+    name: "list_transitions",
+    description: "List registered VideoFlow transition presets.",
+    inputSchema: { type: "object", properties: {} },
   },
 
   // ─── Audio Analysis (3) ───

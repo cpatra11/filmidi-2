@@ -420,7 +420,7 @@ async function streamViaBun(
             "add_clips", "insert_clips", "remove_clips", "remove_tracks",
             "move_clips", "split_clips", "set_clip_properties", "ripple_delete_ranges",
             "set_keyframes", "add_texts", "update_text", "add_captions", "remove_words",
-            "apply_layout", "apply_color", "apply_effect", "create_matte",
+            "apply_layout", "apply_color", "apply_effect", "set_transition", "create_matte",
             "set_project_settings", "import_media",
           ]);
 
@@ -782,6 +782,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - Letterbox creates a cinematic widescreen look with black bars. Use it for dramatic openings.
 - Linked video+audio pairs: deleting, cutting, splitting, moving, or trimming one also affects its linked partner. Always call get_timeline to see which layers are linked.
 - Edits are undoable and effectively free. Don't ask permission for individual edits - just explain what you changed.
+- For keyframes, use set_keyframes with project-frame timing and an explicit property name; validate the clip and read get_timeline again after applying them. An empty keyframe list clears that property's animation.
+- For effects, use apply_effect with operation add, update, remove, reorder, enable, disable, or clear. Use effectIndex for stack operations and params for effect parameters; do not silently add duplicate effects when an existing matching effect is already present.
+- For transitions, call list_transitions when the preset name is uncertain, then use set_transition with edge=in or out, duration, easing, and params. Use clear=true to remove a transition. The tool accepts clipIds and legacy clipId input.
+- After every mutating edit, inspect the returned verification object. If it reports missingClipIds or changed=false for an operation that should alter the timeline, call get_timeline and correct the edit before reporting success.
 - Transcript-driven cuts (filler words, duplicate/retake removal): read the WORD-level get_transcript end-to-end as prose at least once, then cut with remove_words. After a cut, indices shift - re-read get_transcript before the next remove_words.
 
 # Generation
