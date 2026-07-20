@@ -747,6 +747,20 @@ export async function startMcpServer(
       return;
     }
 
+    // A normal browser visit sends Accept: text/html and is not an MCP
+    // session. Return useful diagnostics instead of the SDK's SSE error.
+    const accept = nodeReq.headers.accept ?? "";
+    if (nodeReq.method === "GET" && !accept.includes("text/event-stream")) {
+      nodeRes.writeHead(200, { ...corsHeaders, "Content-Type": "application/json" });
+      nodeRes.end(JSON.stringify({
+        service: "filmidi-mcp",
+        status: "ready",
+        endpoint: `http://127.0.0.1:${MCP_PORT}${MCP_ENDPOINT}`,
+        note: "Use an MCP client or JSON-RPC POST request; this endpoint is not a web page.",
+      }));
+      return;
+    }
+
     try {
       const rawSessionId = nodeReq.headers["mcp-session-id"];
       const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
