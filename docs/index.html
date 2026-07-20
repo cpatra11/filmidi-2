@@ -26,6 +26,7 @@
       .button { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 6px; border: 1px solid var(--line); text-decoration: none; font-size: 13px; font-weight: 650; }
       .button.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
       .button:hover { transform: translateY(-1px); }
+      .download-note { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
       .signal { border-left: 2px solid var(--accent); padding: 4px 0 4px 22px; color: var(--muted); }
       .signal strong { display: block; margin-bottom: 8px; color: var(--text); font-size: 18px; }
       section { border-top: 1px solid var(--line); padding: 58px 0; }
@@ -61,7 +62,8 @@
         <div>
           <h1>Video editing with an agent that understands the timeline.</h1>
           <p class="lede">Filmidi is an AI-native desktop editor for turning natural-language ideas into precise, inspectable edits across video, audio, images, text, captions, effects, and transitions.</p>
-          <div class="actions"><a class="button primary" href="https://github.com/cpatra11/filmidi-q">View on GitHub</a><a class="button" href="https://github.com/cpatra11/filmidi-q#development">Run locally</a></div>
+          <div class="actions"><a class="button primary" href="https://github.com/cpatra11/filmidi-q/releases/latest/download/Filmidi-v0.0.1-macos-arm64.dmg">Download for Mac</a><a class="button" href="https://github.com/cpatra11/filmidi-q/releases/latest">View releases</a><a class="button" href="https://github.com/cpatra11/filmidi-q#development">Run locally</a></div>
+          <p class="download-note">Apple Silicon DMG. Add your Qwen Cloud API key from the welcome screen or Settings after installation.</p>
         </div>
         <div class="signal"><strong>A timeline-first editor</strong>Every agent action is grounded in the open project state. Inspect the edit, place the result on a real track, and keep the change available for undo, saving, and export.</div>
       </section>

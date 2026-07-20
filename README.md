@@ -2,6 +2,14 @@
 
 Filmidi is an AI-native desktop video editor built around a precise, multi-track timeline. It combines direct editing controls with an agent that can inspect the current project and use editing tools to carry out requests such as importing media, arranging clips, trimming, ripple editing, transcription, captions, asset placement, and export.
 
+<p>
+  <a href="https://github.com/cpatra11/filmidi-q/releases/latest/download/Filmidi-v0.0.1-macos-arm64.dmg"><strong>Download for Mac (Apple Silicon)</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/cpatra11/filmidi-q/releases/latest">View all releases</a>
+</p>
+
+The downloadable build is a macOS Apple Silicon DMG. Add your Qwen Cloud API key from the welcome screen or Settings after installation.
+
 ## What It Includes
 
 - Multi-track video, audio, image, and text layers with linked audio/video clips.
