@@ -3,6 +3,13 @@ import { findAvailableTrack } from "@/lib/timelineMove";
 
 const { addLayerCommand } = commands;
 
+function forceLayerTrack(commit: any, layerId: string, track: number) {
+  return commit((draft: any) => {
+    const layer = draft.layers?.find((item: any) => item.id === layerId);
+    if (layer) layer.track = track;
+  }, { label: "Place layer on free track" });
+}
+
 export async function addTextLayerAtPlayhead(text = "Text"): Promise<void> {
   const editor = useEditorStore.getState();
   const fps = editor.video.fps || 30;
@@ -27,6 +34,7 @@ export async function addTextLayerAtPlayhead(text = "Text"): Promise<void> {
   });
 
   if (!layerId) return;
+  await forceLayerTrack(editor.commit, layerId, track);
   editor.selectLayers([layerId]);
   editor.bridge?.seek(editor.currentFrame);
 }
@@ -54,6 +62,7 @@ export async function addMatteLayerAtPlayhead(shapeType: string = "rectangle"): 
   });
 
   if (!layerId) return;
+  await forceLayerTrack(editor.commit, layerId, track);
   editor.selectLayers([layerId]);
   editor.bridge?.seek(editor.currentFrame);
 }

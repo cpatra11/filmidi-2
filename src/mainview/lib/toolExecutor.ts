@@ -1581,6 +1581,7 @@ export async function executeTool(
               ],
             },
           });
+          await setTrack(commit, layerId, track);
           results.push(layerId);
         }
         refreshPreview();
@@ -1615,6 +1616,7 @@ export async function executeTool(
             },
             extraSettings: { shapeType: (shape.shapeType as string) ?? "rectangle" },
           });
+          await setTrack(commit, layerId, track);
           results.push(layerId);
         }
         refreshPreview();
