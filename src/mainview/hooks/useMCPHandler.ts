@@ -21,14 +21,16 @@ interface MCPToolResultMessage {
  */
 export function useMCPHandler() {
   useEffect(() => {
-    const eb = (window as any).__electrobun;
-    if (!eb) return;
+    let cleanup: (() => void) | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
-    const bridge = (window as any).__electrobunBunBridge;
-    if (!bridge) return;
+    const attach = () => {
+      const eb = (window as any).__electrobun;
+      const bridge = (window as any).__electrobunBunBridge;
+      if (!eb || !bridge || cleanup) return;
 
-    const prev = eb.receiveMessageFromBun;
-    eb.receiveMessageFromBun = (msg: unknown) => {
+      const prev = eb.receiveMessageFromBun;
+      eb.receiveMessageFromBun = (msg: unknown) => {
       try {
         const data = typeof msg === "string" ? JSON.parse(msg) : msg;
 
@@ -73,10 +75,19 @@ export function useMCPHandler() {
       if (prev) {
         prev(msg);
       }
+      };
+
+      cleanup = () => {
+        eb.receiveMessageFromBun = prev;
+      };
     };
 
+    attach();
+    if (!cleanup) interval = setInterval(attach, 50);
+
     return () => {
-      eb.receiveMessageFromBun = prev;
+      if (interval) clearInterval(interval);
+      cleanup?.();
     };
   }, []);
 }

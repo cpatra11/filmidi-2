@@ -755,8 +755,12 @@ export async function startMcpServer(
     await webResponseToNode(webRes, nodeRes, corsHeaders);
   });
 
-  server.listen(MCP_PORT, "127.0.0.1", () => {
-    console.log(`[MCP] Server running on http://127.0.0.1:${MCP_PORT}${MCP_ENDPOINT}`);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(MCP_PORT, "127.0.0.1", () => {
+      console.log(`[MCP] Server running on http://127.0.0.1:${MCP_PORT}${MCP_ENDPOINT}`);
+      resolve();
+    });
   });
 }
 

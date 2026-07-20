@@ -868,11 +868,12 @@ function callToolOnRenderer(toolName: string, args: Record<string, unknown>): Pr
   });
 }
 
-// Start the MCP server (disabled — Bun v1.3.13 C++ crash in Electrobun)
-// import { startMcpServer } from "./mcp/startMcpServer";
-// startMcpServer(callToolOnRenderer).catch((err) => {
-//   console.error("[MCP] Failed to start server:", err);
-// });
+// Start MCP after the renderer bridge exists. The server uses node:http rather
+// than Bun.serve so a transport failure cannot take down the editor process.
+void import("./mcp/startMcpServer")
+  .then(({ startMcpServer }) => startMcpServer(callToolOnRenderer))
+  .then(() => console.log("[MCP] Server startup completed"))
+  .catch((err) => console.error("[MCP] Failed to start server:", err));
 
 // ─── Native Menu Bar ───
 

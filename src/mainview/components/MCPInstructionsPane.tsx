@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Copy, Check, ChevronDown, ChevronRight } from "lucide-react";
 
-const MCP_PORT = 19789;
+const MCP_PORT = 19790;
 const MCP_URL = `http://127.0.0.1:${MCP_PORT}/mcp`;
 
 function CodeBlock({ code, label }: { code: string; label?: string }) {
@@ -65,6 +65,23 @@ function CollapsibleSection({
 }
 
 export function MCPInstructionsPane() {
+  const [status, setStatus] = useState<"checking" | "online" | "offline">("checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const response = await fetch(`http://127.0.0.1:${MCP_PORT}/health`, { cache: "no-store" });
+        if (!cancelled) setStatus(response.ok ? "online" : "offline");
+      } catch {
+        if (!cancelled) setStatus("offline");
+      }
+    };
+    void check();
+    const timer = setInterval(check, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       <div>
@@ -79,6 +96,10 @@ export function MCPInstructionsPane() {
       <div>
         <h3 className="text-sm font-medium text-white/80 mb-2">Server URL</h3>
         <CodeBlock code={MCP_URL} />
+        <div className="mt-2 flex items-center gap-2 text-xs text-white/50">
+          <span className={`h-2 w-2 rounded-full ${status === "online" ? "bg-emerald-400" : status === "offline" ? "bg-red-400" : "bg-yellow-400"}`} />
+          {status === "online" ? "MCP server is running" : status === "offline" ? "MCP server is not reachable" : "Checking MCP server..."}
+        </div>
       </div>
 
       {/* Cursor */}
