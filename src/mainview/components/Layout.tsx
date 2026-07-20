@@ -73,7 +73,7 @@ function HHandle() {
  * Each VideoFlow component gets its own vf-editor ancestor for CSS scoping.
  */
 export function Layout() {
-  const { showAgentPanel, showMediaPanel, showInspector } = useAppStore();
+  const { showAgentPanel, showMediaPanel, showInspector, showGenerationPanel } = useAppStore();
   const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
   const [contextTarget, setContextTarget] = useState<ContextTarget>("empty");
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -499,13 +499,17 @@ export function Layout() {
                     <Panel defaultSize="27%" minSize="12%" maxSize="40%" id="panel-media">
                       <MediaContextMenu onAction={handleMediaAction}>
                         <div className="h-full flex flex-col overflow-hidden bg-[var(--vf-panel)]" data-tour="media-panel">
-                          <div className="min-h-0 overflow-auto flex-1">
+                          <div className={`${showGenerationPanel ? "h-1/2" : "h-full"} min-h-0 overflow-auto`}>
                             <MediaPanel />
                           </div>
-                          <div className="h-px bg-[var(--vf-panel-border)] shrink-0" />
-                          <div className="min-h-0 overflow-auto flex-1">
-                            <GenerationPanel />
-                          </div>
+                          {showGenerationPanel && (
+                            <>
+                              <div className="h-px bg-[var(--vf-panel-border)] shrink-0" />
+                              <div className="h-1/2 min-h-0 overflow-hidden">
+                                <GenerationPanel />
+                              </div>
+                            </>
+                          )}
                         </div>
                       </MediaContextMenu>
                     </Panel>

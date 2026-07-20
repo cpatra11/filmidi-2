@@ -55,7 +55,10 @@ export const useAppStore = create<AppState>((set) => ({
 
   showGenerationPanel: false,
   toggleGenerationPanel: () =>
-    set((s) => ({ showGenerationPanel: !s.showGenerationPanel })),
+    set((s) => ({
+      showGenerationPanel: !s.showGenerationPanel,
+      showMediaPanel: s.showGenerationPanel ? s.showMediaPanel : true,
+    })),
 
   cropEditingActive: false,
   toggleCropEditing: () => set((s) => ({ cropEditingActive: !s.cropEditingActive })),
