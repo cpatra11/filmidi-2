@@ -674,42 +674,42 @@ function jsonSchemaToZodRawShape(schema: Record<string, unknown>): Record<string
 export async function startMcpServer(
   callToolOnRenderer: (name: string, args: Record<string, unknown>) => Promise<string>,
 ): Promise<void> {
-  const mcpServer = new McpServer({
-    name: "Filmidi Editor",
-    version: "1.0.0",
-  });
+  type Session = {
+    server: McpServer;
+    transport: WebStandardStreamableHTTPServerTransport;
+  };
+  const sessions = new Map<string, Session>();
 
-  // Register all tools
-  for (const tool of TOOLS) {
-    mcpServer.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        inputSchema: jsonSchemaToZodRawShape(tool.inputSchema),
-      },
-      async (args: Record<string, unknown>) => {
-        try {
-          const resultStr = await callToolOnRenderer(tool.name, args);
-          return {
-            content: [{ type: "text" as const, text: resultStr }],
-          };
-        } catch (err) {
-          return {
-            content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }],
-            isError: true,
-          };
-        }
-      },
-    );
-  }
+  const createSession = async (): Promise<Session> => {
+    const server = new McpServer({ name: "Filmidi Editor", version: "1.0.0" });
+    for (const tool of TOOLS) {
+      server.registerTool(
+        tool.name,
+        {
+          description: tool.description,
+          inputSchema: jsonSchemaToZodRawShape(tool.inputSchema),
+        },
+        async (args: Record<string, unknown>) => {
+          try {
+            const resultStr = await callToolOnRenderer(tool.name, args);
+            return { content: [{ type: "text" as const, text: resultStr }] };
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }],
+              isError: true,
+            };
+          }
+        },
+      );
+    }
 
-  // Create Streamable HTTP transport
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => crypto.randomUUID(),
-    enableJsonResponse: true,
-  });
-
-  await mcpServer.connect(transport);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+    return { server, transport };
+  };
 
   // Start HTTP server (using node:http to avoid Bun.serve C++ crash)
   const server = createServer(async (nodeReq: IncomingMessage, nodeRes: ServerResponse) => {
@@ -747,12 +747,32 @@ export async function startMcpServer(
       return;
     }
 
-    // Convert Node.js IncomingMessage to Web Request
-    const webReq = await incomingToWebRequest(nodeReq, url);
-    const webRes = await transport.handleRequest(webReq);
+    try {
+      const rawSessionId = nodeReq.headers["mcp-session-id"];
+      const sessionId = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
+      let session = sessionId ? sessions.get(sessionId) : undefined;
 
-    // Convert Web Response to Node.js ServerResponse
-    await webResponseToNode(webRes, nodeRes, corsHeaders);
+      if (sessionId && !session) {
+        nodeRes.writeHead(404, corsHeaders);
+        nodeRes.end("Unknown MCP session");
+        return;
+      }
+      if (!session) session = await createSession();
+
+      // Each MCP initialize request gets its own transport. Reusing one
+      // transport across Codex reconnects causes "Server already initialized".
+      const webReq = await incomingToWebRequest(nodeReq, url);
+      const webRes = await session.transport.handleRequest(webReq);
+      const responseSessionId = webRes.headers.get("mcp-session-id") ?? sessionId;
+      if (responseSessionId) sessions.set(responseSessionId, session);
+      if (nodeReq.method === "DELETE" && sessionId) sessions.delete(sessionId);
+
+      await webResponseToNode(webRes, nodeRes, corsHeaders);
+    } catch (error) {
+      console.error("[MCP] Request failed:", error);
+      if (!nodeRes.headersSent) nodeRes.writeHead(500, corsHeaders);
+      nodeRes.end("MCP request failed");
+    }
   });
 
   await new Promise<void>((resolve, reject) => {
