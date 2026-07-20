@@ -113,7 +113,7 @@ export function Layout() {
             setLayerTrack(editor.commit, layerId, videoTrack);
             await cmds.setSettingCommand(editor.commit, layerId, "name", clipName);
             await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
-            await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
+            await cmds.setPropertyCommand(editor.commit, layerId, "mute", false);
           } else {
             const track = findAvailableTrack(
               useEditorStore.getState().video.layers ?? [],
@@ -397,7 +397,7 @@ export function Layout() {
           setLayerTrack(editor.commit, layerId, videoTrack);
           await cmds.setSettingCommand(editor.commit, layerId, "name", clipName);
           await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
-          await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
+          await cmds.setPropertyCommand(editor.commit, layerId, "mute", false);
         } else {
           const track = findAvailableTrack(
             useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration, trackAtDrop(type === "audio" ? "audio" : "video"),
@@ -453,7 +453,7 @@ export function Layout() {
           setLayerTrack(editor.commit, videoLayerId, videoTrack);
           await cmds.setSettingCommand(editor.commit, videoLayerId, "name", clipName);
           await setLayerLinkId(editor.commit, videoLayerId, linkId, setSettingCommand);
-          await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
+          await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", false);
         }
       } else {
         const track = findAvailableTrack(
@@ -558,7 +558,7 @@ export function Layout() {
                                 setLayerTrack(editor.commit, layerId2, videoTrack);
                                 await cmds.setSettingCommand(editor.commit, layerId2, "name", clipName);
                                 await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);
-                                await cmds.setPropertyCommand(editor.commit, layerId2, "mute", true);
+                                await cmds.setPropertyCommand(editor.commit, layerId2, "mute", false);
                               } else {
                                 const track = findAvailableTrack(useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration);
                                 const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });

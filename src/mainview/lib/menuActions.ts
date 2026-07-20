@@ -157,7 +157,9 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       setLayerTrack(editor.commit, layerId, videoTrack);
       await cmds.setSettingCommand(editor.commit, layerId, "name", clipName);
       await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
-      await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
+      // Keep the source video audible as a fallback for MOV audio codecs that
+      // the standalone audio renderer cannot decode.
+      await cmds.setPropertyCommand(editor.commit, layerId, "mute", false);
     } else {
       const track = findAvailableTrack(useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration);
       const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
