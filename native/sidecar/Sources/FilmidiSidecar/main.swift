@@ -312,11 +312,17 @@ func detectBeats(_ payload: JSONObject) async throws -> JSONObject {
 
 func extractAudio(_ payload: JSONObject) async throws -> JSONObject {
   let rawUrl = payload["sourceUrl"] as? String ?? payload["url"] as? String
-  guard let rawUrl else {
+  let sourceURL: URL
+  if let base64 = payload["base64Data"] as? String,
+     let data = Data(base64Encoded: base64) {
+    let ext = (payload["sourceExtension"] as? String ?? "mov").trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent("filmidi-import-\(UUID().uuidString).\(ext)")
+    try data.write(to: sourceURL, options: .atomic)
+  } else if let rawUrl {
+    sourceURL = try await resolveSourceURL(rawUrl)
+  } else {
     throw NSError(domain: "FilmidiSidecar", code: 8, userInfo: [NSLocalizedDescriptionKey: "sourceUrl is required"])
   }
-
-  let sourceURL = try await resolveSourceURL(rawUrl)
   let asset = AVURLAsset(url: sourceURL)
   guard asset.tracks(withMediaType: .audio).isEmpty == false else {
     throw NSError(domain: "FilmidiSidecar", code: 9, userInfo: [NSLocalizedDescriptionKey: "No audio track found"])
@@ -328,10 +334,15 @@ func extractAudio(_ payload: JSONObject) async throws -> JSONObject {
   }
   try await export.export(to: outputURL, as: .m4a)
 
-  return [
+  var result: JSONObject = [
     "audioUrl": outputURL.absoluteString,
     "outputUrl": outputURL.absoluteString,
   ]
+  if payload["returnDataUrl"] as? Bool == true {
+    let audioData = try Data(contentsOf: outputURL)
+    result["dataUrl"] = "data:audio/mp4;base64,\(audioData.base64EncodedString())"
+  }
+  return result
 }
 
 func sampleFrames(_ payload: JSONObject) async throws -> JSONObject {

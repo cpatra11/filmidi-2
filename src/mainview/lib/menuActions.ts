@@ -11,6 +11,7 @@ import { dbChooseProjectLocation, dbWriteProjectFile } from "./dbIPC";
 import { serializeFilmidiPackage } from "./exportHelpers";
 import { getMediaDuration } from "./mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
+import { extractMovAudio } from "@/lib/movAudio";
 
 const { addLayerCommand } = commands;
 
@@ -129,6 +130,7 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
     const duration = await getMediaDuration(file, type);
     const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const url = URL.createObjectURL(file);
+    const audioUrl = type === "video" ? await extractMovAudio(file) : null;
     mediaStore.addAsset({
       id,
       name: file.name,
@@ -147,7 +149,7 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       const clipName = getDisplayName(file);
       const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, duration);
       const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration);
-      const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
+      const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl ?? url, sourceDuration: duration, startTime });
       setLayerTrack(editor.commit, audioLayerId, audioTrack);
       await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
       await cmds.setPropertyCommand(editor.commit, audioLayerId, "mute", false);
