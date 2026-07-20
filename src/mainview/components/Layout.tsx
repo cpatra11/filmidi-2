@@ -28,6 +28,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { getMediaDuration } from "@/lib/mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
+import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead } from "@/lib/timelineAddActions";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
@@ -50,70 +51,6 @@ function setLayerTrack(commit: any, layerId: string, track: number) {
     const l = draft.layers?.find((x: any) => x.id === layerId);
     if (l) l.track = normalizeTrackForKind(track, l.type === "audio" ? "audio" : "video");
   }, { label: "Set track" });
-}
-
-async function addTextLayerAtPlayhead() {
-  const editor = useEditorStore.getState();
-  const fps = editor.video.fps || 30;
-  const text = window.prompt("Text to add:", "Text");
-  if (!text || !text.trim()) return;
-
-  const layerId = await addLayerCommand(editor.commit, {
-    type: "text",
-    startTime: editor.currentFrame / fps,
-    sourceDuration: 3,
-    properties: {
-      text: text.trim(),
-      fontSize: 0.12,
-      fontFamily: "Inter",
-      color: "#ffffff",
-      fontWeight: "700",
-      textAlign: "center",
-      position: [0.5, 0.5],
-    },
-  });
-
-  if (layerId) {
-    const track = findAvailableTrack(
-      editor.video.layers ?? [],
-      "video",
-      editor.currentFrame / fps,
-      3,
-    );
-    setLayerTrack(editor.commit, layerId, track);
-    editor.selectLayers([layerId]);
-    editor.bridge?.seek(editor.currentFrame);
-  }
-}
-
-async function addMatteLayerAtPlayhead() {
-  const editor = useEditorStore.getState();
-  const fps = editor.video.fps || 30;
-  const hex = (window.prompt("Matte color (hex):", "#000000") || "#000000").trim() || "#000000";
-  const layerId = await addLayerCommand(editor.commit, {
-    type: "shape",
-    startTime: editor.currentFrame / fps,
-    sourceDuration: editor.video.duration || 5,
-    properties: {
-      fill: hex,
-      width: "100%",
-      height: "100%",
-      position: [0.5, 0.5],
-    },
-    extraSettings: { shapeType: "rectangle" },
-  });
-
-  if (layerId) {
-    const track = findAvailableTrack(
-      editor.video.layers ?? [],
-      "video",
-      editor.currentFrame / fps,
-      editor.video.duration || 5,
-    );
-    setLayerTrack(editor.commit, layerId, track);
-    editor.selectLayers([layerId]);
-    editor.bridge?.seek(editor.currentFrame);
-  }
 }
 
 function VHandle() {

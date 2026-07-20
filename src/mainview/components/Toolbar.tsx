@@ -25,6 +25,10 @@ import {
   Home,
   Magnet,
   Flag,
+  Type,
+  Square,
+  Plus,
+  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +43,8 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
 import { splitAtPlayhead, trimSelectedToPlayhead } from "@/hooks/useKeyboardShortcuts";
+import { importMediaFromPicker } from "@/lib/menuActions";
+import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead, addVideoTrack } from "@/lib/timelineAddActions";
 
 // Expand layer IDs to include linked partners
 function expandToPartners(ids: string[]): string[] {
@@ -125,6 +131,14 @@ export function Toolbar() {
       <ToolButton icon={SplitSquareVertical} label="Split" shortcut="S" onClick={splitAtPlayhead} />
       <ToolButton icon={ChevronLeft} label="Split Left" shortcut="⌥S" onClick={() => trimSelectedToPlayhead("left")} />
       <ToolButton icon={ChevronRight} label="Split Right" shortcut="⌥⇧S" onClick={() => trimSelectedToPlayhead("right")} />
+
+      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+
+      {/* Add timeline layers at the playhead */}
+      <ToolButton icon={Type} label="Add Text" onClick={() => { void addTextLayerAtPlayhead(); }} />
+      <ToolButton icon={Square} label="Add Matte" onClick={() => { void addMatteLayerAtPlayhead(); }} />
+      <ToolButton icon={Plus} label="Add Video Track" onClick={addVideoTrack} />
+      <ToolButton icon={Upload} label="Import Media" shortcut="⌘I" onClick={() => { void importMediaFromPicker(); }} />
 
       <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
 
