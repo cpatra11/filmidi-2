@@ -106,6 +106,8 @@ export function Layout() {
             const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
             setLayerTrack(editor.commit, audioLayerId, audioTrack);
             await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+            await cmds.setPropertyCommand(editor.commit, audioLayerId, "mute", false);
+            await cmds.setPropertyCommand(editor.commit, audioLayerId, "volume", 1);
             await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
             const layerId = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
             setLayerTrack(editor.commit, layerId, videoTrack);
@@ -440,6 +442,8 @@ export function Layout() {
         if (audioLayerId) {
           setLayerTrack(editor.commit, audioLayerId, audioTrack);
           await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+          await cmds.setPropertyCommand(editor.commit, audioLayerId, "mute", false);
+          await cmds.setPropertyCommand(editor.commit, audioLayerId, "volume", 1);
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
         }
         const videoLayerId = await addLayerCommand(editor.commit, {

@@ -150,6 +150,8 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
       setLayerTrack(editor.commit, audioLayerId, audioTrack);
       await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
+      await cmds.setPropertyCommand(editor.commit, audioLayerId, "mute", false);
+      await cmds.setPropertyCommand(editor.commit, audioLayerId, "volume", 1);
       await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
       const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
       setLayerTrack(editor.commit, layerId, videoTrack);

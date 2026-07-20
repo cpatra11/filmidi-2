@@ -10,6 +10,16 @@ export function VideoFlowInit({ video }: { video: VideoJSON }) {
   useEffect(() => {
     const store = useEditorStore.getState();
     store.loadVideo(video);
+    // Older projects may have audio layers without explicit playback
+    // properties. Give those layers an audible default when reopened.
+    store.commit((draft: any) => {
+      for (const layer of draft.layers ?? []) {
+        if (layer.type !== "audio") continue;
+        layer.settings ??= {};
+        if (layer.settings.mute === undefined) layer.settings.mute = false;
+        if (layer.settings.volume === undefined) layer.settings.volume = 1;
+      }
+    }, { label: "Restore audio playback" });
 
     // Project loading and Preview mount are asynchronous. If the project is
     // opened while Preview is still mounting, the first setVideo call is lost
