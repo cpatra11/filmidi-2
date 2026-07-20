@@ -5,8 +5,9 @@ import { useAccountStore } from "@/store/useAccountStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { Button } from "@/components/ui/button";
-import { Film, Plus, Search, Trash2, MoreHorizontal, FolderOpen, User } from "lucide-react";
+import { Film, Plus, Search, Trash2, MoreHorizontal, FolderOpen, User, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SettingsDialog } from "./SettingsDialog";
 
 function formatRelativeDate(timestamp: number): string {
   const now = Date.now();
@@ -305,6 +306,14 @@ export function HomeView() {
               />
             </div>
             <Button
+              variant="outline"
+              onClick={() => useSettingsStore.getState().openTab("agent")}
+              className="border-white/15 text-white/75 hover:bg-white/10 hover:text-white"
+            >
+              <KeyRound className="w-4 h-4 mr-2" />
+              Add API Key
+            </Button>
+            <Button
               onClick={handleNewProject}
               className="bg-white text-black hover:bg-white/90"
             >
@@ -398,6 +407,7 @@ export function HomeView() {
         onOpenChange={(open) => useProjectStore.getState().setShowNewProjectDialog(open)}
         onCreate={handleCreateProject}
       />
+      <SettingsDialog />
     </div>
   );
 }
