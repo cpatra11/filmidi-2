@@ -1,9 +1,10 @@
-import { BrowserWindow, Updater } from "electrobun/bun";
+import { BrowserWindow, Updater, Utils } from "electrobun/bun";
 import Electrobun from "electrobun/bun";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
+import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftSidecar";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -97,8 +98,10 @@ db.run(`CREATE TABLE IF NOT EXISTS projects (
   fps REAL DEFAULT 30,
   created_at INTEGER NOT NULL,
   last_opened_at INTEGER NOT NULL,
-  thumbnail TEXT
+  thumbnail TEXT,
+  file_path TEXT
   )`);
+try { db.run("ALTER TABLE projects ADD COLUMN file_path TEXT"); } catch {}
 
 const TRANSCRIPT_LOG_DIR = join(import.meta.dir, "../../log");
 const TRANSCRIPT_LOG_FILE = join(TRANSCRIPT_LOG_DIR, "transcript log.txt");
@@ -172,6 +175,7 @@ function projectRowToEntry(row: any): any {
     createdAt: row.created_at,
     lastOpenedAt: row.last_opened_at,
     thumbnailUrl: row.thumbnail ?? undefined,
+    filePath: row.file_path ?? undefined,
   };
 }
 
@@ -255,9 +259,9 @@ transport.registerHandler((msg: any) => {
       const { id, name, width, height, fps } = msg;
       if (!id) { transport.send({ type: "db-save-project-result", ok: false, error: "Missing id" }); break; }
       const now = Date.now();
-      db.run(`INSERT OR REPLACE INTO projects (id, name, width, height, fps, created_at, last_opened_at)
-        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?)`,
-        sqlParams([id, name ?? "Untitled", width ?? 1920, height ?? 1080, fps ?? 30, id, now, now]));
+      db.run(`INSERT OR REPLACE INTO projects (id, name, width, height, fps, created_at, last_opened_at, file_path)
+        VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM projects WHERE id = ?), ?), ?, COALESCE(?, (SELECT file_path FROM projects WHERE id = ?)))`,
+        sqlParams([id, name ?? "Untitled", width ?? 1920, height ?? 1080, fps ?? 30, id, now, now, msg.filePath, id]));
       transport.send({ type: "db-save-project-result", ok: true });
       break;
     }
@@ -309,6 +313,43 @@ transport.registerHandler((msg: any) => {
       transport.send({ type: "db-delete-project-data-result", ok: true });
       break;
     }
+    case "db-project-storage-info": {
+      transport.send({
+        type: "db-project-storage-info-result",
+        path: join(DB_DIR, "projects.db"),
+        kind: "SQLite project database",
+      });
+      break;
+    }
+    case "project-choose-location": {
+      void Utils.openFileDialog({
+          startingFolder: typeof msg.startingFolder === "string" && msg.startingFolder ? msg.startingFolder : "~/Documents",
+          allowedFileTypes: "*",
+          canChooseFiles: false,
+          canChooseDirectory: true,
+          allowsMultipleSelection: false,
+        }).then((paths) => {
+        transport.send({ type: "project-choose-location-result", path: paths[0] ?? null });
+        }).catch((error) => {
+        transport.send({ type: "project-choose-location-result", path: null, error: String(error) });
+        });
+      break;
+    }
+    case "project-write-file": {
+      try {
+        const directory = String(msg.directory ?? "");
+        const fileName = String(msg.fileName ?? "");
+        const contents = String(msg.contents ?? "");
+        if (!directory || !fileName) throw new Error("Project location and file name are required");
+        mkdirSync(directory, { recursive: true });
+        const filePath = join(directory, fileName);
+        writeFileSync(filePath, contents, "utf8");
+        transport.send({ type: "project-write-file-result", ok: true, path: filePath });
+      } catch (error) {
+        transport.send({ type: "project-write-file-result", ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      break;
+    }
 
     // ─── Chat sessions ────────────────────────────────────────
     case "db-save-chat-sessions": {
@@ -344,6 +385,32 @@ transport.registerHandler((msg: any) => {
     case "tool-result": {
       // Resolve pending tool execution from agent loop
       resolveToolResult(msg.toolResultId, msg.result, msg.isError);
+      break;
+    }
+
+    case "native-media-request": {
+      (async () => {
+        try {
+          const { task, payload, requestId } = msg;
+          const { backend, result } = await requestNativeMediaThroughSidecar(task, payload ?? {});
+          transport.send({
+            type: "native-media-response",
+            requestId,
+            backend,
+            ok: backend === "swift-sidecar" ? !(result?.error) : false,
+            result,
+            error: result?.error ?? null,
+          });
+        } catch (error) {
+          transport.send({
+            type: "native-media-response",
+            requestId: msg.requestId,
+            backend: "bun-fallback",
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
       break;
     }
 
@@ -451,19 +518,31 @@ transport.registerHandler((msg: any) => {
       (async () => {
         try {
           const { audioUrl, apiKey, requestId } = msg;
-          if (!audioUrl || !apiKey || !requestId) {
+          const effectiveApiKey = apiKey || secureStore.get("qwen_api_key");
+          if (!audioUrl || !requestId) {
             writeTranscriptLog("error", "transcribe-audio", "Missing required fields", {
               hasAudioUrl: !!audioUrl,
-              hasApiKey: !!apiKey,
+              hasApiKey: !!effectiveApiKey,
               hasRequestId: !!requestId,
             });
-            transport.send({ type: "transcription-result", requestId, error: "Missing audioUrl, apiKey, or requestId" });
+            transport.send({ type: "transcription-result", requestId, error: "Missing audioUrl or requestId" });
+            return;
+          }
+
+          if (!effectiveApiKey) {
+            writeTranscriptLog("error", "transcribe-audio", "Missing API key", {
+              requestId,
+              hasApiKey: !!apiKey,
+              hasStoredKey: !!secureStore.get("qwen_api_key"),
+            });
+            transport.send({ type: "transcription-result", requestId, error: "No Qwen API key configured. Add one in Settings > Agent." });
             return;
           }
 
           writeTranscriptLog("info", "transcribe-audio", "start", {
             requestId,
             audioUrl: audioUrl.slice(0, 120),
+            hasApiKey: true,
           });
 
           const ASR_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/asr/transcription";
@@ -474,7 +553,7 @@ transport.registerHandler((msg: any) => {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
+              Authorization: `Bearer ${effectiveApiKey}`,
               "X-DashScope-Async": "enable",
             },
             body: JSON.stringify({
@@ -513,7 +592,7 @@ transport.registerHandler((msg: any) => {
             await new Promise((r) => setTimeout(r, 2000));
             try {
               const pollResp = await fetch(`${POLL_ENDPOINT}/${taskId}`, {
-                headers: { Authorization: `Bearer ${apiKey}` },
+                headers: { Authorization: `Bearer ${effectiveApiKey}` },
               });
               if (!pollResp.ok) {
                 writeTranscriptLog("warn", "transcribe-audio", "poll http error", {
@@ -768,6 +847,12 @@ transport.registerHandler((msg: any) => {
   }
 });
 
+if (process.platform === "darwin") {
+  void pingSwiftSidecar().then((ready) => {
+    console.log("[swift-sidecar] status", ready ? "available" : "fallback");
+  });
+}
+
 // ─── MCP Tool Call Bridge ───────────────────────────────────────
 
 function callToolOnRenderer(toolName: string, args: Record<string, unknown>): Promise<string> {
@@ -801,11 +886,11 @@ const menuTemplate: any[] = [
           submenu: [
             { label: "About Filmidi", role: "about" },
             { type: "separator" as const },
-            {
-              label: "Settings",
-              accelerator: ",",
-              action: "open-settings",
-            },
+      {
+        label: "Settings",
+        accelerator: "cmd+,",
+        action: "open-settings",
+      },
             { type: "separator" as const },
             { label: "Hide Filmidi", role: "hide" },
             { label: "Hide Others", role: "hideOthers" },
@@ -821,22 +906,22 @@ const menuTemplate: any[] = [
   {
     label: "File",
     submenu: [
-      { label: "New Project", accelerator: "n", action: "new-project" },
-      { label: "Open Project", accelerator: "o", action: "open-project" },
+      { label: "New Project", accelerator: "cmd+n", action: "new-project" },
+      { label: "Open Project", accelerator: "cmd+o", action: "open-project" },
       { type: "separator" },
-      { label: "Save Project", accelerator: "s", action: "save-project" },
+      { label: "Save Project", accelerator: "cmd+s", action: "save-project" },
       {
         label: "Save As",
-        accelerator: "shift+s",
+        accelerator: "cmd+shift+s",
         action: "save-as",
       },
       { type: "separator" },
-      { label: "Import Media", accelerator: "i", action: "import-media" },
-      { label: "Export", accelerator: "e", action: "export" },
+      { label: "Import Media", accelerator: "cmd+i", action: "import-media" },
+      { label: "Export", accelerator: "cmd+shift+e", action: "export" },
       ...(!isMac
         ? [
             { type: "separator" as const },
-            { label: "Settings", accelerator: ",", action: "open-settings" },
+            { label: "Settings", accelerator: "ctrl+,", action: "open-settings" },
             { type: "separator" as const },
             { label: "Exit", role: "quit" },
           ]
@@ -848,22 +933,22 @@ const menuTemplate: any[] = [
   {
     label: "Edit",
     submenu: [
-      { label: "Undo", role: "undo" },
-      { label: "Redo", role: "redo" },
+      { label: "Undo", accelerator: "cmd+z", action: "undo" },
+      { label: "Redo", accelerator: "cmd+shift+z", action: "redo" },
       { type: "separator" },
-      { label: "Cut", role: "cut" },
-      { label: "Copy", role: "copy" },
-      { label: "Paste", role: "paste" },
-      { label: "Delete", role: "delete" },
-      { label: "Select All", role: "selectAll" },
+      { label: "Cut", accelerator: "cmd+x", action: "cut" },
+      { label: "Copy", accelerator: "cmd+c", action: "copy" },
+      { label: "Paste", accelerator: "cmd+v", action: "paste" },
+      { label: "Delete", accelerator: "delete", action: "delete" },
+      { label: "Select All", accelerator: "cmd+a", action: "select-all" },
       { type: "separator" },
       {
         label: "Split at Playhead",
-        accelerator: "k",
+        accelerator: "cmd+k",
         action: "split-at-playhead",
       },
-      { label: "Trim Start", accelerator: "q", action: "trim-start" },
-      { label: "Trim End", accelerator: "w", action: "trim-end" },
+      { label: "Trim Start", action: "trim-start" },
+      { label: "Trim End", action: "trim-end" },
     ],
   },
 
@@ -873,24 +958,24 @@ const menuTemplate: any[] = [
     submenu: [
       {
         label: "Media Panel",
-        accelerator: "shift+0",
+        accelerator: "cmd+shift+0",
         action: "toggle-media-panel",
       },
       {
         label: "Inspector",
-        accelerator: "shift+alt+0",
+        accelerator: "cmd+shift+alt+0",
         action: "toggle-inspector",
       },
       {
         label: "Agent Panel",
-        accelerator: "shift+alt+a",
+        accelerator: "cmd+shift+alt+a",
         action: "toggle-agent-panel",
       },
       { type: "separator" },
-      { label: "Zoom In", accelerator: "=", action: "zoom-in" },
-      { label: "Zoom Out", accelerator: "-", action: "zoom-out" },
-      { label: "Zoom to Fit", accelerator: "0", action: "zoom-fit" },
-      { label: "Zoom to 100%", accelerator: "1", action: "zoom-100" },
+      { label: "Zoom In", accelerator: "cmd+=", action: "zoom-in" },
+      { label: "Zoom Out", accelerator: "cmd+-", action: "zoom-out" },
+      { label: "Zoom to Fit", accelerator: "cmd+0", action: "zoom-fit" },
+      { label: "Zoom to 100%", accelerator: "cmd+1", action: "zoom-100" },
       { type: "separator" },
       { label: "Toggle Full Screen", role: "toggleFullScreen" },
     ],
@@ -917,7 +1002,7 @@ const menuTemplate: any[] = [
     submenu: [
       {
         label: "Keyboard Shortcuts",
-        accelerator: "/",
+        accelerator: "cmd+/",
         action: "open-help",
       },
       { label: "MCP Instructions", action: "open-mcp" },
@@ -931,8 +1016,8 @@ Electrobun.ApplicationMenu.setApplicationMenu(menuTemplate);
 
 // ─── Forward menu clicks to the webview ───
 
-Electrobun.events.on("application-menu-clicked", (e) => {
-  const { action } = e.data;
+Electrobun.ApplicationMenu.on("application-menu-clicked", (e) => {
+  const action = (e as any)?.data?.action ?? (e as any)?.action;
   if (!action) return;
 
   // Forward to webview via RPC

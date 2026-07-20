@@ -255,6 +255,7 @@
   background: var(--vf-primary);
   opacity: 0.25;
   flex-shrink: 0;
+  margin: 1px 0;
 }
 
 /* ─── Tracks inner (scrollable content) ────────────────────── */

@@ -7,7 +7,9 @@
  */
 
 import { useAccountStore } from "@/store/useAccountStore";
+import { getSecureApiKey } from "./secureApiKey";
 import { logTranscript } from "./transcriptLogger";
+import { getNativeMediaBackend, requestNativeMedia } from "./nativeMediaBridge";
 
 export interface TranscriptionWord {
   text: string;
@@ -48,9 +50,10 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
+  const effectiveApiKey = apiKey?.trim() || (await getSecureApiKey()) || "";
   logTranscript("info", "transcribeAudio", "request", {
     url: audioUrl.slice(0, 120),
-    hasApiKey: !!apiKey,
+    hasApiKey: !!effectiveApiKey,
     options,
   });
 
@@ -76,6 +79,21 @@ export async function transcribeAudio(
     });
   }
 
+  const nativeResult = await requestNativeMedia<TranscriptionResult>("transcribe-audio", {
+    audioUrl: resolvedUrl,
+    apiKey: effectiveApiKey,
+    options,
+  });
+  if (nativeResult) {
+    logTranscript("info", "transcribeAudio", "route", { mode: getNativeMediaBackend(), resolvedUrl: resolvedUrl.slice(0, 120) });
+    const parsed = parseTranscriptionResult(nativeResult, options);
+    logTranscript("info", "transcribeAudio", "sidecar result parsed", {
+      transcriptCount: parsed.segments.length,
+      wordCount: parsed.words.length,
+    });
+    return parsed;
+  }
+
   const account = useAccountStore.getState();
   const isBackendUser = account.isSignedIn();
 
@@ -84,8 +102,12 @@ export async function transcribeAudio(
     return transcribeViaBackend(resolvedUrl, account.sessionToken, options);
   }
 
+  if (!effectiveApiKey) {
+    throw new Error("No Qwen API key configured. Add one in Settings > Agent.");
+  }
+
   logTranscript("info", "transcribeAudio", "route", { mode: "bun", resolvedUrl: resolvedUrl.slice(0, 120) });
-  return transcribeViaDashScope(resolvedUrl, apiKey, options);
+  return transcribeViaDashScope(resolvedUrl, effectiveApiKey, options);
 }
 
 async function transcribeViaBackend(

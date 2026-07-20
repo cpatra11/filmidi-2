@@ -55,6 +55,8 @@ export function SpeechTab() {
       return;
     }
 
+    const transcriptionApiKey = apiKey ?? "";
+
     try {
       const editor = useEditorStore.getState();
       const layers = (editor.video?.layers ?? []) as Array<Record<string, unknown>>;
@@ -73,7 +75,7 @@ export function SpeechTab() {
         const mediaRef = (clip as any).mediaRef;
         if (!mediaRef?.url) continue;
 
-        const result = await transcribeAudio(mediaRef.url, apiKey, {
+        const result = await transcribeAudio(mediaRef.url, transcriptionApiKey, {
           diarization: true,
         });
 

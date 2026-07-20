@@ -3,10 +3,20 @@ import { commands } from "@videoflow/react-video-editor";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { useAccountStore } from "@/store/useAccountStore";
+import { useExportStore } from "@/store/useExportStore";
+import { useProjectStore } from "@/store/useProjectStore";
+import { useProjectSaveStore } from "@/store/useProjectSaveStore";
+import { useGenerationStore } from "@/store/useGenerationStore";
 import { transcribeAudio } from "./cloudTranscription";
 import { logTranscript } from "./transcriptLogger";
+import { requestNativeMedia } from "./nativeMediaBridge";
 import { getSecureApiKey } from "./secureApiKey";
 import { submitGeneration, waitForTask } from "./generationApi";
+import { getTimelineExportText, saveText, serializeFilmidiPackage } from "./exportHelpers";
+import { findLinkedPartnerIn, getLayerLinkId } from "@/lib/linkUtils";
+import { dbSaveProject } from "./dbIPC";
+import { validateMoveUpdates } from "./timelineMove";
+import { findAvailableTrack, localTrackForKind, normalizeTrackForKind, VIDEO_TRACK_BASE } from "./timelineMove";
 import type { LayerJSON, VideoJSON } from "@videoflow/core";
 
 const {
@@ -168,29 +178,40 @@ export function getTimelineContext(): string {
       name: t.name ?? `Track ${i + 1}`,
       enabled: t.enabled ?? true,
     })),
-    layers: layers.map((l) => ({
+    layers: layers.map((l) => {
+      const layer = l as any;
+      return {
       id: l.id,
-      type: l.type ?? "unknown",
-      name: l.name ?? l.id.slice(0, 8),
+      type: layer.type ?? "unknown",
+      name: layer.name ?? layer.id.slice(0, 8),
       startTime: getLayerTiming(l).startTime,
       sourceStart: getLayerTiming(l).sourceStart,
       sourceDuration: getLayerTiming(l).sourceDuration,
-      enabled: l.settings?.enabled ?? true,
-      track: l.track ?? 0,
-      source: l.settings?.source ?? l.source,
-    })),
+      enabled: layer.settings?.enabled ?? true,
+      track: layer.track ?? 0,
+      source: layer.settings?.source ?? layer.source,
+    };
+    }),
   });
 }
 
-export function getMediaContext(): string {
+export function getMediaContext(filterTypes?: unknown): string {
   const store = useMediaPanelStore.getState();
+  const allowedTypes = Array.isArray(filterTypes)
+    ? new Set(filterTypes.map((type) => String(type)))
+    : null;
   return JSON.stringify({
-    assets: store.assets.map((a) => ({
+    assets: store.assets
+      .filter((a) => !allowedTypes || allowedTypes.has(a.type))
+      .map((a) => ({
       id: a.id,
       name: a.name,
       type: a.type,
+      url: a.url,
       duration: a.duration,
-      folderId: (a as Record<string, unknown>).folderId,
+      thumbnailUrl: a.thumbnailUrl,
+      folderId: a.folderId,
+      createdAt: a.createdAt,
     })),
   });
 }
@@ -213,6 +234,185 @@ function getLayerSource(layer: any): string | undefined {
   return (layer?.settings?.source as string | undefined) ?? (layer?.source as string | undefined);
 }
 
+function inferImportedMediaType(source: string): "video" | "audio" | "image" {
+  const lower = source.toLowerCase().split(/[?#]/)[0];
+  if (lower.startsWith("data:video/")) return "video";
+  if (lower.startsWith("data:audio/")) return "audio";
+  if (/\.(mp4|mov|m4v|webm|mkv|avi|ogv|3gp)$/.test(lower)) return "video";
+  if (/\.(mp3|wav|m4a|aac|ogg|flac|opus)$/.test(lower)) return "audio";
+  // Stock image services commonly omit an extension from the URL.
+  if (lower.includes("images.unsplash.com") || lower.includes("images.pexels.com")) return "image";
+  return "image";
+}
+
+function importedAssetName(source: string, fallback: string, type: "video" | "audio" | "image"): string {
+  if (fallback.trim() && fallback.trim() !== "Imported") return fallback.trim();
+  try {
+    const pathname = new URL(source, "http://filmidi.local").pathname;
+    const filename = decodeURIComponent(pathname.split("/").filter(Boolean).pop() ?? "");
+    if (filename && !/^https?$/i.test(filename)) return filename.replace(/\.[^.]+$/, "");
+  } catch {}
+  return type === "image" ? "Imported Image" : type === "video" ? "Imported Video" : "Imported Audio";
+}
+
+async function searchInternetMedia(
+  query: string,
+  type: "audio" | "image" | "video",
+  limit: number,
+): Promise<Array<{ title: string; type: string; url: string; thumbnailUrl?: string; source: string; license?: string }>> {
+  const count = Math.max(1, Math.min(20, limit));
+  if (type === "image" || type === "audio") {
+    const endpoint = new URL("https://commons.wikimedia.org/w/api.php");
+    endpoint.search = new URLSearchParams({
+      action: "query",
+      generator: "search",
+      gsrsearch: type === "audio" ? `${query} filetype:audio` : query,
+      gsrnamespace: "6",
+      gsrlimit: String(count),
+      prop: "imageinfo",
+      iiprop: "url|mime",
+      iiurlwidth: "1600",
+      format: "json",
+      origin: "*",
+    }).toString();
+    const response = await fetch(endpoint);
+    if (!response.ok) throw new Error(`Wikimedia search failed (${response.status})`);
+    const data = await response.json() as any;
+    const commonsResults = Object.values(data.query?.pages ?? {})
+      .map((page: any) => {
+        const info = page.imageinfo?.[0];
+        const mime = String(info?.mime ?? "").toLowerCase();
+        const matchesType = type === "image" ? mime.startsWith("image/") : mime.startsWith("audio/");
+        return info?.url && matchesType ? {
+          title: String(page.title ?? "Wikimedia image").replace(/^File:/i, ""),
+          type,
+          url: String(info.url),
+          ...(type === "image" ? { thumbnailUrl: info.thumburl ? String(info.thumburl) : String(info.url) } : {}),
+          source: "Wikimedia Commons",
+          license: "Wikimedia Commons free-license repository; verify the file license and attribution",
+        } : null;
+      })
+      .filter(Boolean) as Array<{ title: string; type: string; url: string; thumbnailUrl?: string; source: string; license?: string }>;
+    if (commonsResults.length > 0 || type === "image") return commonsResults;
+  }
+
+  const mediaType = type === "video" ? "movies" : "audio";
+  const searchUrl = new URL("https://archive.org/advancedsearch.php");
+  const queryTerms = query.toLowerCase().match(/[a-z0-9]+/g)?.filter((term) => term.length > 2) ?? [];
+  const titleExpression = queryTerms.length > 0
+    ? `(${queryTerms.map((term) => `title:${term}`).join(" OR ")})`
+    : query;
+  const searchParams = new URLSearchParams({
+    q: `${titleExpression} AND mediatype:${mediaType}`,
+    rows: String(count),
+    page: "1",
+    output: "json",
+  });
+  searchParams.append("fl[]", "identifier");
+  searchParams.append("fl[]", "title");
+  searchUrl.search = searchParams.toString();
+  const searchResponse = await fetch(searchUrl);
+  if (!searchResponse.ok) throw new Error(`Internet Archive search failed (${searchResponse.status})`);
+  const searchData = await searchResponse.json() as any;
+  let docs = (searchData.response?.docs ?? []) as Array<{ identifier?: string; title?: string }>;
+  // If title search is too narrow, retry with the full-text query. This keeps
+  // exact SFX searches useful without returning unrelated recordings first.
+  if (docs.length === 0) {
+    const fallbackUrl = new URL("https://archive.org/advancedsearch.php");
+    const fallbackParams = new URLSearchParams({
+      q: `(${query}) AND mediatype:${mediaType}`,
+      rows: String(count),
+      page: "1",
+      output: "json",
+    });
+    fallbackParams.append("fl[]", "identifier");
+    fallbackParams.append("fl[]", "title");
+    fallbackUrl.search = fallbackParams.toString();
+    const fallbackResponse = await fetch(fallbackUrl);
+    if (fallbackResponse.ok) {
+      const fallbackData = await fallbackResponse.json() as any;
+      docs = (fallbackData.response?.docs ?? []) as Array<{ identifier?: string; title?: string }>;
+    }
+  }
+  const effectTerms = /\b(sfx|sound|effect|riser|whoosh|swish|sweep|transition|impact|hit|boom|pop|click|beep|chime|footstep|foley)\b/i;
+  const requiresEffectMatch = type === "audio" && effectTerms.test(query);
+  if (requiresEffectMatch && !docs.some((doc) => effectTerms.test(`${doc.title ?? ""} ${doc.identifier ?? ""}`))) {
+    const targetedUrl = new URL("https://archive.org/advancedsearch.php");
+    const targetedTerms = ["riser", "whoosh", "swish", "sweep", "transition", "impact", "foley", "sound", "effect"];
+    const targetedParams = new URLSearchParams({
+      q: `(${targetedTerms.map((term) => `title:${term}`).join(" OR ")}) AND mediatype:${mediaType}`,
+      rows: String(count),
+      page: "1",
+      output: "json",
+    });
+    targetedParams.append("fl[]", "identifier");
+    targetedParams.append("fl[]", "title");
+    targetedUrl.search = targetedParams.toString();
+    const targetedResponse = await fetch(targetedUrl);
+    if (targetedResponse.ok) {
+      const targetedData = await targetedResponse.json() as any;
+      docs = (targetedData.response?.docs ?? []) as Array<{ identifier?: string; title?: string }>;
+    }
+  }
+  const results = await Promise.all(docs.map(async (doc) => {
+    if (!doc.identifier) return null;
+    const searchableTitle = `${doc.title ?? ""} ${doc.identifier}`.toLowerCase();
+    if (requiresEffectMatch && !effectTerms.test(searchableTitle)) return null;
+    try {
+      const metadataResponse = await fetch(`https://archive.org/metadata/${encodeURIComponent(doc.identifier)}`);
+      if (!metadataResponse.ok) return null;
+      const metadata = await metadataResponse.json() as any;
+      const files = Array.isArray(metadata.files) ? metadata.files : [];
+      const file = files.find((candidate: any) => {
+        const format = String(candidate.format ?? "").toLowerCase();
+        const name = String(candidate.name ?? "").toLowerCase();
+        if (candidate.private === "true" || candidate.size === "0") return false;
+        return type === "audio"
+          ? format.includes("mp3") || format.includes("ogg") || format.includes("wav") || /\.(mp3|ogg|wav|flac)$/i.test(name)
+          : format.includes("mp4") || format.includes("webm") || /\.(mp4|webm|mov)$/i.test(name);
+      });
+      if (!file?.name) return null;
+      const path = String(file.name).split("/").map((part) => encodeURIComponent(part)).join("/");
+      return {
+        title: String(doc.title ?? doc.identifier),
+        type,
+        url: `https://archive.org/download/${encodeURIComponent(doc.identifier)}/${path}`,
+        source: "Internet Archive",
+        license: "Verify the item license before publishing",
+      };
+    } catch {
+      return null;
+    }
+  }));
+  return results.filter(Boolean) as Array<{ title: string; type: string; url: string; thumbnailUrl?: string; source: string; license?: string }>;
+}
+
+function resolveMediaTarget(explicitMediaRef?: string): { mediaRef?: string; sourceUrl?: string; asset?: any | null } {
+  const mediaStore = useMediaPanelStore.getState();
+  const editor = useEditorStore.getState();
+  let mediaRef = explicitMediaRef?.trim() || "";
+
+  if (!mediaRef) {
+    const selectedAssetIds = Array.from(mediaStore.selectedAssetIds ?? []);
+    if (selectedAssetIds.length === 1) {
+      mediaRef = selectedAssetIds[0];
+    }
+  }
+
+  if (!mediaRef) {
+    const selectedLayerIds = editor.selection?.layerIds ?? [];
+    if (selectedLayerIds.length === 1) {
+      const layer = editor.video.layers?.find((l: any) => l.id === selectedLayerIds[0]);
+      const source = layer ? getLayerSource(layer) : undefined;
+      if (source) mediaRef = source;
+    }
+  }
+
+  const asset = mediaStore.assets.find((a) => a.id === mediaRef || a.url === mediaRef) ?? null;
+  const sourceUrl = asset?.url ?? (mediaRef || undefined);
+  return { mediaRef: mediaRef || undefined, sourceUrl, asset };
+}
+
 function getCaptionTrack(layers: any[]): number {
   const existing = layers
     .filter((l: any) => l.type === "text" || l.type === "captions")
@@ -222,6 +422,121 @@ function getCaptionTrack(layers: any[]): number {
     return Math.min(...existing);
   }
   return 20;
+}
+
+function getDefaultCaptionCenterY(width: number, height: number): number {
+  const aspect = width / Math.max(1, height);
+  // Portrait captions wrap into more lines, so lift them slightly while
+  // keeping every format in the lower portion of the frame.
+  if (aspect < 0.8) return 0.78;
+  if (aspect < 1.2) return 0.82;
+  if (aspect < 1.6) return 0.85;
+  return 0.88;
+}
+
+function getTranscriptTargetKey(layer: any, fps: number): string {
+  const linkId = getLayerLinkId(layer);
+  if (linkId) return `link:${linkId}`;
+  const timing = getLayerTiming(layer);
+  const source = getLayerSource(layer) ?? "";
+  return [
+    `source:${source}`,
+    `track:${Math.max(0, Math.floor(layer?.track ?? 0))}`,
+    `start:${Math.round(timing.startTime * fps)}`,
+    `sourceStart:${Math.round(timing.sourceStart * fps)}`,
+    `sourceDuration:${Math.round(timing.sourceDuration * fps)}`,
+  ].join("|");
+}
+
+function selectTranscriptTargets(layers: any[], targetClipIds: string[] | undefined, fps: number): any[] {
+  const candidates = targetClipIds?.length
+    ? layers.filter((l: any) => targetClipIds.includes(l.id))
+    : layers.filter((l: any) => l.type === "video" || l.type === "audio");
+
+  const grouped = new Map<string, any>();
+  for (const layer of candidates) {
+    const key = getTranscriptTargetKey(layer, fps);
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, layer);
+      continue;
+    }
+    if (existing.type !== "audio" && layer.type === "audio") {
+      grouped.set(key, layer);
+      continue;
+    }
+    if (existing.type === layer.type && (getLayerTiming(layer).startTime ?? 0) < (getLayerTiming(existing).startTime ?? 0)) {
+      grouped.set(key, layer);
+    }
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => getLayerTiming(a).startTime - getLayerTiming(b).startTime);
+}
+
+function getCaptionTrackIndex(layers: any[], tracks: any[]): number {
+  const generatedCaptionTracks = layers
+    .filter((l: any) => l.type === "text" && (l.settings as any)?.generatedBy === "add_captions")
+    .map((l: any) => normalizeTrackForKind(l.track, "video"));
+  if (generatedCaptionTracks.length > 0) {
+    return Math.min(...generatedCaptionTracks);
+  }
+
+  const namedCaptionTrack = tracks.findIndex((t) => typeof t?.name === "string" && /caption/i.test(t.name));
+  if (namedCaptionTrack >= 0) return Math.max(VIDEO_TRACK_BASE, namedCaptionTrack);
+
+  const maxTrackFromLayers = layers.reduce((max: number, layer: any) => {
+    if (layer.type === "audio") return max;
+    return Math.max(max, normalizeTrackForKind(layer.track, "video"));
+  }, VIDEO_TRACK_BASE);
+  const maxTrackFromTracks = Math.max(VIDEO_TRACK_BASE, tracks.length - 1);
+  return Math.max(maxTrackFromLayers, maxTrackFromTracks) + 1;
+}
+
+function findGeneratedCaptionLayersForTarget(layers: any[], targetLayer: any, fpsValue: number): string[] {
+  const targetSource = getLayerSource(targetLayer);
+  if (!targetSource) return [];
+  const targetBounds = getLayerTimelineBoundsFrames(targetLayer, fpsValue);
+  const targetStart = targetBounds.startFrame;
+  const targetEnd = targetBounds.endFrame;
+
+  return layers
+    .filter((l: any) => {
+      if (l.type !== "text") return false;
+      if ((l.settings as any)?.generatedBy !== "add_captions") return false;
+      if ((l.settings as any)?.captionSource !== targetSource && (l.settings as any)?.captionTargetId !== targetLayer.id) return false;
+      const bounds = getLayerTimelineBoundsFrames(l, fpsValue);
+      return bounds.startFrame < targetEnd && targetStart < bounds.endFrame;
+    })
+    .map((l: any) => l.id);
+}
+
+async function removeExistingGeneratedCaptions(commitFn: any, targetLayer: any, fpsValue: number): Promise<void> {
+  const layers = useEditorStore.getState().video.layers ?? [];
+  const ids = findGeneratedCaptionLayersForTarget(layers, targetLayer, fpsValue);
+  if (ids.length > 0) {
+    await removeLayersCommand(commitFn, ids);
+  }
+}
+
+function hasExistingAudioMirror(layer: any, layers: any[]): boolean {
+  const source = getLayerSource(layer);
+  if (!source) return false;
+  const timing = getLayerTiming(layer);
+  const sourceStartFrames = Math.round(timing.sourceStart * 1000);
+  const sourceDurFrames = Math.round(timing.sourceDuration * 1000);
+  const linkId = getLayerLinkId(layer);
+  return layers.some((other: any) => {
+    if (other.id === layer.id) return false;
+    if (other.type !== "audio") return false;
+    if (linkId && getLayerLinkId(other) === linkId) return true;
+    if (getLayerSource(other) !== source) return false;
+    const otherTiming = getLayerTiming(other);
+    return (
+      Math.round(otherTiming.sourceStart * 1000) === sourceStartFrames &&
+      Math.round(otherTiming.sourceDuration * 1000) === sourceDurFrames &&
+      Math.round(otherTiming.startTime * 1000) === Math.round(timing.startTime * 1000)
+    );
+  });
 }
 
 function refreshPreview() {
@@ -287,8 +602,70 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
 function setTrack(commitFn: any, layerId: string, track: number) {
   commitFn((draft: any) => {
     const l = draft.layers?.find((x: any) => x.id === layerId);
-    if (l) l.track = Math.max(0, Math.floor(track));
+    if (l) l.track = normalizeTrackForKind(track, l.type === "audio" ? "audio" : "video");
   }, { label: "Set track" });
+}
+
+async function placeAssetOnTimeline(
+  commitFn: any,
+  asset: { id: string; name?: string; type: "video" | "audio" | "image"; url: string; duration?: number },
+  fps: number,
+  options: { startFrame: number; durationFrames?: number; trackIndex?: number },
+): Promise<{ layerId: string; audioLayerId?: string; startFrame: number; durationFrames: number; track: number } | null> {
+  const editor = useEditorStore.getState();
+  const startFrame = Math.max(0, Math.floor(options.startFrame));
+  const startTime = startFrame / fps;
+  const durationFrames = Math.max(
+    1,
+    Math.floor(options.durationFrames ?? ((asset.duration ?? 5) * fps)),
+  );
+  const sourceDuration = durationFrames / fps;
+  const kind = asset.type === "audio" ? "audio" : "video";
+  const requestedTrack = options.trackIndex === undefined
+    ? undefined
+    : normalizeTrackForKind(options.trackIndex, kind);
+  const track = findAvailableTrack(
+    editor.video.layers ?? [],
+    kind,
+    startTime,
+    sourceDuration,
+    requestedTrack,
+  );
+  const layerId = await addLayerCommand(commitFn, {
+    type: asset.type === "image" ? "image" : asset.type,
+    source: asset.url,
+    sourceDuration,
+    startTime,
+  });
+  if (!layerId) return null;
+  setTrack(commitFn, layerId, track);
+
+  let audioLayerId: string | undefined;
+  if (asset.type === "video") {
+    const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
+    const linkId = generateLinkId();
+    await setLayerLinkId(commitFn, layerId, linkId, setSettingCommand);
+    await setPropertyCommand(commitFn, layerId, "mute", true);
+    const audioTrack = findAvailableTrack(
+      useEditorStore.getState().video.layers ?? [],
+      "audio",
+      startTime,
+      sourceDuration,
+      localTrackForKind(track, "video"),
+    );
+    audioLayerId = await addLayerCommand(commitFn, {
+      type: "audio",
+      source: asset.url,
+      sourceDuration,
+      startTime,
+    });
+    if (audioLayerId) {
+      setTrack(commitFn, audioLayerId, audioTrack);
+      await setLayerLinkId(commitFn, audioLayerId, linkId, setSettingCommand);
+    }
+  }
+
+  return { layerId, audioLayerId, startFrame, durationFrames, track };
 }
 
 function copySplitLayer(
@@ -320,6 +697,195 @@ function copySplitLayer(
   }, { label: "Copy split layer attributes" });
 }
 
+function getLayerTimelineBoundsFrames(layer: any, fps: number): { startFrame: number; endFrame: number } {
+  const timing = getLayerTiming(layer);
+  const effectiveSpeed = Math.max(Math.abs(timing.speed || 1), MIN_SPEED);
+  const startFrame = Math.round(timing.startTime * fps);
+  const endFrame = Math.round((timing.startTime + timing.sourceDuration / effectiveSpeed) * fps);
+  return { startFrame, endFrame };
+}
+
+async function splitLayerAtFrame(commitFn: any, fps: number, layerId: string, atFrame: number): Promise<boolean> {
+  const currentEditor = useEditorStore.getState();
+  const currentLayers = currentEditor.video.layers ?? [];
+  const layer = currentLayers.find((l: any) => l.id === layerId);
+  if (!layer) return false;
+
+  const bounds = getLayerTimelineBoundsFrames(layer, fps);
+  if (!(atFrame > bounds.startFrame && atFrame < bounds.endFrame)) return false;
+
+  const timing = getLayerTiming(layer);
+  const splitDur = (atFrame - bounds.startFrame) / fps;
+  const remainDur = (bounds.endFrame - atFrame) / fps;
+  const linkId = getLayerLinkId(layer);
+  const rightLinkId = linkId ? `${linkId}-r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : "";
+
+  await resizeLayerCommand(commitFn, layerId, splitDur);
+
+  const newLayerId = await addLayerCommand(commitFn, {
+    type: layer.type as string,
+    source: getLayerSource(layer),
+    sourceDuration: remainDur,
+    startTime: timing.startTime + splitDur,
+    properties: layer.properties,
+  });
+  if (newLayerId) {
+    copySplitLayer(
+      commitFn,
+      newLayerId,
+      layer,
+      timing.sourceStart + splitDur * Math.abs(timing.speed || 1),
+      remainDur,
+      timing.startTime + splitDur,
+      rightLinkId || undefined,
+    );
+  }
+
+  const partner = findLinkedPartnerIn(currentLayers, layerId);
+  if (partner) {
+    const partnerBounds = getLayerTimelineBoundsFrames(partner, fps);
+    if (atFrame > partnerBounds.startFrame && atFrame < partnerBounds.endFrame) {
+      const pTiming = getLayerTiming(partner);
+      const pSplitDur = (atFrame - partnerBounds.startFrame) / fps;
+      const pRemainDur = (partnerBounds.endFrame - atFrame) / fps;
+      await resizeLayerCommand(commitFn, partner.id, pSplitDur);
+      const pNewId = await addLayerCommand(commitFn, {
+        type: partner.type as string,
+        source: getLayerSource(partner),
+        sourceDuration: pRemainDur,
+        startTime: pTiming.startTime + pSplitDur,
+        properties: partner.properties,
+      });
+      if (pNewId) {
+        copySplitLayer(
+          commitFn,
+          pNewId,
+          partner,
+          pTiming.sourceStart + pSplitDur * Math.abs(pTiming.speed || 1),
+          pRemainDur,
+          pTiming.startTime + pSplitDur,
+          rightLinkId || undefined,
+        );
+      }
+    }
+  }
+
+  return true;
+}
+
+async function applyRippleDeleteRanges(
+  commitFn: any,
+  fps: number,
+  rawRanges: Array<Record<string, unknown>>,
+): Promise<{ deletedRanges: number; totalDeletedSeconds: number }> {
+  const ranges = rawRanges
+    .map((range) => ({
+      startFrame: Number(range.startFrame ?? range.start ?? 0),
+      endFrame: Number(range.endFrame ?? range.end ?? 0),
+      trackIndex: range.trackIndex !== undefined ? Number(range.trackIndex) : undefined,
+    }))
+    .filter((range) => Number.isFinite(range.startFrame) && Number.isFinite(range.endFrame) && range.endFrame > range.startFrame);
+  if (ranges.length === 0) {
+    throw new Error("No valid ranges provided");
+  }
+
+  let totalDeleted = 0;
+  const sortedRanges = [...ranges].sort((a, b) => b.startFrame - a.startFrame);
+  for (const range of sortedRanges) {
+    const delDuration = (range.endFrame - range.startFrame) / fps;
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const layers = useEditorStore.getState().video.layers ?? [];
+      for (const layer of layers) {
+        if (range.trackIndex !== undefined && Math.max(0, Math.floor(layer.track ?? 0)) !== range.trackIndex) continue;
+        const bounds = getLayerTimelineBoundsFrames(layer, fps);
+        if (bounds.startFrame < range.startFrame && range.startFrame < bounds.endFrame) {
+          if (await splitLayerAtFrame(commitFn, fps, layer.id, range.startFrame)) {
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+
+    changed = true;
+    while (changed) {
+      changed = false;
+      const layers = useEditorStore.getState().video.layers ?? [];
+      for (const layer of layers) {
+        if (range.trackIndex !== undefined && Math.max(0, Math.floor(layer.track ?? 0)) !== range.trackIndex) continue;
+        const bounds = getLayerTimelineBoundsFrames(layer, fps);
+        if (bounds.startFrame < range.endFrame && range.endFrame < bounds.endFrame) {
+          if (await splitLayerAtFrame(commitFn, fps, layer.id, range.endFrame)) {
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+
+    const layers = useEditorStore.getState().video.layers ?? [];
+    const inRangeIds = layers
+      .filter((layer) => {
+        if (range.trackIndex !== undefined && Math.max(0, Math.floor(layer.track ?? 0)) !== range.trackIndex) return false;
+        const bounds = getLayerTimelineBoundsFrames(layer, fps);
+        return bounds.startFrame >= range.startFrame && bounds.endFrame <= range.endFrame;
+      })
+      .map((layer) => layer.id);
+    if (inRangeIds.length > 0) {
+      await removeLayersCommand(commitFn, inRangeIds);
+    }
+
+    const currentLayers = useEditorStore.getState().video.layers ?? [];
+    const shifted = currentLayers
+      .filter((layer) => {
+        if (range.trackIndex !== undefined && Math.max(0, Math.floor(layer.track ?? 0)) !== range.trackIndex) return false;
+        if (inRangeIds.includes(layer.id)) return false;
+        const bounds = getLayerTimelineBoundsFrames(layer, fps);
+        return bounds.startFrame >= range.endFrame;
+      })
+      .map((layer) => ({
+        id: layer.id,
+        startTime: Math.max(0, (getLayerTiming(layer).startTime ?? 0) - delDuration),
+      }));
+    if (shifted.length > 0) await moveLayersCommand(commitFn, shifted);
+    totalDeleted += delDuration;
+  }
+
+  refreshPreview();
+  return { deletedRanges: ranges.length, totalDeletedSeconds: totalDeleted };
+}
+
+function mapTranscriptWordsToTimeline(layer: any, transcript: { words: Array<{ text: string; start: number; end: number }> }, fps: number) {
+  const { startTime: clipStartTime, sourceStart: clipSourceStart, sourceDuration: clipSourceDuration, speed: clipSpeed } = getLayerTiming(layer);
+  const effectiveSpeed = Math.max(Math.abs(clipSpeed), MIN_SPEED);
+  const clipStartFrame = Math.round(clipStartTime * fps);
+  const visibleStart = clipSourceStart;
+  const visibleEnd = clipSourceStart + clipSourceDuration;
+
+  const toTimeline = (sourceSeconds: number) =>
+    Math.round(clipStartFrame + (sourceSeconds - visibleStart) * fps / effectiveSpeed);
+
+  const words = transcript.words
+    .filter((word) => {
+      if (word.start === undefined || word.end === undefined) return false;
+      const wordMidSec = (word.start + word.end) / 2;
+      return wordMidSec >= visibleStart && wordMidSec <= visibleEnd;
+    })
+    .map((word) => ({
+      text: word.text,
+      startFrame: toTimeline(word.start),
+      endFrame: Math.max(toTimeline(word.end), toTimeline(word.start) + 1),
+      start: word.start,
+      end: word.end,
+    }))
+    .filter((word) => word.endFrame > word.startFrame);
+
+  return { words, clipStartFrame, visibleStart, visibleEnd, effectiveSpeed };
+}
+
 // ─── TOOL EXECUTOR ────────────────────────────────────────────────
 
 export async function executeTool(
@@ -338,7 +904,7 @@ export async function executeTool(
 
       // ─── TIMELINE INSPECTION ────────────────────────────────────
       case "get_timeline": return getTimelineContext();
-      case "get_media": return getMediaContext();
+      case "get_media": return getMediaContext(input.filterTypes);
 
       case "inspect_timeline": {
         const maxFrames = (input.maxFrames as number) ?? 4;
@@ -358,9 +924,10 @@ export async function executeTool(
       }
 
       case "inspect_media": {
-        const mediaRef = input.mediaRef as string | undefined;
-        if (!mediaRef) {
-          return JSON.stringify({ error: "mediaRef is required. Call get_media first to list available assets, then pass the asset id." });
+        const resolved = resolveMediaTarget(input.mediaRef as string | undefined);
+        const mediaRef = resolved.mediaRef;
+        if (!mediaRef && !resolved.sourceUrl) {
+          return JSON.stringify({ error: "mediaRef is required. Call get_media first, or select a clip/asset and try again." });
         }
         const maxFrames = Math.min((input.maxFrames as number) ?? 6, 12);
         const clipId = input.clipId as string | undefined;
@@ -370,8 +937,9 @@ export async function executeTool(
         const endSeconds = input.endSeconds as number | undefined;
 
         const mediaStore = useMediaPanelStore.getState();
-        const asset = mediaStore.assets.find((a) => a.id === mediaRef);
-        if (!asset) return JSON.stringify({ error: `Asset not found: ${mediaRef}` });
+        const asset = resolved.asset ?? mediaStore.assets.find((a) => a.id === mediaRef || a.url === resolved.sourceUrl);
+        const assetSource = asset?.url ?? resolved.sourceUrl;
+        if (!assetSource) return JSON.stringify({ error: `Asset not found: ${mediaRef ?? "selected media"}` });
 
         // Find the clip on timeline if clipId provided
         let clipInfo: Record<string, unknown> | undefined;
@@ -388,16 +956,16 @@ export async function executeTool(
         }
 
         const result: Record<string, unknown> = {
-          id: asset.id,
-          name: asset.name,
-          type: asset.type,
-          durationSeconds: asset.duration,
-          fileName: asset.name,
+          id: asset?.id ?? mediaRef ?? assetSource,
+          name: asset?.name ?? mediaRef ?? "Selected media",
+          type: asset?.type ?? "video",
+          durationSeconds: asset?.duration ?? 0,
+          fileName: asset?.name ?? mediaRef ?? "Selected media",
         };
 
         if (clipInfo) Object.assign(result, clipInfo);
 
-        if (asset.type === "image") {
+        if (asset?.type === "image") {
           // Image: return base64-encoded thumbnail
           try {
             const img = new Image();
@@ -405,7 +973,7 @@ export async function executeTool(
             await new Promise<void>((resolve, reject) => {
               img.onload = () => resolve();
               img.onerror = () => reject(new Error("Failed to load image"));
-              img.src = asset.url!;
+              img.src = assetSource!;
             });
             const canvas = document.createElement("canvas");
             const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
@@ -424,17 +992,36 @@ export async function executeTool(
         } else if (asset.type === "video" && asset.url) {
           // Video: sample frames for storyboard
           try {
-            const { sampleVideoFrames } = await import("./webAudio");
-            const { frames, timestamps } = await sampleVideoFrames(
-              asset.url,
-              overview ? Math.min(36, maxFrames * 6) : maxFrames,
+            const nativeFrames = await requestNativeMedia<{
+              frameTimestamps?: number[];
+              frames?: Array<{ timestamp?: number; dataUrl?: string; width?: number; height?: number }>;
+              frameCount?: number;
+              note?: string;
+            }>("sample-frames", {
+              url: asset.url,
+              maxFrames: overview ? Math.min(36, maxFrames * 6) : maxFrames,
               startSeconds,
-              endSeconds
-            );
-            result.frameTimestamps = timestamps;
-            result.frameCount = frames.length;
-            if (overview) result.overviewMode = true;
-            result.note = `Sampled ${frames.length} frames. Canvas frames available for agent vision.`;
+              endSeconds,
+            });
+            if (nativeFrames?.frames?.length) {
+              result.frameTimestamps = nativeFrames.frameTimestamps ?? nativeFrames.frames.map((f) => f.timestamp ?? 0);
+              result.frameCount = nativeFrames.frameCount ?? nativeFrames.frames.length;
+              result.frames = nativeFrames.frames;
+              if (overview) result.overviewMode = true;
+              result.note = nativeFrames.note ?? `Sampled ${nativeFrames.frames.length} frames natively.`;
+            } else {
+              const { sampleVideoFrames } = await import("./webAudio");
+              const { frames, timestamps } = await sampleVideoFrames(
+                asset.url,
+                overview ? Math.min(36, maxFrames * 6) : maxFrames,
+                startSeconds,
+                endSeconds
+              );
+              result.frameTimestamps = timestamps;
+              result.frameCount = frames.length;
+              if (overview) result.overviewMode = true;
+              result.note = `Sampled ${frames.length} frames. Canvas frames available for agent vision.`;
+            }
           } catch (e) {
             result.note = `Frame sampling failed: ${e instanceof Error ? e.message : String(e)}`;
           }
@@ -492,36 +1079,27 @@ export async function executeTool(
           const asset = mediaStore.assets.find((a) => a.id === mediaRef);
           if (!asset) { results.push({ error: `Asset not found: ${mediaRef}` }); continue; }
           const startFrame = (entry.startFrame as number) ?? 0;
-          const startTime = (entry.startTime as number) ?? startFrame / fps;
-          const sourceDuration = (entry.sourceDuration as number) ?? (entry.durationFrames as number ? (entry.durationFrames as number) / fps : undefined) ?? asset.duration ?? 5;
+          const durationFrames = (entry.durationFrames as number) ?? ((entry.sourceDuration as number | undefined) !== undefined
+            ? Math.round((entry.sourceDuration as number) * fps)
+            : undefined);
           const requestedTrack = entry.trackIndex ?? entry.track;
-          const layerId = await addLayerCommand(commit, {
-            type: asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio",
-            source: asset.url,
-            sourceDuration,
-            startTime: startTime || startFrame / fps,
+          const placement = await placeAssetOnTimeline(commit, asset, fps, {
+            startFrame,
+            durationFrames,
+            trackIndex: requestedTrack === undefined ? undefined : Number(requestedTrack),
           });
-          if (requestedTrack !== undefined) setTrack(commit, layerId, Number(requestedTrack));
-          // Separate video+audio tracks for video assets — linked via linkId
-          if (asset.type === "video") {
-            const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
-            const linkId = generateLinkId();
-            await setLayerLinkId(commit, layerId, linkId, setSettingCommand);
-            // Mute the video layer's built-in audio — the separate audio track handles sound
-            await setPropertyCommand(commit, layerId, "mute", true);
-            const audioLayerId = await addLayerCommand(commit, {
-              type: "audio",
-              source: asset.url,
-              sourceDuration,
-              startTime: startTime || startFrame / fps,
-            });
-            if (requestedTrack !== undefined) {
-              // The application reserves the lower track range for audio.
-              setTrack(commit, audioLayerId, Math.max(0, Number(requestedTrack) - 10));
-            }
-            await setLayerLinkId(commit, audioLayerId, linkId, setSettingCommand);
+          if (!placement) {
+            results.push({ error: `Unable to place asset: ${mediaRef}` });
+            continue;
           }
-          results.push({ layerId, mediaRef, startTime: startTime || startFrame / fps, sourceDuration });
+          results.push({
+            layerId: placement.layerId,
+            audioLayerId: placement.audioLayerId,
+            mediaRef,
+            startFrame: placement.startFrame,
+            durationFrames: placement.durationFrames,
+            track: placement.track,
+          });
         }
         refreshPreview();
         return JSON.stringify({ added: results });
@@ -548,13 +1126,24 @@ export async function executeTool(
           const startTime = ((entry.startFrame as number) ?? 0) / fps;
           const sourceDuration = (entry.durationFrames as number ? (entry.durationFrames as number) / fps : undefined) ?? asset.duration ?? 5;
           const requestedTrack = entry.trackIndex ?? entry.track;
+          const requestedTrackValue = requestedTrack === undefined
+            ? undefined
+            : normalizeTrackForKind(Number(requestedTrack), asset.type === "audio" ? "audio" : "video");
+          const requestedKind = asset.type === "audio" ? "audio" : "video";
+          const placementTrack = findAvailableTrack(
+            useEditorStore.getState().video.layers ?? [],
+            requestedKind,
+            startTime,
+            sourceDuration,
+            requestedTrackValue,
+          );
           const layerId = await addLayerCommand(commit, {
             type: asset.type === "image" ? "image" : asset.type === "video" ? "video" : "audio",
             source: asset.url,
             sourceDuration,
             startTime,
           });
-          if (requestedTrack !== undefined) setTrack(commit, layerId, Number(requestedTrack));
+          setTrack(commit, layerId, placementTrack);
           // Separate video+audio tracks for video assets — linked via linkId
           if (asset.type === "video") {
             const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -562,15 +1151,20 @@ export async function executeTool(
             await setLayerLinkId(commit, layerId, linkId, setSettingCommand);
             // Mute the video layer's built-in audio — the separate audio track handles sound
             await setPropertyCommand(commit, layerId, "mute", true);
+            const audioTrack = findAvailableTrack(
+              useEditorStore.getState().video.layers ?? [],
+              "audio",
+              startTime,
+              sourceDuration,
+              localTrackForKind(placementTrack, "video"),
+            );
             const audioLayerId = await addLayerCommand(commit, {
               type: "audio",
               source: asset.url,
               sourceDuration,
               startTime,
             });
-            if (requestedTrack !== undefined) {
-              setTrack(commit, audioLayerId, Math.max(0, Number(requestedTrack) - 10));
-            }
+            setTrack(commit, audioLayerId, audioTrack);
             await setLayerLinkId(commit, audioLayerId, linkId, setSettingCommand);
           }
         }
@@ -635,9 +1229,19 @@ export async function executeTool(
             const actualStart = (allLayers.find((l: any) => l.id === layerId))?.settings?.startTime ?? 0;
             const delta = startTime - actualStart;
             const origStart = partner.settings?.startTime ?? 0;
-            updates.push({ id: partner.id, startTime: Math.max(0, origStart + delta), track: partner.track });
+            const originalTrack = (allLayers.find((l: any) => l.id === layerId))?.track ?? 0;
+            const trackDelta = track === undefined ? 0 : track - originalTrack;
+            updates.push({
+              id: partner.id,
+              startTime: Math.max(0, origStart + delta),
+              track: Math.max(0, Math.floor((partner.track ?? 0) + trackDelta)),
+            });
             seenIds.add(partner.id);
           }
+        }
+        const validation = validateMoveUpdates(allLayers, updates);
+        if (!validation.ok) {
+          return JSON.stringify({ error: validation.reason, layerId: validation.layerId, moved: [] });
         }
         await moveLayersCommand(commit, updates);
         refreshPreview();
@@ -777,46 +1381,89 @@ export async function executeTool(
       }
 
       case "ripple_delete_ranges": {
-        const ranges = input.ranges as Array<{ startFrame: number; endFrame: number }>;
-        if (!ranges || ranges.length === 0) return JSON.stringify({ error: "No ranges provided" });
-        const beforeSnap = snapshotTimeline();
-        const sortedRanges = [...ranges].sort((a, b) => a.startFrame - b.startFrame);
-        let totalDeleted = 0;
-        for (const range of sortedRanges) {
-          const delDuration = (range.endFrame - range.startFrame) / fps;
-          const layers = editor.video.layers ?? [];
-          // Remove clips fully within range — include linked partners
-          const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
-          const inRangeSet = new Set<string>();
-          for (const l of layers) {
-            const st = Math.round((l.settings?.startTime ?? 0) * fps);
-            const dur = Math.round((l.settings?.sourceDuration ?? 0) * fps);
-            if (st >= range.startFrame && st + dur <= range.endFrame) {
-              inRangeSet.add(l.id);
-              // Add linked partner
-              const partner = findLinkedPartnerIn(layers, l.id);
-              if (partner) inRangeSet.add(partner.id);
+        const rawRanges = (input.ranges as Array<Record<string, unknown>>) ?? [];
+        if (!rawRanges || rawRanges.length === 0) return JSON.stringify({ error: "No ranges provided" });
+        try {
+          const result = await applyRippleDeleteRanges(commit, fps, rawRanges);
+          return JSON.stringify(result);
+        } catch (err) {
+          return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
+      case "remove_silence": {
+        const clipIds = input.clipIds as string[] | undefined;
+        const minPauseSeconds = Math.max(0.15, Number(input.minPauseSeconds ?? 0.5));
+        const language = input.language as string | undefined;
+
+        const apiKey = await getSecureApiKey();
+        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+        if (!hasCloudAccess) {
+          return JSON.stringify({ error: "Qwen API key or Filmidi Pro account required for transcription." });
+        }
+
+        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+        const { getCachedTranscript, setCachedTranscript } = await import("./transcriptCache");
+
+        const allLayers = editor.video.layers ?? [];
+        const targets = selectTranscriptTargets(allLayers, clipIds, fps);
+
+        if (targets.length === 0) {
+          return JSON.stringify({ error: "No audio/video clips found for silence removal." });
+        }
+
+        const minPauseFrames = Math.max(1, Math.round(minPauseSeconds * fps));
+        const ranges: Array<Record<string, unknown>> = [];
+
+        for (const layer of targets) {
+          const source = getLayerSource(layer);
+          if (!source) continue;
+
+          let transcript = await getCachedTranscript(source, language);
+          if (!transcript) {
+            try {
+              transcript = await transcribeAudio(source, apiKey || "", { language });
+              await setCachedTranscript(source, transcript, language);
+            } catch (err) {
+              logTranscript("warn", "remove_silence", "transcription failed", {
+                clipId: layer.id,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              continue;
             }
           }
-          const inRangeIds = Array.from(inRangeSet);
-          if (inRangeIds.length > 0) {
-            await removeLayersCommand(commit, inRangeIds);
+
+          const mapped = mapTranscriptWordsToTimeline(layer, transcript, fps);
+          if (mapped.words.length === 0) continue;
+
+          const addRange = (startFrame: number, endFrame: number) => {
+            if (endFrame - startFrame >= minPauseFrames) {
+              ranges.push({ startFrame, endFrame });
+            }
+          };
+
+          addRange(mapped.clipStartFrame, mapped.words[0].startFrame);
+          for (let i = 0; i < mapped.words.length - 1; i++) {
+            addRange(mapped.words[i].endFrame, mapped.words[i + 1].startFrame);
           }
-          // Shift clips after range left
-          const shifted = layers
-            .filter((l) => {
-              const st = Math.round((l.settings?.startTime ?? 0) * fps);
-              return st >= range.endFrame && !inRangeSet.has(l.id);
-            })
-            .map((l) => ({
-              id: l.id,
-              startTime: Math.max(0, (l.settings?.startTime ?? 0) - delDuration),
-            }));
-          if (shifted.length > 0) await moveLayersCommand(commit, shifted);
-          totalDeleted += delDuration;
+
+          const timing = getLayerTiming(layer);
+          const clipEndFrame = Math.round((timing.startTime + timing.sourceDuration / Math.max(Math.abs(timing.speed || 1), MIN_SPEED)) * fps);
+          addRange(mapped.words[mapped.words.length - 1].endFrame, clipEndFrame);
         }
-        refreshPreview();
-        return JSON.stringify({ deletedRanges: sortedRanges.length, totalDeletedSeconds: totalDeleted });
+
+        if (ranges.length === 0) {
+          return JSON.stringify({
+            removedRanges: 0,
+            note: `No silence longer than ${minPauseSeconds.toFixed(2)}s was found.`,
+          });
+        }
+
+        const result = await applyRippleDeleteRanges(commit, fps, ranges);
+        return JSON.stringify({
+          ...result,
+          note: `Removed pauses longer than ${minPauseSeconds.toFixed(2)}s and closed the gaps.`,
+        });
       }
 
       // ─── KEYFRAMES ──────────────────────────────────────────────
@@ -835,27 +1482,44 @@ export async function executeTool(
       // ─── TEXT / CAPTIONS ────────────────────────────────────────
       case "extract_audio": {
         const targetIds = input.clipIds as string[] | undefined;
+        const nativeExtract = await requestNativeMedia<{ audioUrl?: string; outputUrl?: string; note?: string }>("extract-audio", {
+          clipIds: targetIds ?? [],
+        });
+        const extractedAudioUrl = nativeExtract?.audioUrl ?? nativeExtract?.outputUrl;
+        if (nativeExtract?.note) {
+          console.log("[extract_audio][sidecar]", nativeExtract.note);
+        }
+
         const allLayers = editor.video.layers ?? [];
-        const videoLayers = targetIds
-          ? allLayers.filter((l: any) => targetIds.includes(l.id) && l.type === "video")
-          : allLayers.filter((l: any) => l.type === "video");
+        const selectedTargets = selectTranscriptTargets(allLayers, targetIds, fps).filter((l: any) => l.type === "video");
 
         let extracted = 0;
-        for (const layer of videoLayers) {
+        let skipped = 0;
+        for (const layer of selectedTargets) {
           const source = getLayerSource(layer);
           if (!source) continue;
+          if (hasExistingAudioMirror(layer, allLayers)) {
+            skipped++;
+            continue;
+          }
           try {
-            const resp = await fetch(source);
-            const blob = await resp.blob();
-            const dataUrl: string = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result as string);
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            });
-            const [_, base64] = dataUrl.split(",");
-            const { uploadAudioForASR } = await import("@/lib/agentIPC");
-            const publicUrl = await uploadAudioForASR(base64, blob.type || "video/mp4");
+            let publicUrl = extractedAudioUrl;
+            if (!publicUrl) {
+              const resp = await fetch(source);
+              const blob = await resp.blob();
+              const dataUrl: string = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+              });
+              const [_, base64] = dataUrl.split(",");
+              const { uploadAudioForASR } = await import("@/lib/agentIPC");
+              publicUrl = await uploadAudioForASR(base64, blob.type || "video/mp4");
+            }
+            if (!publicUrl) {
+              throw new Error("No extracted audio URL returned");
+            }
 
             const linkId = `link-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
             const { setLayerLinkId } = await import("@/lib/linkUtils");
@@ -883,7 +1547,7 @@ export async function executeTool(
           }
         }
         refreshPreview();
-        return JSON.stringify({ extracted });
+        return JSON.stringify({ extracted, skipped });
       }
 
       case "add_texts": {
@@ -919,7 +1583,6 @@ export async function executeTool(
         const clipId = input.clipId as string;
         const captionGroupId = input.captionGroupId as string;
         if (!clipId && !captionGroupId) return JSON.stringify({ error: "clipId or captionGroupId required" });
-        const targetId = clipId ?? captionGroupId;
         const textProps: Record<string, unknown> = {};
         if (input.content !== undefined) textProps.text = input.content;
         if (input.fontName !== undefined) textProps.fontFamily = input.fontName;
@@ -930,11 +1593,57 @@ export async function executeTool(
         if (input.alignment !== undefined) textProps.textAlign = input.alignment;
         if (input.borderColor !== undefined) textProps.textStrokeColor = input.borderColor;
         if (input.backgroundColor !== undefined) textProps.backgroundColor = input.backgroundColor;
-        for (const [key, value] of Object.entries(textProps)) {
-          await setPropertyCommand(commit, targetId, key, value);
+
+        const canvasWidth = Math.max(1, editor.video.width || 1920);
+        const canvasHeight = Math.max(1, editor.video.height || 1080);
+        const hasPositionUpdate = input.x !== undefined || input.y !== undefined
+          || input.centerX !== undefined || input.centerY !== undefined;
+
+        // Text layers store position as normalized [x, y]. Accept pixel
+        // coordinates from the agent while preserving the other coordinate.
+        if (hasPositionUpdate) {
+          const candidates = (editor.video.layers ?? []).filter((layer: any) => {
+            if (layer.type !== "text") return false;
+            if (clipId) return layer.id === clipId;
+            return layer.settings?.captionGroupId === captionGroupId
+              || layer.settings?.captionKey === captionGroupId
+              || layer.settings?.captionTargetId === captionGroupId;
+          });
+          for (const layer of candidates) {
+            const current = Array.isArray(layer.properties?.position) ? layer.properties.position : [0.5, 0.5];
+            const currentX = Number(current[0]) || 0.5;
+            const currentY = Number(current[1]) || 0.5;
+            const nextX = input.centerX !== undefined
+              ? Number(input.centerX)
+              : input.x !== undefined ? Number(input.x) / canvasWidth : currentX;
+            const nextY = input.centerY !== undefined
+              ? Number(input.centerY)
+              : input.y !== undefined ? Number(input.y) / canvasHeight : currentY;
+            textProps.position = [
+              Math.max(0, Math.min(1, Number.isFinite(nextX) ? nextX : currentX)),
+              Math.max(0, Math.min(1, Number.isFinite(nextY) ? nextY : currentY)),
+            ];
+            await setPropertyCommand(commit, layer.id, "position", textProps.position);
+          }
+        }
+
+        const propertyEntries = Object.entries(textProps).filter(([key]) => key !== "position");
+        const targetIds = clipId
+          ? [clipId]
+          : (editor.video.layers ?? [])
+            .filter((layer: any) => layer.type === "text" && (
+              layer.settings?.captionGroupId === captionGroupId
+              || layer.settings?.captionKey === captionGroupId
+              || layer.settings?.captionTargetId === captionGroupId
+            ))
+            .map((layer: any) => layer.id);
+        for (const targetId of targetIds) {
+          for (const [key, value] of propertyEntries) {
+            await setPropertyCommand(commit, targetId, key, value);
+          }
         }
         refreshPreview();
-        return JSON.stringify({ updated: targetId, properties: Object.keys(textProps) });
+        return JSON.stringify({ updated: clipId ?? captionGroupId, properties: Object.keys(textProps) });
       }
 
       case "add_captions": {
@@ -946,11 +1655,17 @@ export async function executeTool(
         const highlightColor = input.highlightColor as string | undefined;
         const settingsMode = (input.mode as string) ?? useSettingsStore.getState().audioProcessingMode ?? "local";
 
-        // Build caption style
-        const captionProps: Record<string, unknown> = {};
-        if (input.centerX !== undefined || input.centerY !== undefined) {
-          captionProps.position = [(input.centerX as number) ?? 0.5, (input.centerY as number) ?? 0.85];
-        }
+        // Build caption style. Position is always explicit so VideoFlow's
+        // default center placement cannot override the caption-safe location.
+        const defaultCenterY = getDefaultCaptionCenterY(editor.video.width || 1920, editor.video.height || 1080);
+        const requestedCenterX = input.centerX !== undefined ? Number(input.centerX) : 0.5;
+        const requestedCenterY = input.centerY !== undefined ? Number(input.centerY) : defaultCenterY;
+        const captionProps: Record<string, unknown> = {
+          position: [
+            Math.max(0, Math.min(1, Number.isFinite(requestedCenterX) ? requestedCenterX : 0.5)),
+            Math.max(0, Math.min(1, Number.isFinite(requestedCenterY) ? requestedCenterY : defaultCenterY)),
+          ],
+        };
         if (input.fontName !== undefined) captionProps.fontFamily = input.fontName;
         if (input.fontSize !== undefined) captionProps.fontSize = input.fontSize;
         if (input.color !== undefined) captionProps.color = input.color;
@@ -958,24 +1673,8 @@ export async function executeTool(
         if (input.isItalic !== undefined) captionProps.fontStyle = input.isItalic ? "italic" : "normal";
 
         // Get clips to transcribe — prefer audio tracks, skip video layers with linked audio partners
-        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
         const layers = editor.video.layers ?? [];
-        let captionTargets = targetClipIds
-          ? layers.filter((l: any) => targetClipIds.includes(l.id))
-          : layers.filter((l: any) => l.type === "video" || l.type === "audio");
-        // When both video+audio linked layers exist, only transcribe the audio layer
-        if (!targetClipIds) {
-          const videoLayers = captionTargets.filter((l: any) => l.type === "video");
-          const audioLayerIds = new Set(
-            captionTargets.filter((l: any) => l.type === "audio").map((l: any) => l.id)
-          );
-          captionTargets = captionTargets.filter((l: any) => {
-            if (l.type !== "video") return true;
-            // Skip video layer if it has a linked audio partner in the targets
-            const partner = findLinkedPartnerIn(layers, l.id);
-            return !partner || !audioLayerIds.has(partner.id);
-          });
-        }
+        const captionTargets = selectTranscriptTargets(layers, targetClipIds, fps);
 
         if (captionTargets.length === 0) {
           return JSON.stringify({ error: "No audio/video clips found for captioning." });
@@ -1034,7 +1733,12 @@ export async function executeTool(
           return phrases;
         };
 
-        const captionTrack = getCaptionTrack(layers);
+        const tracks = editor.video.tracks ?? [];
+        const captionTrack = getCaptionTrackIndex(layers, tracks);
+        if (captionTrack >= tracks.length) {
+          const { commands: cmds } = await import("@videoflow/react-video-editor");
+          cmds.setTrackSettingsCommand(commit, captionTrack, { name: "Captions" });
+        }
 
         for (const layer of captionTargets) {
           const source = getLayerSource(layer);
@@ -1116,6 +1820,9 @@ export async function executeTool(
             });
           }
 
+          const captionKey = `${getTranscriptTargetKey(layer, fps)}|lang:${language ?? ""}|words:${Math.max(2, maxWords)}|case:${textCase}`;
+          await removeExistingGeneratedCaptions(commit, layer, fps);
+
           const phrases = buildCaptionPhrases(
             wordsToUse.map((w) => ({
               text: w.text,
@@ -1157,6 +1864,11 @@ export async function executeTool(
               setTrack(commit, captionLayerId, captionTrack);
               const { commands: cmds } = await import("@videoflow/react-video-editor");
               await cmds.setSettingCommand(commit, captionLayerId, "name", displayText.slice(0, 40));
+              await cmds.setSettingCommand(commit, captionLayerId, "generatedBy", "add_captions");
+              await cmds.setSettingCommand(commit, captionLayerId, "captionKey", captionKey);
+              await cmds.setSettingCommand(commit, captionLayerId, "captionTargetId", layer.id);
+              await cmds.setSettingCommand(commit, captionLayerId, "captionSource", source);
+              await cmds.setSettingCommand(commit, captionLayerId, "captionTrack", captionTrack);
             }
             totalCaptions++;
           }
@@ -1177,8 +1889,8 @@ export async function executeTool(
       }
 
       case "remove_words": {
-        const words = input.words as (number | number[])[] | undefined;
-        const matches = input.matches as string[] | undefined;
+        const words = (input.words as (number | number[])[] | undefined) ?? (input.removals as (number | number[])[] | undefined);
+        const matches = (input.matches as string[] | undefined) ?? (input.removalTokens as string[] | undefined);
         const cutAggressiveness = (input.cutAggressiveness as string) ?? "balanced";
 
         if (!words && !matches) return JSON.stringify({ error: "Provide words (indices) or matches (tokens) to remove" });
@@ -1285,7 +1997,8 @@ export async function executeTool(
         }
 
         for (const [clipId, clipWords] of byClip) {
-          const layer = layers.find((l: any) => l.id === clipId);
+          const liveLayers = useEditorStore.getState().video.layers ?? [];
+          const layer = liveLayers.find((l: any) => l.id === clipId);
           if (!layer) continue;
           const { startTime: clipStartTime, sourceDuration: clipSourceDuration, speed: clipSpeed } = getLayerTiming(layer);
           const effectiveSpeed = Math.max(Math.abs(clipSpeed), MIN_SPEED);
@@ -1299,7 +2012,8 @@ export async function executeTool(
           for (const range of ranges) {
             const delDuration = (range.endFrame - range.startFrame) / fps;
             // Remove clips fully within range
-            const inRange = layers.filter((l: any) => {
+            const liveBeforeDelete = useEditorStore.getState().video.layers ?? [];
+            const inRange = liveBeforeDelete.filter((l: any) => {
               const st = Math.round((l.settings?.startTime ?? 0) * fps);
               const dur = Math.round((l.settings?.sourceDuration ?? 0) * fps);
               return st >= range.startFrame && st + dur <= range.endFrame;
@@ -1308,7 +2022,8 @@ export async function executeTool(
               await removeLayersCommand(commit, inRange.map((l: any) => l.id));
             }
             // Shift clips after range left
-            const shifted = layers
+            const liveAfterDelete = useEditorStore.getState().video.layers ?? [];
+            const shifted = liveAfterDelete
               .filter((l: any) => {
                 const st = Math.round((l.settings?.startTime ?? 0) * fps);
                 return st >= range.endFrame && !inRange.some((r) => r.id === l.id);
@@ -1342,7 +2057,7 @@ export async function executeTool(
       case "apply_layout": {
         const layout = input.layout as string;
         const slots = input.slots as Array<Record<string, unknown>>;
-        const trackIndex = (input.trackIndex as number) ?? 0;
+        const trackIndex = normalizeTrackForKind((input.trackIndex as number) ?? VIDEO_TRACK_BASE, "video");
         if (!layout || !slots) return JSON.stringify({ error: "layout and slots required" });
 
         // Map layout presets to position configurations
@@ -1379,12 +2094,15 @@ export async function executeTool(
               source: asset.url,
               sourceDuration: asset.duration ?? 5,
               startTime: 0,
-              track: trackIndex,
               properties: {
                 position: [pos.x + pos.w / 2, pos.y + pos.h / 2],
                 scale: Math.min(pos.w, pos.h),
               },
             });
+            setTrack(commit, layerId, normalizeTrackForKind(
+              trackIndex,
+              asset.type === "audio" ? "audio" : "video",
+            ));
             layerIds.push(layerId);
           }
         }
@@ -1452,26 +2170,27 @@ export async function executeTool(
 
       // ─── AUDIO ANALYSIS ─────────────────────────────────────────
       case "detect_beats": {
-        const mediaRef = input.mediaRef as string;
+        const resolved = resolveMediaTarget(input.mediaRef as string | undefined);
+        const mediaRef = resolved.mediaRef;
         const startSeconds = input.startSeconds as number | undefined;
         const endSeconds = input.endSeconds as number | undefined;
 
         const mediaStore = useMediaPanelStore.getState();
-        const asset = mediaStore.assets.find((a) => a.id === mediaRef);
-        if (!asset) return JSON.stringify({ error: `Asset not found: ${mediaRef}` });
-        if (!asset.url) return JSON.stringify({ error: `Asset has no URL: ${mediaRef}` });
-        if (asset.type !== "video" && asset.type !== "audio") {
+        const asset = resolved.asset ?? mediaStore.assets.find((a) => a.id === mediaRef || a.url === resolved.sourceUrl);
+        const assetSource = asset?.url ?? resolved.sourceUrl;
+        if (!assetSource) return JSON.stringify({ error: `Asset not found: ${mediaRef ?? "selected media"}` });
+        if (asset && asset.type !== "video" && asset.type !== "audio") {
           return JSON.stringify({ error: "Beat detection requires audio or video with audio." });
         }
 
         try {
           const { detectBeats } = await import("./beatDetector");
-          const result = await detectBeats(asset.url, startSeconds, endSeconds);
+          const result = await detectBeats(assetSource, startSeconds, endSeconds);
           if (result.beats.length === 0) {
-            return JSON.stringify({ mediaRef, beats: [], downbeats: [], bpm: 0, note: "No beats found — the audio may lack rhythmic content." });
+            return JSON.stringify({ mediaRef: mediaRef ?? asset?.id ?? assetSource, beats: [], downbeats: [], bpm: 0, note: "No beats found — the audio may lack rhythmic content." });
           }
           return JSON.stringify({
-            mediaRef,
+            mediaRef: mediaRef ?? asset?.id ?? assetSource,
             units: "source seconds — multiply by fps for frame values",
             beats: result.beats.map((b) => Math.round(b * 1000) / 1000),
             downbeats: result.downbeats.map((d) => Math.round(d * 1000) / 1000),
@@ -1579,7 +2298,10 @@ export async function executeTool(
             const effects = (layer as any).effects ?? [];
             const denoiseIdx = effects.findIndex((e: any) => e.type === "audio.denoise");
             if (denoiseIdx >= 0) {
-              await removeEffectCommand(commit, clipId, denoiseIdx);
+              commit((draft: any) => {
+                const target = draft.layers?.find((x: any) => x.id === clipId);
+                if (target?.effects) target.effects.splice(denoiseIdx, 1);
+              }, { label: "Remove denoise effect" });
             }
           }
           refreshPreview();
@@ -1771,6 +2493,27 @@ export async function executeTool(
         });
         return JSON.stringify(response);
       }
+      case "search_web_media": {
+        const query = String(input.query ?? "").trim();
+        const type = String(input.type ?? "audio") as "audio" | "image" | "video";
+        const limit = Math.min(20, Math.max(1, Number(input.limit) || 8));
+        if (!query) return JSON.stringify({ error: "query is required" });
+        if (!["audio", "image", "video"].includes(type)) {
+          return JSON.stringify({ error: "type must be audio, image, or video" });
+        }
+        try {
+          const results = await searchInternetMedia(query, type, limit);
+          return JSON.stringify({
+            status: "ready",
+            query,
+            type,
+            results,
+            note: "Choose a result, import its URL with import_media, then place the returned asset with add_clips. Verify licensing before publishing.",
+          });
+        } catch (error: any) {
+          return JSON.stringify({ error: `Web media search failed: ${error?.message ?? String(error)}` });
+        }
+      }
       case "search_media": {
         const query = (input.query as string) ?? "";
         const scope = (input.scope as string) ?? "both";
@@ -1848,7 +2591,7 @@ export async function executeTool(
       // ─── MEDIA ORGANIZATION ─────────────────────────────────────
       case "list_folders": {
         const store = useMediaPanelStore.getState();
-        const folders = (store as Record<string, unknown>).folders as Array<Record<string, unknown>> | undefined;
+        const folders = (store as any).folders as Array<Record<string, unknown>> | undefined;
         return JSON.stringify({ folders: folders ?? [] });
       }
       case "create_folder": {
@@ -2019,13 +2762,99 @@ export async function executeTool(
 
       // ─── MEDIA IMPORT ───────────────────────────────────────────
       case "import_media": {
-        const source = input.source as Record<string, string>;
-        const name = (input.name as string) ?? "Imported";
-        if (!source) return JSON.stringify({ error: "source required" });
-        const url = source.url ?? source.path;
-        if (!url) return JSON.stringify({ error: "url or path required in source" });
-        // Placeholder — real import needs download + blob
-        return JSON.stringify({ assetId: `import-${Date.now()}`, name, url, note: "Import started in background. Check get_media for status." });
+        const rawSource = input.source;
+        const sourceObject = rawSource && typeof rawSource === "object"
+          ? rawSource as Record<string, unknown>
+          : null;
+        const base64Bytes = sourceObject?.bytes ?? input.bytes;
+        const source = typeof rawSource === "string"
+          ? rawSource
+          : sourceObject
+            ? String(sourceObject.url ?? sourceObject.path ?? (base64Bytes ? `data:${String(input.mimeType ?? "application/octet-stream")};base64,${String(base64Bytes)}` : ""))
+            : String(input.url ?? input.path ?? (base64Bytes ? `data:${String(input.mimeType ?? "application/octet-stream")};base64,${String(base64Bytes)}` : ""));
+        const name = String(input.name ?? "Imported");
+        if (!source.trim()) return JSON.stringify({ error: "Provide a URL or local path in source" });
+
+        const url = source.trim();
+        const isRemoteUrl = /^https?:\/\//i.test(url) || /^data:/i.test(url) || /^blob:/i.test(url);
+        if (!isRemoteUrl && !url.startsWith("/") && !/^file:\/\//i.test(url)) {
+          return JSON.stringify({ error: "source must be an http(s) URL, data URL, file URL, or absolute local path" });
+        }
+
+        const mediaStore = useMediaPanelStore.getState();
+        const addToTimeline = input.addToTimeline === true;
+        const placementOptions = {
+          startFrame: Number.isFinite(Number(input.startFrame))
+            ? Number(input.startFrame)
+            : editor.currentFrame,
+          durationFrames: Number.isFinite(Number(input.durationFrames))
+            ? Number(input.durationFrames)
+            : undefined,
+          trackIndex: Number.isFinite(Number(input.trackIndex))
+            ? Number(input.trackIndex)
+            : undefined,
+        };
+        const existing = mediaStore.assets.find((asset) => asset.url === url);
+        if (existing) {
+          const timeline = addToTimeline
+            ? await placeAssetOnTimeline(commit, existing, fps, placementOptions)
+            : null;
+          if (timeline) refreshPreview();
+          mediaStore.setPanelTab("media");
+          mediaStore.showToast(`${existing.name} is already in the media library`, "success");
+          return JSON.stringify({
+            status: "ready",
+            assetId: existing.id,
+            name: existing.name,
+            type: existing.type,
+            url: existing.url,
+            alreadyImported: true,
+            timeline,
+          });
+        }
+
+        const type = inferImportedMediaType(url);
+        const assetId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const assetName = importedAssetName(url, name, type);
+        const folderId = typeof input.folderId === "string"
+          ? input.folderId
+          : mediaStore.currentFolderId;
+        mediaStore.addAsset({
+          id: assetId,
+          name: assetName,
+          type,
+          url,
+          duration: type === "image" ? 5 : 10,
+          isGenerated: false,
+          folderId,
+          thumbnailUrl: type === "image" ? url : undefined,
+          createdAt: Date.now(),
+        });
+        mediaStore.setPanelTab("media");
+        mediaStore.showToast(`${assetName} imported`, "success");
+        const timeline = addToTimeline
+          ? await placeAssetOnTimeline(commit, {
+              id: assetId,
+              name: assetName,
+              type,
+              url,
+              duration: type === "image" ? 5 : 10,
+            }, fps, placementOptions)
+          : null;
+        if (timeline) refreshPreview();
+
+        return JSON.stringify({
+          status: "ready",
+          assetId,
+          name: assetName,
+          type,
+          url,
+          folderId,
+          timeline,
+          note: timeline
+            ? "Asset added to the Media panel and timeline."
+            : "Asset added to the Media panel. Use this assetId with add_clips to place it on the timeline.",
+        });
       }
 
       // ─── SHAPE ──────────────────────────────────────────────────
@@ -2117,6 +2946,7 @@ export async function executeTool(
                 duration: duration ?? 5,
                 isGenerated: true,
                 folderId: mediaStore.currentFolderId,
+                thumbnailUrl: type === "image" ? url : undefined,
                 createdAt: Date.now(),
               });
               return JSON.stringify({
@@ -2145,6 +2975,7 @@ export async function executeTool(
               duration: duration ?? 5,
               isGenerated: true,
               folderId: mediaStore.currentFolderId,
+              thumbnailUrl: type === "image" ? url : undefined,
               createdAt: Date.now(),
             });
             return JSON.stringify({
@@ -2201,10 +3032,6 @@ export async function executeTool(
           { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", type: "audio", description: "Fast TTS" },
           { id: "fun-music-v1", name: "FunMusic v1", type: "audio", description: "Music generation" },
           { id: "fun-music-preview", name: "FunMusic Preview", type: "audio", description: "Music generation preview" },
-          { id: "sonilo-v1.1-text-to-music", name: "Sonilo Text→Music", type: "audio", description: "Text-to-music generation" },
-          { id: "sonilo-v1.1-video-to-music", name: "Sonilo Video→Music", type: "audio", description: "Video-to-music generation" },
-          { id: "mirelo-sfx-v1.5-text-to-sfx", name: "Mirelo Text→SFX", type: "audio", description: "Text-to-sound effect" },
-          { id: "mirelo-sfx-v1.5-video-to-audio", name: "Mirelo Video→SFX", type: "audio", description: "Video-to-sound effect" },
           // Transcription
           { id: "fun-asr", name: "Fun ASR", type: "transcription", description: "Batch file transcription with speaker diarization" },
           { id: "fun-asr-realtime", name: "Fun ASR Realtime", type: "transcription", description: "Real-time ASR with hotwords" },
@@ -2229,7 +3056,34 @@ export async function executeTool(
       }
 
       case "export_project": {
-        return JSON.stringify({ message: "Export is not yet implemented in the Electrobun build. Use the Export dialog manually." });
+        const mode = String(input.mode ?? "video");
+        const fileName = String(input.fileName ?? editor.video?.name ?? "Untitled");
+        const savedFileHandle = useExportStore.getState().savedFileHandle;
+        if (mode === "video") {
+          const exportStore = useExportStore.getState();
+          if (typeof input.codec === "string") exportStore.setCodec(input.codec as any);
+          if (typeof input.resolution === "string") exportStore.setResolution(input.resolution as any);
+          exportStore.setDestination("video");
+          exportStore.open();
+          return JSON.stringify({ opened: true, mode, message: "Opened export dialog for video export." });
+        }
+        if (mode === "xml") {
+          const timelineFormat = input.format === "xmeml" ? "xmeml" : "fcpxml";
+          const content = getTimelineExportText(editor.video, timelineFormat);
+          const ext = timelineFormat === "fcpxml" ? "fcpxml" : "xml";
+          const saved = await saveText(content, fileName, ext, "Timeline", "application/xml", savedFileHandle);
+          return JSON.stringify(saved
+            ? { saved: true, mode, format: timelineFormat, fileName: `${fileName}.${ext}` }
+            : { cancelled: true, mode, format: timelineFormat });
+        }
+        if (mode === "filmidi") {
+          const content = await serializeFilmidiPackage();
+          const saved = await saveText(content, fileName, "filmidi", "Filmidi Project", "application/json", savedFileHandle);
+          return JSON.stringify(saved
+            ? { saved: true, mode, fileName: `${fileName}.filmidi` }
+            : { cancelled: true, mode });
+        }
+        return JSON.stringify({ error: `Unsupported export mode: ${mode}` });
       }
 
       // ─── MULTICAM ───────────────────────────────────────────────
@@ -2260,9 +3114,84 @@ export async function executeTool(
       }
 
       // ─── PROJECT NAVIGATION ─────────────────────────────────────
-      case "get_projects": return JSON.stringify({ projects: [], note: "Multi-project not yet supported." });
-      case "open_project": return JSON.stringify({ error: "Multi-project not yet supported." });
-      case "new_project": return JSON.stringify({ error: "Multi-project not yet supported." });
+      case "save_project": {
+        const { useAgentStore } = await import("@/store/useAgentStore");
+        const projectStore = useProjectStore.getState();
+        const saveStore = useProjectSaveStore.getState();
+        const projectId = projectStore.currentProjectId;
+        if (!projectId) return JSON.stringify({ error: "No active project to save." });
+        const currentProject = projectStore.projects.find((p) => p.id === projectId);
+        const timeline = editor.video;
+        await dbSaveProject({
+          id: projectId,
+          name: currentProject?.name ?? timeline.name ?? "Untitled Project",
+          width: timeline.width ?? currentProject?.width ?? 1920,
+          height: timeline.height ?? currentProject?.height ?? 1080,
+          fps: timeline.fps ?? currentProject?.fps ?? 30,
+        });
+        await saveStore.saveProject({
+          timeline,
+          mediaManifest: {
+            assets: useMediaPanelStore.getState().assets,
+            folders: useMediaPanelStore.getState().folders,
+          },
+          generationLog: useGenerationStore.getState().history,
+          chatHistory: useAgentStore.getState().sessions,
+        });
+        return JSON.stringify({ saved: projectId });
+      }
+      case "save_project_as": {
+        const { useAgentStore } = await import("@/store/useAgentStore");
+        const projectStore = useProjectStore.getState();
+        const saveStore = useProjectSaveStore.getState();
+        const currentId = projectStore.currentProjectId;
+        if (!currentId) return JSON.stringify({ error: "No active project to duplicate." });
+        const current = projectStore.projects.find((p) => p.id === currentId);
+        const baseName = current?.name ?? editor.video?.name ?? "Untitled Project";
+        const name = String(input.name ?? `${baseName} Copy`).trim() || `${baseName} Copy`;
+        const timeline = editor.video;
+        const newId = projectStore.addProject(name, {
+          width: timeline.width ?? current?.width ?? 1920,
+          height: timeline.height ?? current?.height ?? 1080,
+          fps: timeline.fps ?? current?.fps ?? 30,
+        }, { select: false });
+        await saveStore.importProject(newId, {
+          timeline,
+          mediaManifest: {
+            assets: useMediaPanelStore.getState().assets,
+            folders: useMediaPanelStore.getState().folders,
+          },
+          generationLog: useGenerationStore.getState().history,
+          chatHistory: useAgentStore.getState().sessions,
+        });
+        projectStore.openProject(newId);
+        return JSON.stringify({ savedAs: newId, name });
+      }
+      case "get_projects": {
+        const projects = useProjectStore.getState().projects;
+        return JSON.stringify({ projects });
+      }
+      case "open_project": {
+        const id = String(input.projectId ?? input.id ?? "");
+        const path = String(input.path ?? "");
+        if (id) {
+          useProjectStore.getState().openProject(id);
+          return JSON.stringify({ opened: id });
+        }
+        if (path) {
+          return JSON.stringify({ error: "Path-based project opening is not supported in this build. Use projectId from get_projects." });
+        }
+        return JSON.stringify({ error: "projectId or path is required" });
+      }
+      case "new_project": {
+        const name = String(input.name ?? "Untitled Project");
+        const id = useProjectStore.getState().addProject(name, {
+          width: Number(input.width ?? editor.video.width ?? 1920),
+          height: Number(input.height ?? editor.video.height ?? 1080),
+          fps: Number(input.fps ?? editor.video.fps ?? 30),
+        });
+        return JSON.stringify({ created: id, name });
+      }
 
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });

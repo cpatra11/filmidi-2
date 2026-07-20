@@ -3,13 +3,14 @@
   "version": "0.0.1",
   "description": "Filmidi video editor powered by Electrobun and VideoFlow",
   "scripts": {
-    "postinstall": "bun run patches/patch-dom-renderer.ts && bun run patches/patch-video-editor.ts && bun run patches/patch-video-layer.ts",
-    "start": "vite build && electrobun dev",
-    "dev": "electrobun dev --watch",
+    "postinstall": "bun run patches/patch-dom-renderer.ts && bun run patches/patch-video-editor.ts && bun run patches/patch-video-layer.ts && bun run patches/patch-track-normalization.ts",
+    "build:sidecar": "bash scripts/build-sidecar.sh",
+    "start": "bun run build:sidecar && vite build && electrobun dev",
+    "dev": "bun run build:sidecar && electrobun dev --watch",
     "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
     "hmr": "vite --port 5173",
-    "build": "vite build && electrobun build --env=canary",
-    "build:prod": "vite build && electrobun build --env=production"
+    "build": "bun run build:sidecar && vite build && electrobun build --env=canary",
+    "build:prod": "bun run build:sidecar && vite build && electrobun build --env=production"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.14",

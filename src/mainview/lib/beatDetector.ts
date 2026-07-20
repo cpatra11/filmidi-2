@@ -8,6 +8,7 @@
  */
 
 import { decodeAudioToMono, computeEnvelope } from "./webAudio";
+import { requestNativeMedia } from "./nativeMediaBridge";
 
 export interface BeatAnalysis {
   bpm: number;
@@ -28,6 +29,15 @@ export async function detectBeats(
   startSeconds?: number,
   endSeconds?: number
 ): Promise<BeatAnalysis> {
+  const nativeResult = await requestNativeMedia<BeatAnalysis>("detect-beats", {
+    url,
+    startSeconds,
+    endSeconds,
+  });
+  if (nativeResult?.beats) {
+    return nativeResult;
+  }
+
   const { samples, sampleRate } = await decodeAudioToMono(url);
 
   // Trim to window

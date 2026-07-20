@@ -19,6 +19,17 @@ import {
   type Magnet,
 } from "@videoflow/react-video-editor";
 import { getLayerLinkId, findLinkedPartnerIn } from "@/lib/linkUtils";
+import {
+  AUDIO_TRACK_BASE,
+  VIDEO_TRACK_BASE,
+  clampMoveToTrack,
+  clampTimeDeltaToFreeSpace,
+  getTimelineTrackKind,
+  localTrackForKind,
+  normalizeTrackForKind,
+  wouldOverlap,
+  type TimelineTrackKind,
+} from "@/lib/timelineMove";
 import { useAppStore } from "@/store/useAppStore";
 import "./CustomTimeline.css";
 
@@ -28,8 +39,27 @@ const RULER_HEIGHT = 26;
 const MIN_SCALE = 20;
 const MAX_SCALE = 2000;
 
-// VideoFlow's own valid source types
-const VIDEO_TYPES = new Set(["video", "image", "text", "shape", "captions", "group"]);
+type DragMoveItem = {
+  id: string;
+  startTime: number;
+  track: number;
+  kind: TimelineTrackKind;
+  duration: number;
+};
+
+type DragMoveState = {
+  pointerId: number;
+  pointerTarget: HTMLElement;
+  primaryId: string;
+  ids: string[];
+  initial: Map<string, DragMoveItem>;
+  startClientX: number;
+  startClientY: number;
+  lastClientX: number;
+  lastClientY: number;
+};
+
+type DragPreview = { timeDelta: number; trackDelta: number };
 
 // ─── Tick generation ─────────────────────────────────────────
 function niceStep(rawStep: number): number {
@@ -155,6 +185,8 @@ function TimelineClip({
   onHandlePointerDown,
   onDoubleClick,
   onContextMenu,
+  preview,
+  trackHeight,
 }: {
   layer: LayerJSON;
   scale: number;
@@ -164,6 +196,8 @@ function TimelineClip({
   onHandlePointerDown: (e: React.PointerEvent, layer: LayerJSON, edge: "start" | "end") => void;
   onDoubleClick: (e: React.MouseEvent, layer: LayerJSON) => void;
   onContextMenu: (e: React.MouseEvent, layer: LayerJSON) => void;
+  preview?: DragPreview;
+  trackHeight: number;
 }) {
   const bounds = layerTimelineBounds(layer);
   const start = bounds.start - groupOffset;
@@ -213,7 +247,14 @@ function TimelineClip({
       data-linked={hasLink || undefined}
       data-locked={isLocked || undefined}
       data-disabled={!layer.settings.enabled || undefined}
-      style={{ left, width }}
+      style={{
+        left,
+        width,
+        transform: preview
+          ? `translate(${preview.timeDelta * scale}px, ${-preview.trackDelta * trackHeight}px)`
+          : undefined,
+        zIndex: preview ? 20 : undefined,
+      }}
       onPointerDown={(e) => onPointerDown(e, layer)}
       onDoubleClick={(e) => onDoubleClick(e, layer)}
       onContextMenu={(e) => onContextMenu(e, layer)}
@@ -332,6 +373,11 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
   const [selectionRange, setSelectionRange] = useState<{ start: number; end: number } | null>(null);
   const [markers, setMarkers] = useState<Array<{ time: number; label: string }>>([]);
+  const [dragPreview, setDragPreview] = useState<Map<string, DragPreview>>(new Map());
+  const dragPreviewRef = useRef<Map<string, DragPreview>>(new Map());
+  const dragMoveStateRef = useRef<DragMoveState | null>(null);
+  const dragMoveRafRef = useRef<number | null>(null);
+  const lastSnapGuideRef = useRef<number | null>(null);
 
   const { fps, duration: videoDuration } = video;
   const scale = viewport.timelineScale;
@@ -372,50 +418,69 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     return video.tracks ?? [];
   }, [video.tracks]);
 
-  // Keep the editor's real track assignments. Packing by overlap would make
-  // the timeline disagree with agent commands and track controls.
-  const { videoLayers, audioLayers } = useMemo(() => {
-    const vLayers: LayerJSON[] = [];
-    const aLayers: LayerJSON[] = [];
-    for (const l of layers) {
-      if (l.type === "audio") {
-        aLayers.push(l);
-      } else {
-        vLayers.push(l);
-      }
-    }
-
-    return { videoLayers: vLayers, audioLayers: aLayers };
-  }, [layers]);
-
-  // Group video/audio layers into rows keyed by their actual global track.
-  const { videoRows, audioRows } = useMemo(() => {
-    const groupIntoRows = (ls: LayerJSON[]) => {
-      const grouped = new Map<number, LayerJSON[]>();
-      for (const layer of ls) {
-        const track = Math.max(0, Math.floor(layer.track ?? 0));
-        const row = grouped.get(track) ?? [];
-        row.push(layer);
-        grouped.set(track, row);
-      }
-      return Array.from(grouped.entries())
-        .sort(([a], [b]) => a - b)
-        .map(([trackIdx, row]) => ({
-          trackIdx,
-          layers: row.sort((a, b) =>
-            (a.settings.startTime ?? 0) - (b.settings.startTime ?? 0)),
-        }));
-    };
-
+  // Audio and visual layers use separate track bands. An empty project starts
+  // with one video lane; typed lanes appear as media is added.
+  const timelineTrackCounts = (video as any).timelineTrackCounts ?? {};
+  const { audioRows, videoRows } = useMemo(() => {
+    const hasAudio = layers.some((layer) => layer.type === "audio");
+    const hasVideo = layers.some((layer) => layer.type !== "audio");
+    const maxAudioTrack = layers.reduce((max, layer) => {
+      if (layer.type !== "audio") return max;
+      return Math.max(max, localTrackForKind(layer.track, "audio"));
+    }, 0);
+    const maxVideoTrack = layers.reduce((max, layer) => {
+      if (layer.type === "audio") return max;
+      return Math.max(max, localTrackForKind(layer.track, "video"));
+    }, 0);
+    // Track metadata can contain sparse/legacy entries (for example, assigning
+    // a video clip to virtual track 10 used to materialize tracks 0..10).
+    // Rows are a view of actual clip placement, so empty metadata must not
+    // create visible tracks.
+    const requestedAudioCount = Number(timelineTrackCounts.audio) || 0;
+    const requestedVideoCount = Number(timelineTrackCounts.video) || 0;
+    const audioCount = hasAudio
+      ? Math.max(maxAudioTrack + 1, requestedAudioCount)
+      : requestedAudioCount;
+    const videoCount = hasVideo
+      ? Math.max(maxVideoTrack + 1, requestedVideoCount)
+      : hasAudio
+        ? requestedVideoCount
+        : Math.max(1, requestedVideoCount);
+    const makeRows = (kind: TimelineTrackKind, count: number) => Array.from({ length: count }, (_, localIdx) => {
+      const trackIdx = (kind === "audio" ? AUDIO_TRACK_BASE : VIDEO_TRACK_BASE) + localIdx;
+      return {
+        trackIdx,
+        kind,
+        layers: layers
+          .filter((layer) => getTimelineTrackKind(layer) === kind)
+          .filter((layer) => localTrackForKind(layer.track, kind) === localIdx)
+          .sort((a, b) => (a.settings.startTime ?? 0) - (b.settings.startTime ?? 0)),
+      };
+    });
     return {
-      videoRows: groupIntoRows(videoLayers),
-      audioRows: groupIntoRows(audioLayers),
+      audioRows: makeRows("audio", audioCount),
+      videoRows: makeRows("video", videoCount),
     };
-  }, [videoLayers, audioLayers]);
+  }, [layers, trackMeta.length, timelineTrackCounts.audio, timelineTrackCounts.video]);
 
-  const videoTrackCount = videoRows.length;
-  const audioTrackCount = audioRows.length;
-  const totalTrackCount = videoTrackCount + audioTrackCount;
+
+  // Repair timelines created by the previous mixed-track drag behavior. This
+  // runs only when a layer is outside its typed band.
+  useEffect(() => {
+    const repairs = layers
+      .map((layer) => ({
+        id: layer.id,
+        track: normalizeTrackForKind(layer.track, getTimelineTrackKind(layer)),
+      }))
+      .filter((repair, index) => repair.track !== layers[index]?.track);
+    if (repairs.length === 0) return;
+    void commit((draft: any) => {
+      for (const repair of repairs) {
+        const layer = draft.layers?.find((candidate: any) => candidate.id === repair.id);
+        if (layer) layer.track = repair.track;
+      }
+    }, { label: "Repair typed track assignments" });
+  }, [layers, commit]);
 
   // Ticks
   const ticks = useMemo(
@@ -483,21 +548,6 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     },
     [scale, setViewport, handleScroll],
   );
-
-  // ─── Auto-fit on video change ────────────────────────────────
-  useEffect(() => {
-    const body = bodyRef.current;
-    if (!body) return;
-    const clientWidth = body.clientWidth - HEADER_WIDTH;
-    if (clientWidth <= 0) return;
-    const newScale = Math.min(
-      MAX_SCALE,
-      Math.max(MIN_SCALE, clientWidth / (availableDuration * 1.2)),
-    );
-    setViewport({ timelineScale: newScale, timelineScroll: 0 });
-    body.scrollLeft = 0;
-    handleScroll();
-  }, [availableDuration]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Auto-scroll during playback ─────────────────────────────
   useEffect(() => {
@@ -627,6 +677,34 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     [bridge, fps, scale, availableDuration, groupOffset],
   );
 
+  const trackAtPointer = useCallback((clientX: number, clientY: number, kind: TimelineTrackKind): number | null => {
+    const tracks = tracksRef.current;
+    if (!tracks) return null;
+    const rows = Array.from(
+      tracks.querySelectorAll<HTMLElement>(`.ct-track-row[data-track-kind="${kind}"]`),
+    );
+    if (rows.length === 0) return null;
+    const hovered = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(".ct-track-row");
+    if (
+      hovered?.dataset.trackKind === kind &&
+      hovered.dataset.trackIndex &&
+      hovered.dataset.disabled !== "true"
+    ) {
+      return Number(hovered.dataset.trackIndex);
+    }
+    let nearest: { track: number; distance: number } | null = null;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      const distance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+      const track = Number(row.dataset.trackIndex);
+      if (row.dataset.disabled === "true") continue;
+      if (Number.isFinite(track) && (!nearest || distance < nearest.distance)) {
+        nearest = { track, distance };
+      }
+    }
+    return nearest?.track ?? null;
+  }, []);
+
   // ─── Clip selection — also handles razor/blade tool ──────────
   const handleClipPointerDown = useCallback(
     (e: React.PointerEvent, layer: LayerJSON) => {
@@ -730,11 +808,14 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       // Start drag detection
       const startClientX = e.clientX;
       const startClientY = e.clientY;
-      let moved = false;
       const pointerId = e.pointerId;
+      const pointerTarget = e.currentTarget as HTMLElement;
+      try {
+        pointerTarget.setPointerCapture(pointerId);
+      } catch {}
 
       // Store initial positions of all selected layers + their linked partners
-      const selectedIds = e.shiftKey || e.metaKey || e.ctrlKey
+      const selectedIds = (e.shiftKey || e.metaKey || e.ctrlKey || isSelected)
         ? useEditorStore.getState().selection.layerIds
         : [layer.id];
 
@@ -748,86 +829,201 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       }
       const moveIdArray = Array.from(moveIds);
 
-      const initialPositions = new Map<string, { startTime: number; track: number }>();
+      const initialPositions = new Map<string, DragMoveItem>();
       for (const id of moveIdArray) {
         const l = allLayers.find((x) => x.id === id);
         if (l) {
+          const kind = getTimelineTrackKind(l);
           initialPositions.set(id, {
+            id,
             startTime: l.settings.startTime ?? 0,
-            track: l.track ?? 0,
+            track: normalizeTrackForKind(l.track, kind),
+            kind,
+            duration: layerTimelineBounds(l).end - layerTimelineBounds(l).start,
           });
         }
       }
+      const moveItemsForCommit = moveIdArray
+        .map((id) => initialPositions.get(id))
+        .filter((item): item is DragMoveItem => !!item);
+
+      dragMoveStateRef.current = {
+        pointerId,
+        pointerTarget,
+        primaryId: layer.id,
+        ids: moveIdArray,
+        initial: initialPositions,
+        startClientX,
+        startClientY,
+        lastClientX: startClientX,
+        lastClientY: startClientY,
+      };
+
+      const setSnapGuide = (time: number | null) => {
+        if (lastSnapGuideRef.current === time) return;
+        lastSnapGuideRef.current = time;
+        setSnapGuideTime(time);
+      };
+
+      const previewMove = (timeDelta: number, trackDelta: number) => {
+        const next = new Map<string, DragPreview>();
+        for (const id of moveIdArray) next.set(id, { timeDelta, trackDelta });
+        dragPreviewRef.current = next;
+        setDragPreview(next);
+      };
+
+      const runDragMove = () => {
+        const drag = dragMoveStateRef.current;
+        if (!drag || drag.pointerId !== pointerId) return;
+
+        const liveEditor = useEditorStore.getState();
+        const liveLayers = liveEditor.video.layers ?? [];
+        const fpsNow = liveEditor.video.fps || fps;
+        const currentPlayheadTime = liveEditor.currentFrame / fpsNow - groupOffset;
+        const snapEnabled = useAppStore.getState().snapEnabled;
+        const dx = drag.lastClientX - drag.startClientX;
+        const primary = drag.initial.get(drag.primaryId);
+        if (!primary) return;
+
+        const magnets = snapEnabled
+          ? computeMagnets(liveLayers, new Set(drag.ids), currentPlayheadTime)
+          : [];
+
+        const primaryDesired = primary.startTime + dx / scale;
+        let primaryDelta = primaryDesired - primary.startTime;
+        if (snapEnabled) {
+          const snap = snapTime(primaryDesired, magnets, scale, DEFAULT_SNAP_PIXELS);
+          if (snap) {
+            primaryDelta = snap.time - primary.startTime;
+            setSnapGuide(snap.time);
+          } else {
+            setSnapGuide(null);
+          }
+        } else {
+          setSnapGuide(null);
+        }
+
+        const targetTrack = trackAtPointer(drag.lastClientX, drag.lastClientY, primary.kind);
+        if (targetTrack === null) return;
+        const trackDelta =
+          localTrackForKind(targetTrack, primary.kind) - localTrackForKind(primary.track, primary.kind);
+
+        const moveItems = drag.ids
+          .map((id) => drag.initial.get(id))
+          .filter((item): item is DragMoveItem => !!item);
+        const selectedSet = new Set(drag.ids);
+        const fits = (timeDelta: number, deltaTrack: number) =>
+          moveItems.every((item) => {
+            const nextTrack = normalizeTrackForKind(item.track + deltaTrack, item.kind);
+            const nextStart = Math.max(0, item.startTime + timeDelta);
+            return !wouldOverlap(liveLayers, nextTrack, nextStart, item.duration, selectedSet);
+          });
+
+        const timeOnly = primaryDelta;
+        const trackOnly = trackDelta;
+        if (fits(timeOnly, trackOnly)) {
+          previewMove(timeOnly, trackOnly);
+          return;
+        }
+        if (trackOnly !== 0 && fits(0, trackOnly)) {
+          previewMove(0, trackOnly);
+          return;
+        }
+        if (fits(timeOnly, 0)) {
+          previewMove(timeOnly, 0);
+          return;
+        }
+
+        const clampedTime = clampTimeDeltaToFreeSpace(liveLayers, moveItems, trackOnly, timeOnly, selectedSet);
+        if (clampedTime !== timeOnly || trackOnly !== 0) {
+          const clampedFits = fits(clampedTime, trackOnly);
+          if (clampedFits) {
+            previewMove(clampedTime, trackOnly);
+            return;
+          }
+          if (clampedTime !== 0 && fits(clampedTime, 0)) {
+            previewMove(clampedTime, 0);
+            return;
+          }
+        }
+
+        if (moveItems.length === 1) {
+          const item = moveItems[0];
+          const desiredTrack = normalizeTrackForKind(item.track + trackOnly, item.kind);
+          const desiredStart = Math.max(0, item.startTime + timeOnly);
+          const clampedStart = clampMoveToTrack(liveLayers, desiredTrack, desiredStart, item.duration, selectedSet);
+          if (clampedStart !== null) {
+            previewMove(clampedStart - item.startTime, desiredTrack - item.track);
+            return;
+          }
+        }
+
+        setSnapGuide(null);
+        previewMove(0, 0);
+      };
+
+      const scheduleDragMove = () => {
+        if (dragMoveRafRef.current !== null) return;
+        dragMoveRafRef.current = window.requestAnimationFrame(() => {
+          dragMoveRafRef.current = null;
+          runDragMove();
+        });
+      };
 
       const onMove = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return;
-        const dx = ev.clientX - startClientX;
-        const dy = ev.clientY - startClientY;
-        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-          moved = true;
-        }
-        if (!moved) return;
-
-        const deltaTime = dx / scale;
-        const deltaTrack = Math.round(-dy / trackHeight);
-
-        // Compute new positions with snapping
-        const snapEnabled = useAppStore.getState().snapEnabled;
-        const magnets = snapEnabled ? computeMagnets(
-          allLayers,
-          new Set(moveIdArray),
-          playheadTime,
-        ) : [];
-
-        const newPositions: Array<{ id: string; startTime: number; track: number }> = [];
-        let sharedTime: number | null = null;
-        for (const id of moveIdArray) {
-          const initial = initialPositions.get(id);
-          if (!initial) continue;
-          let newTime = initial.startTime + deltaTime;
-          if (snapEnabled) {
-            const snap = snapTime(sharedTime ?? newTime, magnets, scale, DEFAULT_SNAP_PIXELS);
-            if (snap) {
-              newTime = snap.time;
-              sharedTime = snap.time;
-              setSnapGuideTime(snap.time);
-            } else {
-              sharedTime = sharedTime ?? newTime;
-              setSnapGuideTime(null);
-            }
-          } else {
-            sharedTime = sharedTime ?? newTime;
-            setSnapGuideTime(null);
+        const drag = dragMoveStateRef.current;
+        if (!drag || drag.pointerId !== pointerId) return;
+        drag.lastClientX = ev.clientX;
+        drag.lastClientY = ev.clientY;
+        const body = bodyRef.current;
+        if (body) {
+          const rect = body.getBoundingClientRect();
+          const edge = 48;
+          if (ev.clientX > rect.right - edge) {
+            body.scrollLeft = Math.min(body.scrollWidth, body.scrollLeft + 24);
+          } else if (ev.clientX < rect.left + HEADER_WIDTH + edge) {
+            body.scrollLeft = Math.max(0, body.scrollLeft - 24);
           }
-          const layer = allLayers.find((candidate) => candidate.id === id);
-          const clipDuration = layer ? layerTimelineBounds(layer).end - layerTimelineBounds(layer).start : 0;
-          newTime = Math.max(0, Math.min(Math.max(0, availableDuration - clipDuration), newTime));
-          const newTrack = Math.max(0, initial.track + deltaTrack);
-          newPositions.push({ id, startTime: newTime, track: newTrack });
+          handleScroll();
         }
-
-        editor.commit((draft) => {
-          for (const pos of newPositions) {
-            const l = draft.layers.find((x: any) => x.id === pos.id);
-            if (l) {
-              l.settings.startTime = pos.startTime;
-              l.track = pos.track;
-            }
-          }
-        }, { label: "move", mergeKey: `move:${moveIdArray.sort().join(",")}` });
+        scheduleDragMove();
       };
 
       // Clear snap guide when pointer comes up
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        if (dragMoveRafRef.current !== null) {
+          window.cancelAnimationFrame(dragMoveRafRef.current);
+          dragMoveRafRef.current = null;
+        }
+        const preview = dragPreviewRef.current;
+        const firstPreview = preview.get(moveIdArray[0]);
+        if (firstPreview) {
+          void commands.moveLayersCommand(
+            editor.commit,
+            moveItemsForCommit.map((item) => ({
+              id: item.id,
+              startTime: Math.max(0, item.startTime + firstPreview.timeDelta),
+              track: Math.max(0, item.track + firstPreview.trackDelta),
+            })),
+          );
+        }
+        dragPreviewRef.current = new Map();
+        setDragPreview(new Map());
+        dragMoveStateRef.current = null;
+        try {
+          pointerTarget.releasePointerCapture(pointerId);
+        } catch {}
+        lastSnapGuideRef.current = null;
         setSnapGuideTime(null);
       };
 
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [selection, video, scale, playheadTime, availableDuration],
+    [selection, video, scale, playheadTime, availableDuration, trackHeight, handleScroll, trackAtPointer],
   );
 
   // ─── Trim/resize handle — also trims linked partner ──────────
@@ -858,6 +1054,27 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       const partnerSourceStart = partner?.settings.sourceStart ?? 0;
       const partnerSourceDuration = partner?.settings.sourceDuration ?? 0;
       const partnerSpeed = Math.abs(partner?.settings.speed ?? 1);
+      let pendingTrim: (() => void) | null = null;
+      let trimFrame: number | null = null;
+      const queueTrim = (operation: () => void) => {
+        pendingTrim = operation;
+        if (trimFrame !== null) return;
+        trimFrame = window.requestAnimationFrame(() => {
+          trimFrame = null;
+          const next = pendingTrim;
+          pendingTrim = null;
+          next?.();
+        });
+      };
+      const flushTrim = () => {
+        if (trimFrame !== null) {
+          window.cancelAnimationFrame(trimFrame);
+          trimFrame = null;
+        }
+        const next = pendingTrim;
+        pendingTrim = null;
+        next?.();
+      };
 
       const onMove = (ev: PointerEvent) => {
         const dx = ev.clientX - startClientX;
@@ -880,16 +1097,15 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           const newStartTime = initialStart + shift;
           const newSourceDuration = initialSourceDuration - shift * speed;
           if (newSourceDuration > 0.01) {
-            commands.trimStartCommand(editor.commit, layer.id, newSourceStart, newStartTime, newSourceDuration);
-          }
-          // Trim linked partner by same delta
-          if (partner) {
             const pNewSourceStart = partnerSourceStart + shift * partnerSpeed;
             const pNewStartTime = partnerInitialStart + shift;
             const pNewSourceDuration = partnerSourceDuration - shift * partnerSpeed;
-            if (pNewSourceDuration > 0.01) {
-              commands.trimStartCommand(editor.commit, partner.id, pNewSourceStart, pNewStartTime, pNewSourceDuration);
-            }
+            queueTrim(() => {
+              commands.trimStartCommand(editor.commit, layer.id, newSourceStart, newStartTime, newSourceDuration);
+              if (partner && pNewSourceDuration > 0.01) {
+                commands.trimStartCommand(editor.commit, partner.id, pNewSourceStart, pNewStartTime, pNewSourceDuration);
+              }
+            });
           }
         } else {
           let newEnd = initialEnd + deltaTime;
@@ -897,19 +1113,19 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           if (snap) newEnd = snap.time;
           const newDuration = Math.max(0.01, newEnd - initialStart);
           const newSourceDuration = newDuration * speed;
-          commands.resizeLayerCommand(editor.commit, layer.id, newSourceDuration);
-          // Trim linked partner end by same delta
-          if (partner) {
-            const pNewDuration = Math.max(0.01, partnerInitialEnd + deltaTime - partnerInitialStart);
-            const pNewSourceDuration = pNewDuration * partnerSpeed;
-            commands.resizeLayerCommand(editor.commit, partner.id, pNewSourceDuration);
-          }
+          const pNewDuration = Math.max(0.01, partnerInitialEnd + deltaTime - partnerInitialStart);
+          const pNewSourceDuration = pNewDuration * partnerSpeed;
+          queueTrim(() => {
+            commands.resizeLayerCommand(editor.commit, layer.id, newSourceDuration);
+            if (partner) commands.resizeLayerCommand(editor.commit, partner.id, pNewSourceDuration);
+          });
         }
       };
 
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
+        flushTrim();
       };
 
       window.addEventListener("pointermove", onMove);
@@ -942,41 +1158,47 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   );
 
   // ─── Track rename ────────────────────────────────────────────
-  const handleTrackRename = useCallback(
-    (trackIdx: number, name: string) => {
-      commands.setTrackSettingsCommand(commit, trackIdx, { name });
+  const updateTrackSettings = useCallback(
+    (trackIdx: number, patch: Record<string, unknown>) => {
+      void commit((draft: any) => {
+        if (!Array.isArray(draft.tracks)) draft.tracks = [];
+        while (draft.tracks.length <= trackIdx) {
+          const index = draft.tracks.length;
+          draft.tracks.push({ id: `track-${index}`, name: `Track ${index + 1}` });
+        }
+        Object.assign(draft.tracks[trackIdx], patch);
+      }, { label: "Update track settings" });
     },
     [commit],
+  );
+
+  const handleTrackRename = useCallback(
+    (trackIdx: number, name: string) => updateTrackSettings(trackIdx, { name }),
+    [updateTrackSettings],
   );
 
   // ─── Track toggle enabled ────────────────────────────────────
   const handleTrackToggle = useCallback(
     (trackIdx: number, currentEnabled: boolean) => {
-      commands.setTrackSettingsCommand(commit, trackIdx, {
-        enabled: !currentEnabled,
-      });
+      updateTrackSettings(trackIdx, { enabled: !currentEnabled });
     },
-    [commit],
+    [updateTrackSettings],
   );
 
   // ─── Track mute toggle ───────────────────────────────────────
   const handleTrackMute = useCallback(
     (trackIdx: number, currentMuted: boolean) => {
-      (commands as any).setTrackSettingsCommand(commit, trackIdx, {
-        muted: !currentMuted,
-      });
+      updateTrackSettings(trackIdx, { muted: !currentMuted });
     },
-    [commit],
+    [updateTrackSettings],
   );
 
   // ─── Track solo toggle ───────────────────────────────────────
   const handleTrackSolo = useCallback(
     (trackIdx: number, currentSoloed: boolean) => {
-      (commands as any).setTrackSettingsCommand(commit, trackIdx, {
-        solo: !currentSoloed,
-      });
+      updateTrackSettings(trackIdx, { solo: !currentSoloed });
     },
-    [commit],
+    [updateTrackSettings],
   );
 
   // ─── Render ──────────────────────────────────────────────────
@@ -1041,53 +1263,44 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         onScroll={handleScroll}
         onWheel={handleWheel}
       >
-        {/* Sticky headers column */}
+        {/* Sticky headers column. Audio and video use separate typed bands. */}
         <div className="ct-headers">
-          {/* Video track headers (reverse order: highest index = top) */}
           {videoRows.slice().reverse().map(({ trackIdx }) => {
-              const meta = trackMeta[trackIdx];
-              const name = meta?.name ?? `V${trackIdx + 1}`;
-              const enabled = meta?.enabled !== false;
-              return (
-                <TrackHeader
-                  key={`v-${trackIdx}`}
-                  trackIdx={trackIdx}
-                  trackName={name}
-                  trackType="video"
-                  enabled={enabled}
-                  muted={(meta as any)?.muted === true}
-                  onRename={(n) => handleTrackRename(trackIdx, n)}
-                  onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
-                  onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
-                />
-              );
+            const meta = trackMeta[trackIdx];
+            const enabled = meta?.enabled !== false;
+            return (
+              <TrackHeader
+                key={`track-${trackIdx}`}
+                trackIdx={trackIdx}
+                trackName={meta?.name ?? `V${localTrackForKind(trackIdx, "video") + 1}`}
+                trackType="video"
+                enabled={enabled}
+                muted={(meta as any)?.muted === true}
+                onRename={(n) => handleTrackRename(trackIdx, n)}
+                onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
+                onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
+              />
+            );
           })}
-
-          {/* Separator */}
-          {videoTrackCount > 0 && audioTrackCount > 0 && (
-            <div className="ct-track-separator" />
-          )}
-
-          {/* Audio track headers (reverse order: highest index = top) */}
+          <div className="ct-track-separator" />
           {audioRows.slice().reverse().map(({ trackIdx }) => {
-              const meta = trackMeta[trackIdx];
-              const name = meta?.name ?? `A${trackIdx + 1}`;
-              const enabled = meta?.enabled !== false;
-              return (
-                <TrackHeader
-                  key={`a-${trackIdx}`}
-                  trackIdx={trackIdx}
-                  trackName={name}
-                  trackType="audio"
-                  enabled={enabled}
-                  muted={(meta as any)?.muted === true}
-                  soloed={(meta as any)?.solo === true}
-                  onRename={(n) => handleTrackRename(trackIdx, n)}
-                  onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
-                  onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
-                  onToggleSolo={() => handleTrackSolo(trackIdx, (meta as any)?.solo === true)}
-                />
-              );
+            const meta = trackMeta[trackIdx];
+            const enabled = meta?.enabled !== false;
+            return (
+              <TrackHeader
+                key={`track-${trackIdx}`}
+                trackIdx={trackIdx}
+                trackName={meta?.name ?? `A${localTrackForKind(trackIdx, "audio") + 1}`}
+                trackType="audio"
+                enabled={enabled}
+                muted={(meta as any)?.muted === true}
+                soloed={(meta as any)?.solo === true}
+                onRename={(n) => handleTrackRename(trackIdx, n)}
+                onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
+                onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
+                onToggleSolo={() => handleTrackSolo(trackIdx, (meta as any)?.solo === true)}
+              />
+            );
           })}
         </div>
 
@@ -1106,14 +1319,16 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
             }
           }}
         >
-          {/* Video track rows (reverse order) */}
-          {videoRows.slice().reverse().map(({ trackIdx, layers: row }) => {
+          {/* Video rows are above the separator; audio rows are below it. */}
+          {videoRows.slice().reverse().map(({ trackIdx, layers: row, kind }) => {
             const meta = trackMeta[trackIdx];
             const disabled = meta?.enabled === false;
             return (
               <div
-                key={`vt-${trackIdx}`}
+                key={`track-${trackIdx}`}
                 className="ct-track-row"
+                data-track-index={trackIdx}
+                data-track-kind={kind}
                 data-disabled={disabled || undefined}
                 style={{ height: trackHeight }}
               >
@@ -1128,26 +1343,23 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                     onHandlePointerDown={handleHandlePointerDown}
                     onDoubleClick={handleClipDoubleClick}
                     onContextMenu={handleClipContextMenu}
+                    preview={dragPreview.get(layer.id)}
+                    trackHeight={trackHeight}
                   />
                 ))}
               </div>
             );
           })}
-
-          {/* Separator line */}
-          {videoTrackCount > 0 && audioTrackCount > 0 && (
-            <div className="ct-section-separator" />
-          )}
-
-          {/* Audio track rows (reverse order) */}
-          {audioRows.slice().reverse().map(({ trackIdx, layers: row }) => {
-            const globalTrackIdx = trackIdx;
-            const meta = trackMeta[globalTrackIdx];
+          <div className="ct-section-separator" />
+          {audioRows.slice().reverse().map(({ trackIdx, layers: row, kind }) => {
+            const meta = trackMeta[trackIdx];
             const disabled = meta?.enabled === false;
             return (
               <div
-                key={`at-${trackIdx}`}
+                key={`track-${trackIdx}`}
                 className="ct-track-row ct-track-row-audio"
+                data-track-index={trackIdx}
+                data-track-kind={kind}
                 data-disabled={disabled || undefined}
                 style={{ height: trackHeight }}
               >
@@ -1162,6 +1374,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                     onHandlePointerDown={handleHandlePointerDown}
                     onDoubleClick={handleClipDoubleClick}
                     onContextMenu={handleClipContextMenu}
+                    preview={dragPreview.get(layer.id)}
+                    trackHeight={trackHeight}
                   />
                 ))}
               </div>
@@ -1200,7 +1414,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           />
 
           {/* Empty timeline state */}
-          {totalTrackCount === 0 && (
+          {layers.length === 0 && (
             <div className="ct-empty-state">
               <p>No clips on timeline</p>
               <p className="ct-empty-state-hint">Drag media here or use the Media panel to add clips</p>

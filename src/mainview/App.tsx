@@ -9,6 +9,9 @@ import { useNativeMenuHandler } from "./hooks/useNativeMenuHandler";
 import { useMCPHandler } from "./hooks/useMCPHandler";
 import { useProjectStore } from "./store/useProjectStore";
 import { useProjectSaveStore } from "./store/useProjectSaveStore";
+import { useMediaPanelStore } from "./store/useMediaPanelStore";
+import { useAgentStore } from "./store/useAgentStore";
+import { useGenerationStore } from "./store/useGenerationStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import type { VideoJSON } from "@videoflow/react-video-editor";
 
@@ -112,20 +115,40 @@ function App() {
   // However, the frontend overrides window.__electrobun.receiveMessageFromBun.
   // We bridge them here and flush any pending startup messages.
   useEffect(() => {
-    const eb = (window as any).__electrobun;
-    if (!eb) return;
+    let cleanup: (() => void) | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
-    eb.receiveMessageFromHost = (msg: unknown) => {
-      eb.receiveMessageFromBun?.(msg);
+    const attach = () => {
+      const eb = (window as any).__electrobun;
+      if (!eb || cleanup) return;
+
+      const prevHost = eb.receiveMessageFromHost;
+      eb.receiveMessageFromHost = (msg: unknown) => {
+        eb.receiveMessageFromBun?.(msg);
+      };
+
+      const pending = (window as any).__electrobunPendingHostMessages;
+      if (Array.isArray(pending) && pending.length > 0) {
+        (window as any).__electrobunPendingHostMessages = [];
+        for (const msg of pending) {
+          eb.receiveMessageFromBun?.(msg);
+        }
+      }
+
+      cleanup = () => {
+        eb.receiveMessageFromHost = prevHost;
+      };
     };
 
-    const pending = (window as any).__electrobunPendingHostMessages;
-    if (Array.isArray(pending) && pending.length > 0) {
-      (window as any).__electrobunPendingHostMessages = [];
-      for (const msg of pending) {
-        eb.receiveMessageFromBun?.(msg);
-      }
+    attach();
+    if (!cleanup) {
+      interval = setInterval(attach, 50);
     }
+
+    return () => {
+      if (interval) clearInterval(interval);
+      if (cleanup) cleanup();
+    };
   }, []);
 
   // Load projects from SQLite on startup
@@ -140,6 +163,8 @@ function App() {
     if (!currentProjectId) return;
     const saveStore = useProjectSaveStore.getState();
     saveStore.setCurrentProject(currentProjectId);
+    useMediaPanelStore.getState().setAssets([]);
+    useMediaPanelStore.getState().setFolders([]);
     (async () => {
       const savedData = await saveStore.loadProject(currentProjectId);
       if (!savedData) {
@@ -157,6 +182,23 @@ function App() {
           generationLog: [],
           chatHistory: [],
         });
+      } else {
+        const manifest = savedData.mediaManifest as any;
+        const assets = Array.isArray(manifest) ? manifest : manifest?.assets;
+        const folders = Array.isArray(manifest?.folders) ? manifest.folders : [];
+        if (Array.isArray(assets)) useMediaPanelStore.getState().setAssets(assets);
+        useMediaPanelStore.getState().setFolders(folders);
+        if (Array.isArray(savedData.generationLog)) {
+          useGenerationStore.setState({ history: savedData.generationLog as any });
+        }
+        if (Array.isArray(savedData.chatHistory) && savedData.chatHistory.length > 0) {
+          const sessions = savedData.chatHistory as any[];
+          useAgentStore.setState({
+            sessions,
+            currentSessionId: sessions[sessions.length - 1]?.id ?? null,
+            sessionsInitialized: true,
+          });
+        }
       }
     })();
   }, [currentProjectId]);
@@ -175,23 +217,17 @@ function App() {
   useEffect(() => {
     if (!currentProjectId) return;
     let cancelled = false;
-    let baseData = {
-      mediaManifest: [] as unknown,
-      generationLog: [] as unknown,
-      chatHistory: [] as unknown,
-    };
-
     const saveStore = useProjectSaveStore.getState();
     void saveStore.loadProject(currentProjectId).then((saved) => {
       if (cancelled) return;
-      baseData = {
-        mediaManifest: saved?.mediaManifest ?? [],
-        generationLog: saved?.generationLog ?? [],
-        chatHistory: saved?.chatHistory ?? [],
-      };
       saveStore.scheduleAutoSave(() => ({
         timeline: useEditorStore.getState().video,
-        ...baseData,
+        mediaManifest: {
+          assets: useMediaPanelStore.getState().assets,
+          folders: useMediaPanelStore.getState().folders,
+        },
+        generationLog: useGenerationStore.getState().history,
+        chatHistory: useAgentStore.getState().sessions,
       }));
     });
 
@@ -200,7 +236,12 @@ function App() {
       const current = useProjectSaveStore.getState();
       current.scheduleAutoSave(() => ({
         timeline: useEditorStore.getState().video,
-        ...baseData,
+        mediaManifest: {
+          assets: useMediaPanelStore.getState().assets,
+          folders: useMediaPanelStore.getState().folders,
+        },
+        generationLog: useGenerationStore.getState().history,
+        chatHistory: useAgentStore.getState().sessions,
       }));
     });
 

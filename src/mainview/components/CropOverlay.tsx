@@ -183,7 +183,7 @@ export function CropOverlay({ containerRect, videoWidth, videoHeight }: Props) {
   return (
     <div
       ref={overlayRef}
-      className="absolute inset-0 z-20"
+      className="absolute inset-0 z-20 pointer-events-none"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
     >

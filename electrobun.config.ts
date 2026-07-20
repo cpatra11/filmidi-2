@@ -1,5 +1,15 @@
 import type { ElectrobunConfig } from "electrobun";
 
+const isMac = process.platform === "darwin";
+const buildCopy: Record<string, string> = {
+  "dist/index.html": "views/mainview/index.html",
+  "dist/assets": "views/mainview/assets",
+};
+
+if (isMac) {
+  buildCopy["native/sidecar/FilmidiSidecar"] = "native/sidecar/FilmidiSidecar";
+}
+
 export default {
   app: {
     name: "Filmidi Editor",
@@ -7,10 +17,7 @@ export default {
     version: "0.0.1",
   },
   build: {
-    copy: {
-      "dist/index.html": "views/mainview/index.html",
-      "dist/assets": "views/mainview/assets",
-    },
+    copy: buildCopy,
     watchIgnore: ["dist/**"],
     mac: {
       bundleCEF: false,

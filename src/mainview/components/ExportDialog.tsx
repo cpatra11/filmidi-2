@@ -2,7 +2,7 @@ import { useRef, useCallback } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
 import * as RadioGroup from "@radix-ui/react-radio-group";
-import { X, Download, Film, FileText, Package, ChevronDown, Check, AlertCircle, Square } from "lucide-react";
+import { X, Download, Film, FileText, Package, ChevronDown, Check, AlertCircle, Square, FolderOpen } from "lucide-react";
 import {
   useExportStore,
   getFileExtension,
@@ -18,6 +18,7 @@ import {
 } from "@/store/useExportStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import BrowserRenderer from "@videoflow/renderer-browser";
+import { getTimelineExportText, normalizeVideoForExport, pickSaveFile, saveBlob, saveText, serializeFilmidiPackage } from "@/lib/exportHelpers";
 
 /* ------------------------------------------------------------------ */
 /*  Select helpers                                                     */
@@ -218,40 +219,6 @@ function FilmidiProjectSettings() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Save location picker                                               */
-/* ------------------------------------------------------------------ */
-
-type PickerResult =
-  | { kind: "file"; handle: FileSystemFileHandle; path: string }
-  | { kind: "fallback"; handle: null }
-  | null; // user cancelled
-
-async function pickSaveFile(
-  fileName: string,
-  ext: string,
-  description: string,
-): Promise<PickerResult> {
-  const wsp = (window as unknown as { showSaveFilePicker?: (opts: Record<string, unknown>) => Promise<FileSystemFileHandle> }).showSaveFilePicker;
-  if (!wsp) return { kind: "fallback", handle: null };
-
-  try {
-    const handle = await wsp({
-      suggestedName: `${fileName}.${ext}`,
-      types: [{
-        description,
-        accept: { "application/octet-stream": [`.${ext}`] },
-      }],
-    });
-    return { kind: "file", handle, path: handle.name };
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      return null; // user cancelled
-    }
-    return { kind: "fallback", handle: null }; // unexpected error, fall back to download
-  }
-}
-
-/* ------------------------------------------------------------------ */
 /*  Main ExportDialog                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -259,7 +226,7 @@ export function ExportDialog() {
   const {
     isOpen, close, destination, setDestination,
     codec, resolution,
-    exportStatus, progress, error, fileName, setFileName, savedFileSize,
+    exportStatus, progress, error, fileName, setFileName, savedFileSize, savedFileHandle, setSavedFileHandle,
     startExport, setProgress, setError, setExportComplete,
   } = useExportStore();
 
@@ -288,15 +255,35 @@ export function ExportDialog() {
 
   const handleExport = async () => {
     const ext = getFileExtension({ destination, codec, timelineFormat: useExportStore.getState().timelineFormat });
-
-    // Pick save location
-    const picked = await pickSaveFile(fileName, ext, destination === "video" ? "Video" : destination === "timeline" ? "Timeline" : "Filmidi Project");
-    if (picked === null) return; // user cancelled the save dialog
-
     startExport();
 
-    if (destination === "timeline" || destination === "filmidiProject") {
-      setError("Timeline and project export are not yet available. Use Video export instead.");
+    if (destination === "timeline") {
+      try {
+        const content = getTimelineExportText(useEditorStore.getState().video, useExportStore.getState().timelineFormat);
+        const saved = await saveText(content, fileName, ext, "Timeline", "application/xml", savedFileHandle);
+        if (!saved) {
+          setError("Export cancelled.");
+          return;
+        }
+        setExportComplete(new Blob([content]).size);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+
+    if (destination === "filmidiProject") {
+      try {
+        const content = await serializeFilmidiPackage();
+        const saved = await saveText(content, fileName, ext, "Filmidi Project", "application/json", savedFileHandle);
+        if (!saved) {
+          setError("Export cancelled.");
+          return;
+        }
+        setExportComplete(new Blob([content]).size);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
       return;
     }
 
@@ -306,12 +293,12 @@ export function ExportDialog() {
 
       try {
         const editorState = useEditorStore.getState();
-        const video = {
+        const video = normalizeVideoForExport({
           ...editorState.video,
           width: outW,
           height: outH,
           fps,
-        };
+        });
 
         const raw = await BrowserRenderer.render(video, {
           signal: ac.signal,
@@ -321,23 +308,11 @@ export function ExportDialog() {
         const blob = raw instanceof Blob ? raw : new Blob([raw], { type: "video/mp4" });
 
         abortRef.current = null;
-
-        if (picked.kind === "file") {
-          const writable = await picked.handle.createWritable();
-          await writable.write(blob);
-          await writable.close();
-        } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${fileName}.${ext}`;
-          a.style.display = "none";
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+        const saved = await saveBlob(blob, fileName, ext, "Video", savedFileHandle);
+        if (!saved) {
+          setError("Export cancelled.");
+          return;
         }
-
         setExportComplete(blob.size);
       } catch (err: unknown) {
         abortRef.current = null;
@@ -349,6 +324,12 @@ export function ExportDialog() {
       }
     }
   };
+
+  const handleChooseLocation = useCallback(async () => {
+    const picked = await pickSaveFile(fileName, ext, destination === "video" ? "Video" : destination === "timeline" ? "Timeline" : "Filmidi Project");
+    if (!picked || picked.kind !== "file") return;
+    setSavedFileHandle(picked.handle);
+  }, [destination, ext, fileName, setSavedFileHandle]);
 
   const isIdle = exportStatus === "idle";
   const isExporting = exportStatus === "exporting";
@@ -413,6 +394,24 @@ export function ExportDialog() {
                   className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20 disabled:opacity-50"
                 />
                 <span className="text-[11px] text-[#666688] font-mono">.{ext}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1 mb-3">
+              <span className="text-[10px] font-medium text-[#8888aa]">Save Location</span>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0 px-2.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[11px] text-[#ccccee] truncate">
+                  {savedFileHandle ? savedFileHandle.name : "Default browser save location"}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleChooseLocation}
+                  disabled={isExporting}
+                  className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-[#ccccee] rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <FolderOpen className="w-3 h-3" />
+                  Choose
+                </button>
               </div>
             </div>
 

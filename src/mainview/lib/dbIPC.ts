@@ -29,13 +29,25 @@ function sendAndWait(type: string, payload: Record<string, unknown>, responseTyp
 
     const origHandler = (window as any).__electrobun?.receiveMessageFromBun;
     const handler = (msg: any) => {
-      if (!msg || typeof msg !== "object") return;
-      if (msg.type === responseType) {
+      const data = typeof msg === "string"
+        ? (() => {
+            try {
+              return JSON.parse(msg);
+            } catch {
+              return null;
+            }
+          })()
+        : msg;
+      if (!data || typeof data !== "object") {
+        if (origHandler) origHandler(msg);
+        return;
+      }
+      if (data.type === responseType) {
         clearTimeout(timer);
         if ((window as any).__electrobun) {
           (window as any).__electrobun.receiveMessageFromBun = origHandler;
         }
-        resolve(msg);
+        resolve(data);
         return;
       }
       if (origHandler) origHandler(msg);
@@ -52,9 +64,20 @@ export async function dbListProjects(): Promise<any[]> {
 }
 
 export async function dbSaveProject(project: {
-  id: string; name: string; width?: number; height?: number; fps?: number;
+  id: string; name: string; width?: number; height?: number; fps?: number; filePath?: string;
 }): Promise<void> {
   await sendAndWait("db-save-project", project as any, "db-save-project-result");
+}
+
+export async function dbChooseProjectLocation(startingFolder?: string): Promise<string | null> {
+  const res = await sendAndWait("project-choose-location", { startingFolder }, "project-choose-location-result");
+  return typeof res.path === "string" && res.path.length > 0 ? res.path : null;
+}
+
+export async function dbWriteProjectFile(directory: string, fileName: string, contents: string): Promise<string> {
+  const res = await sendAndWait("project-write-file", { directory, fileName, contents }, "project-write-file-result", 30000);
+  if (!res.ok || typeof res.path !== "string") throw new Error(res.error ?? "Project file could not be saved");
+  return res.path;
 }
 
 export async function dbDeleteProject(id: string): Promise<void> {
@@ -80,6 +103,14 @@ export async function dbLoadProjectData(id: string): Promise<{
 
 export async function dbDeleteProjectData(id: string): Promise<void> {
   await sendAndWait("db-delete-project-data", { id }, "db-delete-project-data-result");
+}
+
+export async function dbGetProjectStorageInfo(): Promise<{ path: string; kind: string }> {
+  const res = await sendAndWait("db-project-storage-info", {}, "db-project-storage-info-result");
+  return {
+    path: typeof res.path === "string" ? res.path : "Local Filmidi project storage",
+    kind: typeof res.kind === "string" ? res.kind : "SQLite",
+  };
 }
 
 /** Chat sessions */

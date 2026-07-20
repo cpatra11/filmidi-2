@@ -42,6 +42,54 @@ export async function decodeAudioToMono(
   };
 }
 
+/** Encode mono PCM samples into a standard 16-bit WAV blob. */
+export function encodeMonoWavBlob(samples: Float32Array, sampleRate: number = SAMPLE_RATE): Blob {
+  const numChannels = 1;
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = samples.length * blockAlign;
+  const headerSize = 44;
+  const totalSize = headerSize + dataSize;
+
+  const ab = new ArrayBuffer(totalSize);
+  const view = new DataView(ab);
+
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, totalSize - 8, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Blob([ab], { type: "audio/wav" });
+}
+
+/** Decode an audio/video blob and normalize it to 16kHz mono WAV. */
+export async function transcodeBlobToWavBlob(blob: Blob): Promise<Blob> {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const { samples, sampleRate } = await decodeAudioToMono(objectUrl, SAMPLE_RATE);
+    return encodeMonoWavBlob(samples, sampleRate);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 /** Compute RMS amplitude envelope at 10ms hops. Matches Swift's AudioEnvelopeExtractor. */
 export function computeEnvelope(samples: Float32Array, sampleRate: number = SAMPLE_RATE): Float32Array {
   const hopSize = Math.max(1, Math.round(sampleRate * ENVELOPE_HOP_SECONDS));
@@ -243,6 +291,12 @@ export async function sampleVideoFrames(
 
     video.src = url;
   });
+}
+
+function writeString(view: DataView, offset: number, str: string) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
 }
 
 /** Extract audio track from a video element for analysis. */

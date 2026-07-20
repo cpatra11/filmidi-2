@@ -4,7 +4,13 @@ import { useHelpStore } from "@/store/useHelpStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useProjectSaveStore, type ProjectData } from "@/store/useProjectSaveStore";
 import { useProjectStore } from "@/store/useProjectStore";
+import { useSaveAsStore } from "@/store/useSaveAsStore";
+import { useAgentStore } from "@/store/useAgentStore";
+import { useGenerationStore } from "@/store/useGenerationStore";
+import { dbChooseProjectLocation, dbWriteProjectFile } from "./dbIPC";
+import { serializeFilmidiPackage } from "./exportHelpers";
 import { getMediaDuration } from "./mediaDuration";
+import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 
 const { addLayerCommand } = commands;
 
@@ -18,27 +24,26 @@ function getDisplayName(urlOrFile: string | File | undefined): string {
   return urlOrFile.name.replace(/\.[^.]+$/, "") || "Clip";
 }
 
-function nextTrack(type: string, offset = 0): number {
-  const layers = useEditorStore.getState().video.layers ?? [];
-  const sameTypeCount = layers.filter((l: any) => l.type === type).length;
-  return offset + sameTypeCount;
-}
-
 function setLayerTrack(commit: any, layerId: string, track: number) {
   commit((draft: any) => {
     const layer = draft.layers?.find((x: any) => x.id === layerId);
-    if (layer) layer.track = Math.max(0, Math.floor(track));
+    if (layer) layer.track = normalizeTrackForKind(track, layer.type === "audio" ? "audio" : "video");
   }, { label: "Set track" });
 }
 
 async function getCurrentProjectData(projectId: string | null): Promise<ProjectData> {
   const saveStore = useProjectSaveStore.getState();
   const saved = projectId ? await saveStore.loadProject(projectId) : null;
+  const mediaStore = useMediaPanelStore.getState();
+  const generationStore = useGenerationStore.getState();
   return {
     timeline: useEditorStore.getState().video,
-    mediaManifest: saved?.mediaManifest ?? [],
-    generationLog: saved?.generationLog ?? [],
-    chatHistory: saved?.chatHistory ?? [],
+    mediaManifest: {
+      assets: mediaStore.assets,
+      folders: mediaStore.folders,
+    },
+    generationLog: generationStore.history,
+    chatHistory: useAgentStore.getState().sessions,
   };
 }
 
@@ -49,6 +54,13 @@ export async function saveCurrentProject(): Promise<void> {
   if (!projectId) return;
   const data = await getCurrentProjectData(projectId);
   await saveStore.saveProject(data);
+  const current = projectStore.projects.find((p) => p.id === projectId);
+  if (current?.filePath) {
+    const slash = Math.max(current.filePath.lastIndexOf("/"), current.filePath.lastIndexOf("\\"));
+    const directory = slash >= 0 ? current.filePath.slice(0, slash) : ".";
+    const fileName = slash >= 0 ? current.filePath.slice(slash + 1) : current.filePath;
+    await dbWriteProjectFile(directory, fileName, await serializeFilmidiPackage());
+  }
 }
 
 export async function saveProjectAsCopy(): Promise<void> {
@@ -58,19 +70,31 @@ export async function saveProjectAsCopy(): Promise<void> {
 
   const current = projectStore.projects.find((p) => p.id === currentId);
   const baseName = current?.name ?? "Untitled Project";
-  const name = window.prompt("Save project as:", `${baseName} Copy`);
-  if (!name || !name.trim()) return;
+  useSaveAsStore.getState().open(`${baseName} Copy`);
+}
 
-  const nextName = name.trim();
+export async function saveProjectAsCopyWithName(name: string, location?: string): Promise<{ id: string; name: string; filePath: string } | null> {
+  const projectStore = useProjectStore.getState();
+  const currentId = projectStore.currentProjectId;
+  if (!currentId) return null;
+
+  const current = projectStore.projects.find((p) => p.id === currentId);
+  const nextName = name.trim() || `${current?.name ?? "Untitled Project"} Copy`;
+  const folder = location || await dbChooseProjectLocation();
+  if (!folder) return null;
+  const fileName = `${nextName.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim() || "Untitled Project"}.filmidi`;
   const data = await getCurrentProjectData(currentId);
+  const filePath = await dbWriteProjectFile(folder, fileName, await serializeFilmidiPackage());
   const id = projectStore.addProject(nextName, {
     width: current?.width ?? useEditorStore.getState().video.width ?? 1920,
     height: current?.height ?? useEditorStore.getState().video.height ?? 1080,
     fps: current?.fps ?? useEditorStore.getState().video.fps ?? 30,
+    filePath,
   }, { select: false });
   await useProjectSaveStore.getState().importProject(id, data);
   projectStore.openProject(id);
   useAppStore.getState().setProjectName(nextName);
+  return { id, name: nextName, filePath };
 }
 
 export function openProjectHome(): void {
@@ -115,18 +139,14 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       folderId: mediaStore.currentFolderId,
       createdAt: Date.now(),
     });
-    if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
-
     if (type === "video") {
       const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
       const { commands: cmds } = await import("@videoflow/react-video-editor");
       const setSettingCommand = cmds.setSettingCommand;
       const linkId = generateLinkId();
       const clipName = getDisplayName(file);
-      const audioTrack = nextTrack("audio", 0);
-      const videoTrack = nextTrack("video", 10);
-      cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
-      cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
+      const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, duration);
+      const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration);
       const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
       setLayerTrack(editor.commit, audioLayerId, audioTrack);
       await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
@@ -137,8 +157,9 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
       await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
     } else {
+      const track = findAvailableTrack(useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration);
       const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
-      if (layerId) setLayerTrack(editor.commit, layerId, nextTrack("audio", 0));
+      if (layerId) setLayerTrack(editor.commit, layerId, track);
     }
   }
 

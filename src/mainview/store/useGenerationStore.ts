@@ -114,10 +114,6 @@ const AUDIO_MODELS = [
   { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", type: "audio" as const },
   { id: "fun-music-v1", name: "FunMusic v1", type: "audio" as const },
   { id: "fun-music-preview", name: "FunMusic Preview", type: "audio" as const },
-  { id: "sonilo-v1.1-text-to-music", name: "Sonilo Text→Music", type: "audio" as const },
-  { id: "sonilo-v1.1-video-to-music", name: "Sonilo Video→Music", type: "audio" as const },
-  { id: "mirelo-sfx-v1.5-text-to-sfx", name: "Mirelo Text→SFX", type: "audio" as const },
-  { id: "mirelo-sfx-v1.5-video-to-audio", name: "Mirelo Video→SFX", type: "audio" as const },
 ];
 
 const TRANSCRIPTION_MODELS = [
@@ -131,12 +127,7 @@ const UPSCALE_MODELS = [
   { id: "hitpaw-upscaler-v2", name: "HitPaw Upscaler v2", type: "upscale" as const },
 ];
 
-const THIRD_PARTY_MODELS = new Set([
-  "sonilo-v1.1-text-to-music",
-  "sonilo-v1.1-video-to-music",
-  "mirelo-sfx-v1.5-text-to-sfx",
-  "mirelo-sfx-v1.5-video-to-audio",
-]);
+const THIRD_PARTY_MODELS = new Set<string>();
 
 export { VIDEO_MODELS, IMAGE_MODELS, AUDIO_MODELS, THIRD_PARTY_MODELS };
 
@@ -186,10 +177,6 @@ export function getCostForConfig(
     "cosyvoice-v3-flash": 3,
     "fun-music-v1": 25,
     "fun-music-preview": 10,
-    "sonilo-v1.1-text-to-music": 30,
-    "sonilo-v1.1-video-to-music": 30,
-    "mirelo-sfx-v1.5-text-to-sfx": 20,
-    "mirelo-sfx-v1.5-video-to-audio": 20,
   };
 
   if (type === "video") {

@@ -11,6 +11,7 @@ export interface ProjectEntry {
   createdAt: number;
   lastOpenedAt: number;
   thumbnailUrl?: string;
+  filePath?: string;
 }
 
 interface ProjectState {
@@ -21,7 +22,7 @@ interface ProjectState {
   loadProjects: () => Promise<void>;
   addProject: (
     name: string,
-    settings?: { width?: number; height?: number; fps?: number },
+    settings?: { width?: number; height?: number; fps?: number; filePath?: string },
     options?: { select?: boolean }
   ) => string;
   openProject: (id: string | null) => void;
@@ -50,7 +51,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  addProject: (name: string, settings?: { width?: number; height?: number; fps?: number }, options?: { select?: boolean }) => {
+  addProject: (name: string, settings?: { width?: number; height?: number; fps?: number; filePath?: string }, options?: { select?: boolean }) => {
     const id = generateId();
     const now = Date.now();
     const entry: ProjectEntry = {
@@ -59,6 +60,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       height: settings?.height ?? 1080,
       fps: settings?.fps ?? 30,
       createdAt: now, lastOpenedAt: now,
+      filePath: settings?.filePath,
     };
     dbSaveProject(entry).catch(() => {});
     const updated = [entry, ...get().projects];

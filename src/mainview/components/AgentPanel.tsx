@@ -561,16 +561,15 @@ export function AgentPanel() {
     <div className="h-full flex flex-col bg-[#0A0A0A]">
       {/* Floating tab bar */}
       <div className="flex items-center gap-1 px-2 h-10 border-b border-[#1C1C1C] shrink-0 bg-[#0A0A0A]/80 backdrop-blur-sm">
-        <div className="flex-1 flex items-center gap-0.5 overflow-x-auto no-scrollbar">
-          {sessions.map((sess) => (
+        <div className="flex-1 min-w-0 flex items-center overflow-hidden">
+          {session && (
             <ChatTab
-              key={sess.id}
-              session={sess}
-              isActive={sess.id === currentSessionId}
-              onSelect={() => selectSession(sess.id)}
-              onClose={() => closeSession(sess.id)}
+              session={session}
+              isActive
+              onSelect={() => selectSession(session.id)}
+              onClose={() => closeSession(session.id)}
             />
-          ))}
+          )}
         </div>
         <Tooltip>
           <TooltipTrigger
@@ -639,7 +638,7 @@ export function AgentPanel() {
 
       {/* Footer: input box */}
       <div className="px-3 pb-3 pt-1 shrink-0">
-        <div className="rounded-2xl bg-black/20 border border-white/10 focus-within:border-white/20 transition-colors overflow-hidden">
+        <div className="rounded-2xl bg-black/20 border border-white/10 focus-within:border-white/20 transition-colors overflow-visible">
           {/* Textarea */}
           <div className="relative">
             <textarea

@@ -154,47 +154,20 @@ function detectAgentIntent(text: string, mentions: MentionRef[]): AgentTaskInten
   return "general";
 }
 
-function buildTaskRoutingText(intent: AgentTaskIntent): string {
+function buildTaskRoutingText(_intent: AgentTaskIntent): string {
   const shared = [
     "Prefer the fewest tool calls that preserve correctness.",
     "Batch independent reads together and batch related mutations together.",
     "Reuse tool output instead of re-reading the same state.",
-    "For timeline work, move linked video/audio pairs together and keep edits aligned to the edit.",
-    "Preferred chat model for complex edit work: qwen3.7-plus. Use qwen3.6-flash only for lightweight lookups or quick inspection.",
+    "Inspect the current timeline/media state before editing when that will reduce mistakes.",
+    "Prefer existing clips, tracks, transcripts, and assets over creating duplicates.",
   ];
-
-  const byIntent: Record<AgentTaskIntent, string[]> = {
-    edit: [
-      "Call get_timeline once, inspect the current structure, then batch timeline mutations.",
-      "Use move_clips for drag-style repositioning, split_clips for cut points, remove_clips for deletes, and add_clips for placements.",
-      "For captions or text overlays, keep layers on one dedicated track per run.",
-    ],
-    caption: [
-      "For captions, transcribe the whole relevant clip set unless the user explicitly asks for only a segment.",
-      "Prefer the audio layer when video and audio are linked. Use extract_audio first only if the audio layer is missing.",
-      "Build readable phrases on word boundaries and keep all captions from a run on one caption track.",
-    ],
-    search: [
-      "Use search_media before inspecting assets one by one.",
-      "Call get_media once, then inspect only the best matches.",
-    ],
-    organize: [
-      "Call get_media and list_folders once, then batch folder and rename operations.",
-      "Do not move or rename the same asset repeatedly.",
-    ],
-    generate: [
-      "Before generation, call list_models for the relevant type.",
-      "Propose the prompt, model, duration, and aspect ratio, then wait for confirmation before generating.",
-    ],
-    inspect: [
-      "Use get_timeline, inspect_timeline, inspect_media, and inspect_color rather than guessing.",
-    ],
-    general: [
-      "If the task is ambiguous, ask one focused question instead of guessing.",
-    ],
-  };
-
-  return [...shared, ...byIntent[intent]].map((line) => `- ${line}`).join("\n");
+  return [
+    ...shared,
+    "Choose tools based on the live timeline/media state and the user's request.",
+    "If the right action is already represented by an existing clip, track, transcript, or asset, reuse it instead of recreating it.",
+    "If the task is ambiguous, inspect first and only ask a question when the state cannot resolve it.",
+  ].map((line) => `- ${line}`).join("\n");
 }
 
 function buildSystemPrompt(basePrompt: string, intent: AgentTaskIntent, editHistoryText: string): string {
@@ -817,11 +790,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - Available chat models: use list_models type='chat' to see all text models. The agent dropdown shows common options.
 - For music generation, use fun-music models with prompt describing style/mood. For TTS, use qwen3-tts-flash or cosyvoice models.
 - Available models across all types: use list_models to discover image, video, audio, and upscale models.
+- For internet music, sound effects, stock images, or video, use search_web_media when the user asks for web media or when no suitable generation model is available. Choose a direct downloadable result, call import_media with its URL, then call add_clips with the exact requested startFrame and durationFrames. You may use import_media with addToTimeline=true for a single placement. Do not stop after searching or importing; finish by placing the asset on the timeline.
+- For SFX/music requested at a transcript moment, first get the transcript/timeline frame, then search_web_media type='audio', import the selected result, and add it on an audio track at that frame. Preserve existing dialogue by using the collision-aware track allocation.
+- Web search/import is a free-media workflow and does not need generation confirmation. When the user directly asks to add a riser, SFX, or background music, complete the search, import, and timeline placement in the same turn.
 
 # Audio Processing
 - Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable - tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
 - To add captions: FIRST call extract_audio on video clips to create audio layers, THEN call add_captions on the audio layer.
 - extract_audio creates a linked audio layer with the same timing. Deleting or moving the video also affects the linked audio.
+- Captions default to a bottom-safe position chosen from the project aspect ratio: lower for landscape, slightly higher for square and portrait formats so wrapped lines stay inside the frame. Let add_captions choose the position unless the user asks for a specific placement; use centerX/centerY for an explicit override.
 
 # Organization
 - To organize media: call organize_media to auto-create folders by type (Video/Audio/Images) and move assets into them.

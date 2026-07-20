@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/useAppStore";
-import { useEditorStore } from "@videoflow/react-video-editor";
+import { layerTimelineBounds, useEditorStore } from "@videoflow/react-video-editor";
 import { commands } from "@videoflow/react-video-editor";
+import { findAvailableTrack, localTrackForKind, normalizeTrackForKind, validateMoveUpdates } from "@/lib/timelineMove";
+import { generateLinkId, setLayerLinkId } from "@/lib/linkUtils";
 
 const { addLayerCommand } = commands;
 
@@ -19,22 +21,29 @@ function expandToPartners(ids: string[]): string[] {
   return Array.from(set);
 }
 
-function nudgeSelectedClips(direction: "left" | "right", frames: number) {
+function nudgeSelectedClips(direction: "left" | "right" | "up" | "down", frames: number) {
   const s = useEditorStore.getState();
-  const ids = s.selection.layerIds;
+  const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
   const fps = s.video.fps || 30;
-  const delta = direction === "left" ? -frames : frames;
+  const timeDelta = direction === "left" ? -frames / fps : direction === "right" ? frames / fps : 0;
+  const trackDelta = direction === "up" ? -1 : direction === "down" ? 1 : 0;
   const updates = ids.map((id) => {
     const layer = s.video.layers?.find((l: any) => l.id === id);
     if (!layer) return null;
-    const newTime = Math.max(0, (layer.settings?.startTime ?? 0) + delta / fps);
-    return { id, startTime: newTime };
+    const kind = layer.type === "audio" ? "audio" : "video";
+    const localTrack = localTrackForKind(layer.track, kind);
+    return {
+      id,
+      startTime: Math.max(0, (layer.settings?.startTime ?? 0) + timeDelta),
+      track: trackDelta === 0 ? undefined : normalizeTrackForKind(localTrack + trackDelta, kind),
+    };
   }).filter(Boolean) as Array<{ id: string; startTime: number }>;
-  if (updates.length > 0) {
-    commands.moveLayersCommand(s.commit, updates);
-    s.bridge?.seek(s.currentFrame);
-  }
+  if (updates.length === 0) return;
+  const validation = validateMoveUpdates(s.video.layers ?? [], updates);
+  if (!validation.ok) return;
+  commands.moveLayersCommand(s.commit, updates);
+  s.bridge?.seek(s.currentFrame);
 }
 
 export function useKeyboardShortcuts() {
@@ -195,8 +204,8 @@ export function useKeyboardShortcuts() {
       if (e.altKey && !isMod && !isInput) {
         if (e.key === "ArrowLeft") { e.preventDefault(); nudgeSelectedClips("left", 1); return; }
         if (e.key === "ArrowRight") { e.preventDefault(); nudgeSelectedClips("right", 1); return; }
-        if (e.key === "ArrowUp") { e.preventDefault(); nudgeSelectedClips("left", 1); return; }
-        if (e.key === "ArrowDown") { e.preventDefault(); nudgeSelectedClips("right", 1); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); nudgeSelectedClips("up", 1); return; }
+        if (e.key === "ArrowDown") { e.preventDefault(); nudgeSelectedClips("down", 1); return; }
       }
 
       // Cmd/Ctrl shortcuts — only intercept keys we actually handle,
@@ -222,8 +231,7 @@ export function useKeyboardShortcuts() {
             return;
           case "a":
             e.preventDefault();
-            const allIds = useEditorStore.getState().video.layers.map((l: any) => l.id);
-            useEditorStore.getState().selectLayers(allIds);
+            selectAllLayers();
             return;
         }
         // Don't call preventDefault or return for unhandled Cmd combinations
@@ -237,7 +245,7 @@ export function useKeyboardShortcuts() {
   }, [setToolMode, toggleCropEditing]);
 }
 
-function splitAtPlayhead() {
+export function splitAtPlayhead() {
   const s = useEditorStore.getState();
   const frame = s.currentFrame;
   const fps = s.video.fps || 30;
@@ -247,29 +255,39 @@ function splitAtPlayhead() {
   s.commit((v: any) => {
     const idSet = new Set(ids);
     const toAdd: any[] = [];
+    const rightLinks = new Map<string, string>();
+    const splitTime = frame / fps;
     const processLayers = (layers: any[]) => {
       for (const layer of layers) {
         if (idSet.has(layer.id)) {
-          const startFrame = Math.round(layer.startTime * fps);
-          const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-          const endFrame = startFrame + durFrames;
-          if (frame > startFrame && frame < endFrame) {
-            const splitOffset = (frame - startFrame) / fps;
-            const linkId = layer.settings?.linkId;
-            const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
+          const settings = layer.settings ?? (layer.settings = {});
+          const bounds = layerTimelineBounds(layer);
+          if (splitTime > bounds.start && splitTime < bounds.end) {
+            const speedValue = Number(settings.speed) || 1;
+            const speed = Math.abs(speedValue);
+            const splitSourceDuration = (splitTime - bounds.start) * speed;
+            const oldSourceStart = Number(settings.sourceStart) || 0;
+            const oldSourceDuration = Math.max(0.01, Number(settings.sourceDuration) || bounds.end - bounds.start);
+            const rightSourceDuration = Math.max(0.01, oldSourceDuration - splitSourceDuration);
+            const rightSourceStart = speedValue >= 0 ? oldSourceStart + splitSourceDuration : oldSourceStart;
+            const linkId = settings.linkId as string | undefined;
+            let rightLinkId = linkId ? rightLinks.get(linkId) : undefined;
+            if (linkId && !rightLinkId) {
+              rightLinkId = generateLinkId();
+              rightLinks.set(linkId, rightLinkId);
+            }
             toAdd.push({
               ...layer,
               id: `${layer.id}-r-${Date.now()}`,
-              name: `${layer.name} (R)`,
-              startTime: layer.startTime + splitOffset,
-              sourceStart: (layer.sourceStart || 0) + splitOffset,
-              sourceDuration: (layer.duration || layer.sourceDuration || 5) - splitOffset,
-              duration: (layer.duration || layer.sourceDuration || 5) - splitOffset,
-              settings: { ...layer.settings, linkId: rightLinkId || linkId },
+              settings: {
+                ...settings,
+                startTime: splitTime,
+                sourceStart: rightSourceStart,
+                sourceDuration: rightSourceDuration,
+                ...(rightLinkId ? { linkId: rightLinkId } : {}),
+              },
             });
-            if (rightLinkId) layer.settings.linkId = rightLinkId;
-            layer.duration = splitOffset;
-            layer.sourceDuration = splitOffset;
+            settings.sourceDuration = Math.max(0.01, splitSourceDuration);
           }
         } else if (layer.type === "group" && Array.isArray(layer.children)) {
           processLayers(layer.children);
@@ -281,7 +299,44 @@ function splitAtPlayhead() {
   }, { label: "Split at playhead" });
 }
 
-function cutSelectedLayers() {
+/** Keep the selected clips on the requested side of the playhead. */
+export function trimSelectedToPlayhead(side: "left" | "right") {
+  const s = useEditorStore.getState();
+  const ids = expandToPartners(s.selection.layerIds);
+  if (ids.length === 0) return;
+  const playhead = s.currentFrame / (s.video.fps || 30);
+
+  s.commit((v: any) => {
+    const idSet = new Set(ids);
+    const processLayers = (layers: any[]) => {
+      for (const layer of layers) {
+        if (idSet.has(layer.id)) {
+          const settings = layer.settings ?? (layer.settings = {});
+          const bounds = layerTimelineBounds(layer);
+          if (playhead > bounds.start && playhead < bounds.end) {
+            const speedValue = Number(settings.speed) || 1;
+            const speed = Math.abs(speedValue);
+            const oldSourceStart = Number(settings.sourceStart) || 0;
+            const oldSourceDuration = Math.max(0.01, Number(settings.sourceDuration) || bounds.end - bounds.start);
+            const splitSourceDuration = (playhead - bounds.start) * speed;
+            if (side === "left") {
+              settings.sourceDuration = Math.max(0.01, splitSourceDuration);
+            } else {
+              settings.startTime = playhead;
+              settings.sourceDuration = Math.max(0.01, oldSourceDuration - splitSourceDuration);
+              settings.sourceStart = speedValue >= 0 ? oldSourceStart + splitSourceDuration : oldSourceStart;
+            }
+          }
+        } else if (layer.type === "group" && Array.isArray(layer.children)) {
+          processLayers(layer.children);
+        }
+      }
+    };
+    processLayers(v.layers);
+  }, { label: side === "left" ? "Trim end at playhead" : "Trim start at playhead" });
+}
+
+export function cutSelectedLayers() {
   const s = useEditorStore.getState();
   const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
@@ -302,34 +357,70 @@ function cutSelectedLayers() {
   s.clearSelection();
 }
 
-function copySelectedLayers() {
+export function copySelectedLayers() {
   const s = useEditorStore.getState();
-  const ids = s.selection.layerIds;
+  const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
   const layers = s.video.layers.filter((l: any) => ids.includes(l.id));
   (window as any).__vfClipboard = { action: "copy", layers: JSON.parse(JSON.stringify(layers)) };
 }
 
-async function pasteLayers() {
+export async function pasteLayers() {
   const clip = (window as any).__vfClipboard;
   if (!clip || !clip.layers?.length) return;
   const editor = useEditorStore.getState();
   const fps = editor.video.fps || 30;
   const pasteTime = editor.currentFrame / fps;
+  const baseTime = Math.min(...clip.layers.map((layer: any) => layer.settings?.startTime ?? layer.startTime ?? 0));
+  const copiedLinks = new Map<string, string>();
+  const newIds: string[] = [];
   for (const layer of clip.layers) {
-    await addLayerCommand(editor.commit, {
+    const oldSettings = layer.settings ?? {};
+    const oldStart = oldSettings.startTime ?? layer.startTime ?? 0;
+    const startTime = pasteTime + (oldStart - baseTime);
+    const sourceDuration = oldSettings.sourceDuration ?? layer.sourceDuration ?? layer.duration ?? 5;
+    const kind = layer.type === "audio" ? "audio" : "video";
+    const preferredTrack = normalizeTrackForKind(layer.track, kind);
+    const track = findAvailableTrack(
+      useEditorStore.getState().video.layers ?? [],
+      kind,
+      startTime,
+      sourceDuration,
+      preferredTrack,
+    );
+    const { source, startTime: _ignoredStart, sourceDuration: _ignoredDuration, linkId: oldLinkId, ...extraSettings } = oldSettings;
+    const newId = await addLayerCommand(editor.commit, {
       type: layer.type,
-      source: layer.settings?.source ?? layer.source,
-      sourceDuration: layer.settings?.sourceDuration ?? layer.sourceDuration ?? layer.duration ?? 5,
-      startTime: pasteTime,
-      properties: layer.properties,
+      source: source ?? layer.source,
+      sourceDuration,
+      startTime,
+      properties: JSON.parse(JSON.stringify(layer.properties ?? {})),
+      extraSettings: {
+        ...extraSettings,
+        sourceStart: oldSettings.sourceStart ?? 0,
+        speed: oldSettings.speed ?? 1,
+      },
     });
+    editor.commit((draft: any) => {
+      const pasted = draft.layers?.find((candidate: any) => candidate.id === newId);
+      if (pasted) pasted.track = track;
+    }, { label: "Place pasted layer" });
+    newIds.push(newId);
+    if (oldLinkId) {
+      let newLinkId = copiedLinks.get(oldLinkId);
+      if (!newLinkId) {
+        newLinkId = generateLinkId();
+        copiedLinks.set(oldLinkId, newLinkId);
+      }
+      await setLayerLinkId(editor.commit, newId, newLinkId, commands.setSettingCommand);
+    }
   }
+  editor.selectLayers(newIds);
   const s = useEditorStore.getState();
   s.bridge?.seek(s.currentFrame);
 }
 
-function deleteSelectedLayers() {
+export function deleteSelectedLayers() {
   const s = useEditorStore.getState();
   const ids = expandToPartners(s.selection.layerIds);
   if (ids.length === 0) return;
@@ -349,8 +440,13 @@ function deleteSelectedLayers() {
   s.clearSelection();
 }
 
-function fitPreview() {
+export function fitPreview() {
   useEditorStore.getState().setViewport({ previewZoom: 1, previewPanX: 0, previewPanY: 0 });
+}
+
+export function selectAllLayers() {
+  const allIds = useEditorStore.getState().video.layers.map((l: any) => l.id);
+  useEditorStore.getState().selectLayers(allIds);
 }
 
 function zoomToEditor(scale: number) {

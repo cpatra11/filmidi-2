@@ -19,7 +19,6 @@ import { useProjectStore } from "@/store/useProjectStore";
 import { useExportStore } from "@/store/useExportStore";
 import { useAppStore } from "@/store/useAppStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
-import { commands } from "@videoflow/react-video-editor";
 import {
   importMediaFromPicker,
   openHelp,
@@ -29,8 +28,13 @@ import {
   sendFeedback,
   showMcpInstructions,
 } from "@/lib/menuActions";
-
-const { addLayerCommand } = commands;
+import {
+  copySelectedLayers,
+  cutSelectedLayers,
+  deleteSelectedLayers,
+  pasteLayers,
+  splitAtPlayhead,
+} from "@/hooks/useKeyboardShortcuts";
 
 interface MenuItem {
   label: string;
@@ -70,115 +74,16 @@ function getEditMenuItems(): MenuItem[] {
     { label: "Undo", shortcut: "⌘Z", icon: <Undo2 size={14} />, action: () => useEditorStore.getState().undo() },
     { label: "Redo", shortcut: "⇧⌘Z", icon: <Redo2 size={14} />, action: () => useEditorStore.getState().redo() },
     { label: "", divider: true },
-    { label: "Cut", shortcut: "⌘X", icon: <Scissors size={14} />, action: () => {
-      const s = useEditorStore.getState();
-      const ids = s.selection.layerIds;
-      if (ids.length > 0) {
-        const layers = s.video.layers.filter((l: any) => ids.includes(l.id));
-        (window as any).__vfClipboard = { action: "cut", layers: JSON.parse(JSON.stringify(layers)) };
-        s.commit((v: any) => {
-          const idSet = new Set(ids);
-          const remove = (layers: any[]) => {
-            for (let i = layers.length - 1; i >= 0; i--) {
-              if (idSet.has(layers[i].id)) layers.splice(i, 1);
-              else if (layers[i].type === "group" && Array.isArray(layers[i].children)) remove(layers[i].children);
-            }
-          };
-          remove(v.layers);
-        }, { label: "Cut layers" });
-        s.clearSelection();
-      }
-    }},
-    { label: "Copy", shortcut: "⌘C", icon: <Copy size={14} />, action: () => {
-      const s = useEditorStore.getState();
-      const ids = s.selection.layerIds;
-      if (ids.length > 0) {
-        const layers = s.video.layers.filter((l: any) => ids.includes(l.id));
-        (window as any).__vfClipboard = { action: "copy", layers: JSON.parse(JSON.stringify(layers)) };
-      }
-    }},
-    { label: "Paste", shortcut: "⌘V", icon: <Clipboard size={14} />, action: async () => {
-      const clip = (window as any).__vfClipboard;
-      if (!clip || !clip.layers?.length) return;
-      const editor = useEditorStore.getState();
-      const fps = editor.video.fps || 30;
-      const pasteTime = editor.currentFrame / fps;
-      for (const layer of clip.layers) {
-        await addLayerCommand(editor.commit, {
-          type: layer.type,
-          source: layer.settings?.source ?? layer.source,
-          sourceDuration: layer.settings?.sourceDuration ?? layer.sourceDuration ?? layer.duration ?? 5,
-          startTime: pasteTime,
-          properties: layer.properties,
-        });
-      }
-      const s = useEditorStore.getState();
-      s.bridge?.seek(s.currentFrame);
-    }},
-    { label: "Delete", shortcut: "⌫", icon: <Trash2 size={14} />, action: () => {
-      const s = useEditorStore.getState();
-      const ids = s.selection.layerIds;
-      if (ids.length > 0) {
-        s.commit((v: any) => {
-          const idSet = new Set(ids);
-          const remove = (layers: any[]) => {
-            for (let i = layers.length - 1; i >= 0; i--) {
-              if (idSet.has(layers[i].id)) layers.splice(i, 1);
-              else if (layers[i].type === "group" && Array.isArray(layers[i].children)) remove(layers[i].children);
-            }
-          };
-          remove(v.layers);
-        }, { label: "Delete layers" });
-        s.clearSelection();
-      }
-    }},
+    { label: "Cut", shortcut: "⌘X", icon: <Scissors size={14} />, action: cutSelectedLayers },
+    { label: "Copy", shortcut: "⌘C", icon: <Copy size={14} />, action: copySelectedLayers },
+    { label: "Paste", shortcut: "⌘V", icon: <Clipboard size={14} />, action: () => { void pasteLayers(); } },
+    { label: "Delete", shortcut: "⌫", icon: <Trash2 size={14} />, action: deleteSelectedLayers },
     { label: "", divider: true },
     { label: "Select All", shortcut: "⌘A", action: () => {
       const allIds = useEditorStore.getState().video.layers.map((l: any) => l.id);
       useEditorStore.getState().selectLayers(allIds);
     }},
-    { label: "Split at Playhead", shortcut: "⌘K", icon: <Scissors size={14} />, action: () => {
-      const s = useEditorStore.getState();
-      const frame = s.currentFrame;
-      const fps = s.video.fps || 30;
-      const ids = s.selection.layerIds;
-      if (ids.length === 0) return;
-      s.commit((v: any) => {
-        const idSet = new Set(ids);
-        const toAdd: any[] = [];
-        const processLayers = (layers: any[]) => {
-          for (const layer of layers) {
-            if (idSet.has(layer.id)) {
-              const startFrame = Math.round(layer.startTime * fps);
-              const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-              if (frame > startFrame && frame < startFrame + durFrames) {
-                const splitOffset = (frame - startFrame) / fps;
-                const origDur = layer.duration || layer.sourceDuration || 5;
-                const linkId = layer.settings?.linkId;
-                const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
-                toAdd.push({
-                  ...layer,
-                  id: `${layer.id}-r-${Date.now()}`,
-                  name: `${layer.name} (R)`,
-                  startTime: layer.startTime + splitOffset,
-                  sourceStart: (layer.sourceStart || 0) + splitOffset,
-                  sourceDuration: origDur - splitOffset,
-                  duration: origDur - splitOffset,
-                  settings: { ...layer.settings, linkId: rightLinkId || linkId },
-                });
-                if (rightLinkId) layer.settings.linkId = rightLinkId;
-                layer.duration = splitOffset;
-                layer.sourceDuration = splitOffset;
-              }
-            } else if (layer.type === "group" && Array.isArray(layer.children)) {
-              processLayers(layer.children);
-            }
-          }
-        };
-        processLayers(v.layers);
-        v.layers.push(...toAdd);
-      }, { label: "Split at playhead" });
-    }},
+    { label: "Split at Playhead", shortcut: "⌘K", icon: <Scissors size={14} />, action: splitAtPlayhead },
   ];
 }
 

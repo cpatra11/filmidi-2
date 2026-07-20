@@ -1,7 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
-import { TransformOverlay } from "./TransformOverlay";
 import { CropOverlay } from "./CropOverlay";
 
 interface Props {
@@ -29,11 +28,10 @@ export function PreviewOverlays({ containerRef }: Props) {
   const videoW = video.width || 1920;
   const videoH = video.height || 1080;
 
-  if (!rect || !hasSingleClip) return null;
+  // Keep the preview surface unobstructed during normal editing. The native
+  // VideoFlow preview owns selection and transform gestures; only crop mode
+  // needs an explicit set of handles above it.
+  if (!rect || !hasSingleClip || !cropActive) return null;
 
-  return cropActive ? (
-    <CropOverlay containerRect={rect} videoWidth={videoW} videoHeight={videoH} />
-  ) : (
-    <TransformOverlay containerRect={rect} videoWidth={videoW} videoHeight={videoH} />
-  );
+  return <CropOverlay containerRect={rect} videoWidth={videoW} videoHeight={videoH} />;
 }

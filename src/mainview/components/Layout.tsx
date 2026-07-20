@@ -21,21 +21,17 @@ import { Toolbar } from "./Toolbar";
 import { ExportDialog } from "./ExportDialog";
 import { SettingsDialog } from "./SettingsDialog";
 import { HelpDialog } from "./HelpDialog";
+import { SaveAsDialog } from "./SaveAsDialog";
 import { TourOverlay } from "./TourOverlay";
 import { useAppStore } from "@/store/useAppStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { getMediaDuration } from "@/lib/mediaDuration";
+import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
 import type { ContextTarget } from "./ClipContextMenu";
-
-// Track offsets for proper z-order: audio=0-9, video=10-19, text=20-29
-function nextTrack(type: string, offset: number = 0): number {
-  const layers = useEditorStore.getState().video.layers ?? [];
-  const sameTypeCount = layers.filter((l: any) => l.type === type).length;
-  return offset + sameTypeCount;
-}
+import { pasteLayers, splitAtPlayhead } from "@/hooks/useKeyboardShortcuts";
 
 function getDisplayName(urlOrFile: string | File | undefined): string {
   if (!urlOrFile) return "Clip";
@@ -51,8 +47,72 @@ function getDisplayName(urlOrFile: string | File | undefined): string {
 function setLayerTrack(commit: any, layerId: string, track: number) {
   commit((draft: any) => {
     const l = draft.layers?.find((x: any) => x.id === layerId);
-    if (l) l.track = Math.max(0, Math.floor(track));
+    if (l) l.track = normalizeTrackForKind(track, l.type === "audio" ? "audio" : "video");
   }, { label: "Set track" });
+}
+
+async function addTextLayerAtPlayhead() {
+  const editor = useEditorStore.getState();
+  const fps = editor.video.fps || 30;
+  const text = window.prompt("Text to add:", "Text");
+  if (!text || !text.trim()) return;
+
+  const layerId = await addLayerCommand(editor.commit, {
+    type: "text",
+    startTime: editor.currentFrame / fps,
+    sourceDuration: 3,
+    properties: {
+      text: text.trim(),
+      fontSize: 0.12,
+      fontFamily: "Inter",
+      color: "#ffffff",
+      fontWeight: "700",
+      textAlign: "center",
+      position: [0.5, 0.5],
+    },
+  });
+
+  if (layerId) {
+    const track = findAvailableTrack(
+      editor.video.layers ?? [],
+      "video",
+      editor.currentFrame / fps,
+      3,
+    );
+    setLayerTrack(editor.commit, layerId, track);
+    editor.selectLayers([layerId]);
+    editor.bridge?.seek(editor.currentFrame);
+  }
+}
+
+async function addMatteLayerAtPlayhead() {
+  const editor = useEditorStore.getState();
+  const fps = editor.video.fps || 30;
+  const hex = (window.prompt("Matte color (hex):", "#000000") || "#000000").trim() || "#000000";
+  const layerId = await addLayerCommand(editor.commit, {
+    type: "shape",
+    startTime: editor.currentFrame / fps,
+    sourceDuration: editor.video.duration || 5,
+    properties: {
+      fill: hex,
+      width: "100%",
+      height: "100%",
+      position: [0.5, 0.5],
+    },
+    extraSettings: { shapeType: "rectangle" },
+  });
+
+  if (layerId) {
+    const track = findAvailableTrack(
+      editor.video.layers ?? [],
+      "video",
+      editor.currentFrame / fps,
+      editor.video.duration || 5,
+    );
+    setLayerTrack(editor.commit, layerId, track);
+    editor.selectLayers([layerId]);
+    editor.bridge?.seek(editor.currentFrame);
+  }
 }
 
 function VHandle() {
@@ -103,10 +163,8 @@ export function Layout() {
             const setSettingCommand = cmds.setSettingCommand;
             const linkId = generateLinkId();
             const clipName = getDisplayName(asset.name);
-            const audioTrack = nextTrack("audio", 0);
-            const videoTrack = nextTrack("video", 10);
-            cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
-            cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
+            const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, sourceDuration);
+            const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, sourceDuration);
             const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
             setLayerTrack(editor.commit, audioLayerId, audioTrack);
             await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
@@ -117,10 +175,16 @@ export function Layout() {
             await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
             await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
           } else {
+            const track = findAvailableTrack(
+              useEditorStore.getState().video.layers ?? [],
+              type === "audio" ? "audio" : "video",
+              startTime,
+              sourceDuration,
+            );
             const l = await addLayerCommand(editor.commit, { type, source: asset.url, sourceDuration, startTime });
             if (l) {
               const { commands: cmds } = await import("@videoflow/react-video-editor");
-              setLayerTrack(editor.commit, l, nextTrack("audio", 0));
+              setLayerTrack(editor.commit, l, track);
             }
           }
         }
@@ -154,9 +218,26 @@ export function Layout() {
     switch (action) {
       case "add-track":
         useEditorStore.getState().commit((v: any) => {
-          v.tracks = v.tracks || [];
-          v.tracks.push({ id: `track-${Date.now()}`, name: `Track ${v.tracks.length + 1}`, layers: [] });
+          const layers = Array.isArray(v.layers) ? v.layers : [];
+          const hasVideo = layers.some((layer: any) => layer.type !== "audio");
+          const maxVideoTrack = layers.reduce((max: number, layer: any) => {
+            if (layer.type === "audio") return max;
+            const raw = Number(layer.track);
+            const local = Number.isFinite(raw) && raw >= 10 ? Math.floor(raw) - 10 : 0;
+            return Math.max(max, local);
+          }, 0);
+          v.timelineTrackCounts = v.timelineTrackCounts || {};
+          v.timelineTrackCounts.video = Math.max(
+            Number(v.timelineTrackCounts.video) || 0,
+            hasVideo ? maxVideoTrack + 1 : 1,
+          ) + 1;
         }, { label: "Add track" });
+        break;
+      case "add-text":
+        await addTextLayerAtPlayhead();
+        break;
+      case "add-matte":
+        await addMatteLayerAtPlayhead();
         break;
       case "select-all":
         useEditorStore.getState().selectLayers(
@@ -164,23 +245,7 @@ export function Layout() {
         );
         break;
       case "paste": {
-        const clip = (window as any).__vfClipboard;
-        if (clip && clip.layers?.length > 0) {
-          const editor = useEditorStore.getState();
-          const fps = editor.video.fps || 30;
-          const pasteTime = editor.currentFrame / fps;
-          for (const layer of clip.layers) {
-            await addLayerCommand(editor.commit, {
-              type: layer.type,
-              source: layer.source,
-              sourceDuration: layer.sourceDuration || layer.duration || 5,
-              startTime: pasteTime,
-              properties: layer.properties,
-            });
-          }
-          const s = useEditorStore.getState();
-          s.bridge?.seek(s.currentFrame);
-        }
+        await pasteLayers();
         break;
       }
     }
@@ -188,6 +253,12 @@ export function Layout() {
 
   const handleClipAction = async (action: string) => {
     switch (action) {
+      case "add-text":
+        await addTextLayerAtPlayhead();
+        break;
+      case "add-matte":
+        await addMatteLayerAtPlayhead();
+        break;
       case "cut":
       case "copy": {
         const s = useEditorStore.getState();
@@ -221,23 +292,7 @@ export function Layout() {
         break;
       }
       case "paste": {
-        const clip = (window as any).__vfClipboard;
-        if (clip && clip.layers?.length > 0) {
-          const editor = useEditorStore.getState();
-          const fps = editor.video.fps || 30;
-          const pasteTime = editor.currentFrame / fps;
-          for (const layer of clip.layers) {
-            await addLayerCommand(editor.commit, {
-              type: layer.type,
-              source: layer.source,
-              sourceDuration: layer.sourceDuration || layer.duration || 5,
-              startTime: pasteTime,
-              properties: layer.properties,
-            });
-          }
-          const ps = useEditorStore.getState();
-          ps.bridge?.seek(ps.currentFrame);
-        }
+        await pasteLayers();
         break;
       }
       case "delete": {
@@ -269,67 +324,7 @@ export function Layout() {
         break;
       }
       case "split": {
-        const s3 = useEditorStore.getState();
-        const frame = s3.currentFrame;
-        const fps3 = s3.video.fps || 30;
-        const ids3 = s3.selection.layerIds;
-        // Expand to linked partners
-        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
-        const splitAllLayers = s3.video.layers ?? [];
-        const splitIds = new Set(ids3);
-        for (const id of ids3) {
-          const partner = findLinkedPartnerIn(splitAllLayers, id);
-          if (partner) splitIds.add(partner.id);
-        }
-        if (splitIds.size > 0) {
-          s3.commit((v: any) => {
-            const idSet = new Set(splitIds);
-            const toAdd: any[] = [];
-            const processLayers = (layers: any[]) => {
-              for (const layer of layers) {
-                if (idSet.has(layer.id)) {
-                  const startTime = layer.settings?.startTime ?? layer.startTime ?? 0;
-                  const sourceStart = layer.settings?.sourceStart ?? layer.sourceStart ?? 0;
-                  const sourceDuration = layer.settings?.sourceDuration ?? layer.sourceDuration ?? layer.duration ?? 5;
-                  const speed = Math.abs(layer.settings?.speed ?? layer.speed ?? 1);
-                  const startFrame = Math.round(startTime * fps3);
-                  const durFrames = Math.round((sourceDuration / Math.max(speed, 0.0001)) * fps3);
-                  const endFrame = startFrame + durFrames;
-                  if (frame > startFrame && frame < endFrame) {
-                    const splitOffset = (frame - startFrame) / fps3;
-                    const origDur = sourceDuration;
-                    const linkId = layer.settings?.linkId;
-                    const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
-                    toAdd.push({
-                      ...layer,
-                      id: `${layer.id}-r-${Date.now()}`,
-                      name: `${layer.name} (R)`,
-                      startTime: startTime + splitOffset,
-                      sourceStart: sourceStart + splitOffset * speed,
-                      sourceDuration: origDur - splitOffset * speed,
-                      duration: (origDur - splitOffset * speed) / Math.max(speed, 0.0001),
-                      settings: {
-                        ...layer.settings,
-                        startTime: startTime + splitOffset,
-                        sourceStart: sourceStart + splitOffset * speed,
-                        sourceDuration: origDur - splitOffset * speed,
-                        linkId: rightLinkId || linkId,
-                      },
-                    });
-                    if (rightLinkId) layer.settings.linkId = rightLinkId;
-                    layer.settings.sourceDuration = splitOffset * speed;
-                    layer.duration = splitOffset;
-                    layer.sourceDuration = splitOffset * speed;
-                  }
-                } else if (layer.type === "group" && Array.isArray(layer.children)) {
-                  processLayers(layer.children);
-                }
-              }
-            };
-            processLayers(v.layers);
-            v.layers.push(...toAdd);
-          }, { label: "Split at playhead" });
-        }
+        splitAtPlayhead();
         break;
       }
       default:
@@ -397,13 +392,42 @@ export function Layout() {
     e.stopPropagation();
     setIsTimelineDragOver(false);
 
+    const editor = useEditorStore.getState();
+    const timelineSurface = e.currentTarget.querySelector<HTMLElement>(".ct-tracks-inner");
+    const surfaceRect = timelineSurface?.getBoundingClientRect();
+    const scale = editor.viewport.timelineScale || 100;
+    const dropStartTime = surfaceRect
+      ? Math.max(0, (e.clientX - surfaceRect.left) / scale)
+      : editor.currentFrame / (editor.video.fps || 30);
+    const row = (e.target as HTMLElement).closest<HTMLElement>(".ct-track-row");
+    const rowKind = row?.dataset.trackKind;
+    const trackAtDrop = (kind: "audio" | "video") => {
+      const rows = Array.from(
+        timelineSurface?.querySelectorAll<HTMLElement>(`.ct-track-row[data-track-kind="${kind}"]`) ?? [],
+      );
+      const hoveredTrack = rowKind === kind && row?.dataset.trackIndex ? Number(row.dataset.trackIndex) : null;
+        if (
+          hoveredTrack !== null &&
+          Number.isFinite(hoveredTrack) &&
+          row?.dataset.disabled !== "true"
+        ) return hoveredTrack;
+      let nearest: { track: number; distance: number } | null = null;
+      for (const candidate of rows) {
+        const rect = candidate.getBoundingClientRect();
+        const distance = e.clientY < rect.top ? rect.top - e.clientY : e.clientY > rect.bottom ? e.clientY - rect.bottom : 0;
+        const track = Number(candidate.dataset.trackIndex);
+        if (candidate.dataset.disabled === "true") continue;
+        if (Number.isFinite(track) && (!nearest || distance < nearest.distance)) nearest = { track, distance };
+      }
+      return nearest?.track ?? 0;
+    };
+
     // OS file drop (from Finder / desktop)
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
       const mediaStore = useMediaPanelStore.getState();
-      const editor = useEditorStore.getState();
       const fps = editor.video.fps || 30;
-      const startTime = editor.currentFrame / fps;
+      const startTime = dropStartTime;
       for (const file of files) {
         const type = file.type.startsWith("video/") ? "video" as const
           : file.type.startsWith("audio/") ? "audio" as const
@@ -412,7 +436,6 @@ export function Layout() {
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const url = URL.createObjectURL(file);
         mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
-        if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
         const isVideoFile = type === "video";
         if (isVideoFile) {
           const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -420,10 +443,12 @@ export function Layout() {
           const setSettingCommand = cmds.setSettingCommand;
           const linkId = generateLinkId();
           const clipName = getDisplayName(file);
-          const audioTrack = nextTrack("audio", 0);
-          const videoTrack = nextTrack("video", 10);
-          cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
-          cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
+          const videoTrack = findAvailableTrack(
+            useEditorStore.getState().video.layers ?? [], "video", startTime, duration, trackAtDrop("video"),
+          );
+          const audioTrack = findAvailableTrack(
+            useEditorStore.getState().video.layers ?? [], "audio", startTime, duration, trackAtDrop("audio"),
+          );
           const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
           setLayerTrack(editor.commit, audioLayerId, audioTrack);
           await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
@@ -434,10 +459,13 @@ export function Layout() {
           await setLayerLinkId(editor.commit, layerId, linkId, setSettingCommand);
           await cmds.setPropertyCommand(editor.commit, layerId, "mute", true);
         } else {
+          const track = findAvailableTrack(
+            useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration, trackAtDrop(type === "audio" ? "audio" : "video"),
+          );
           const l = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
           if (l) {
             const { commands: cmds } = await import("@videoflow/react-video-editor");
-            setLayerTrack(editor.commit, l, nextTrack("audio", 0));
+            setLayerTrack(editor.commit, l, track);
           }
         }
       }
@@ -454,19 +482,20 @@ export function Layout() {
       if (!raw) return;
       const data = JSON.parse(raw);
       if (data.kind !== "media-asset") return;
-      const editor = useEditorStore.getState();
       const fps = editor.video.fps || 30;
-      const startTime = editor.currentFrame / fps;
+      const startTime = dropStartTime;
       if (data.type === "video") {
         const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
         const { commands: cmds } = await import("@videoflow/react-video-editor");
         const setSettingCommand = cmds.setSettingCommand;
         const linkId = generateLinkId();
         const clipName = getDisplayName(data.url);
-        const audioTrack = nextTrack("audio", 0);
-        const videoTrack = nextTrack("video", 10);
-        cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
-        cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
+        const videoTrack = findAvailableTrack(
+          useEditorStore.getState().video.layers ?? [], "video", startTime, data.duration || 5, trackAtDrop("video"),
+        );
+        const audioTrack = findAvailableTrack(
+          useEditorStore.getState().video.layers ?? [], "audio", startTime, data.duration || 5, trackAtDrop("audio"),
+        );
         const audioLayerId = await addLayerCommand(editor.commit, {
           type: "audio", source: data.url, sourceDuration: data.duration || 5, startTime,
         });
@@ -485,12 +514,16 @@ export function Layout() {
           await cmds.setPropertyCommand(editor.commit, videoLayerId, "mute", true);
         }
       } else {
-        await addLayerCommand(editor.commit, {
+        const track = findAvailableTrack(
+          useEditorStore.getState().video.layers ?? [], data.type === "audio" ? "audio" : "video", startTime, data.duration || 5, trackAtDrop(data.type === "audio" ? "audio" : "video"),
+        );
+        const layerId = await addLayerCommand(editor.commit, {
           type: data.type,
           source: data.url,
           sourceDuration: data.duration || 5,
           startTime,
         });
+        if (layerId) setLayerTrack(editor.commit, layerId, track);
       }
       // Seek to refresh preview
       const s = useEditorStore.getState();
@@ -563,17 +596,14 @@ export function Layout() {
                               const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
                               const url = URL.createObjectURL(file);
                               store.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
-        if (editor.mediaImporter) editor.mediaImporter([file], { startTime, track: 0 });
                               if (type === "video") {
                                 const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
                                 const { commands: cmds } = await import("@videoflow/react-video-editor");
                                 const setSettingCommand = cmds.setSettingCommand;
                                 const linkId = generateLinkId();
                                 const clipName = getDisplayName(file);
-                                const audioTrack = nextTrack("audio", 0);
-                                const videoTrack = nextTrack("video", 10);
-                                cmds.setTrackSettingsCommand(editor.commit, audioTrack, { name: `A${audioTrack + 1}` });
-                                cmds.setTrackSettingsCommand(editor.commit, videoTrack, { name: `V${videoTrack - 9}` });
+                                const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, duration);
+                                const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration);
                                 const audioLayerId2 = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
                                 setLayerTrack(editor.commit, audioLayerId2, audioTrack);
                                 await cmds.setSettingCommand(editor.commit, audioLayerId2, "name", `${clipName} Audio`);
@@ -584,7 +614,9 @@ export function Layout() {
                                 await setLayerLinkId(editor.commit, layerId2, linkId, setSettingCommand);
                                 await cmds.setPropertyCommand(editor.commit, layerId2, "mute", true);
                               } else {
-                                await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+                                const track = findAvailableTrack(useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration);
+                                const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
+                                if (layerId) setLayerTrack(editor.commit, layerId, track);
                               }
                             }
                             store.showToast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`);
@@ -639,7 +671,10 @@ export function Layout() {
                         <p className="text-sm font-medium text-white/80">Drop to add to timeline</p>
                       </div>
                     )}
-                    <ClipContextMenu contextTarget={contextTarget} onAction={handleClipAction}>
+                    <ClipContextMenu
+                      contextTarget={contextTarget}
+                      onAction={contextTarget === "clip" ? handleClipAction : handleTimelineAction}
+                    >
                       <vf-editor data-theme="dark" style={{ display: "contents" }}>
                         <CustomTimeline onContextMenuTarget={setContextTarget} />
                       </vf-editor>
@@ -654,6 +689,7 @@ export function Layout() {
       <ExportDialog />
       <SettingsDialog />
       <HelpDialog />
+      <SaveAsDialog />
       <TourOverlay />
     </div>
   );

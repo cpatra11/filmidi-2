@@ -42,8 +42,6 @@ const ALL_MODELS: ModelEntry[] = [
   { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", category: "audio" },
   { id: "fun-music-v1", name: "FunMusic v1", category: "audio" },
   { id: "fun-music-preview", name: "FunMusic Preview", category: "audio" },
-  { id: "sonilo-v1.1-text-to-music", name: "Sonilo Text→Music", category: "audio" },
-  { id: "mirelo-sfx-v1.5-text-to-sfx", name: "Mirelo Text→SFX", category: "audio" },
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {

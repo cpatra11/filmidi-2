@@ -33,6 +33,7 @@ interface ExportState {
   setFCPXMLVersion: (v: FCPXMLVersion) => void;
   setFCPXMLTarget: (t: FCPXMLTarget) => void;
   setFileName: (n: string) => void;
+  setSavedFileHandle: (handle: FileSystemFileHandle | null) => void;
   setProgress: (p: number) => void;
   setError: (e: string | null) => void;
   startExport: () => void;
@@ -118,6 +119,7 @@ export const useExportStore = create<ExportState>((set, get) => ({
   setFCPXMLVersion: (v) => set({ fcpxmlVersion: v }),
   setFCPXMLTarget: (t) => set({ fcpxmlTarget: t }),
   setFileName: (n) => set({ fileName: n }),
+  setSavedFileHandle: (handle) => set({ savedFileHandle: handle }),
   setProgress: (p) => set({ progress: p }),
   setError: (e) => set({ error: e, exportStatus: e ? "error" : get().exportStatus }),
   startExport: () => set({ exportStatus: "exporting", progress: 0, error: null, savedFileSize: null }),

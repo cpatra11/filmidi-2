@@ -5,7 +5,6 @@ import { useSettingsStore } from "@/store/useSettingsStore";
 import { useHelpStore } from "@/store/useHelpStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
-import { commands } from "@videoflow/react-video-editor";
 import {
   importMediaFromPicker,
   openHelp,
@@ -15,8 +14,16 @@ import {
   sendFeedback,
   showMcpInstructions,
 } from "@/lib/menuActions";
-
-const { addLayerCommand } = commands;
+import {
+  copySelectedLayers,
+  cutSelectedLayers,
+  deleteSelectedLayers,
+  fitPreview,
+  pasteLayers,
+  selectAllLayers,
+  splitAtPlayhead,
+  trimSelectedToPlayhead,
+} from "@/hooks/useKeyboardShortcuts";
 
 function handleMenuAction(action: string) {
   switch (action) {
@@ -39,101 +46,39 @@ function handleMenuAction(action: string) {
     case "export":
       useExportStore.getState().open();
       break;
+    case "undo":
+      useEditorStore.getState().undo();
+      break;
+    case "redo":
+      useEditorStore.getState().redo();
+      break;
+    case "cut":
+      cutSelectedLayers();
+      break;
+    case "copy":
+      copySelectedLayers();
+      break;
+    case "paste":
+      void pasteLayers();
+      break;
+    case "delete":
+      deleteSelectedLayers();
+      break;
+    case "select-all":
+      selectAllLayers();
+      break;
 
     // Edit
     case "split-at-playhead": {
-      const s = useEditorStore.getState();
-      const frame = s.currentFrame;
-      const fps = s.video.fps || 30;
-      const ids = s.selection.layerIds;
-      if (ids.length === 0) return;
-      s.commit((v: any) => {
-        const idSet = new Set(ids);
-        const toAdd: any[] = [];
-        const processLayers = (layers: any[]) => {
-          for (const layer of layers) {
-            if (idSet.has(layer.id)) {
-              const startFrame = Math.round(layer.startTime * fps);
-              const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-              if (frame > startFrame && frame < startFrame + durFrames) {
-                const splitOffset = (frame - startFrame) / fps;
-                const origDur = layer.duration || layer.sourceDuration || 5;
-                toAdd.push({
-                  ...layer,
-                  id: `${layer.id}-r-${Date.now()}`,
-                  name: `${layer.name} (R)`,
-                  startTime: layer.startTime + splitOffset,
-                  sourceStart: (layer.sourceStart || 0) + splitOffset,
-                  sourceDuration: origDur - splitOffset,
-                  duration: origDur - splitOffset,
-                });
-                layer.duration = splitOffset;
-                layer.sourceDuration = splitOffset;
-              }
-            } else if (layer.type === "group" && Array.isArray(layer.children)) {
-              processLayers(layer.children);
-            }
-          }
-        };
-        processLayers(v.layers);
-        v.layers.push(...toAdd);
-      }, { label: "Split at playhead" });
+      splitAtPlayhead();
       break;
     }
     case "trim-start": {
-      const s = useEditorStore.getState();
-      const frame = s.currentFrame;
-      const fps = s.video.fps || 30;
-      const ids = s.selection.layerIds;
-      if (ids.length === 0) return;
-      s.commit((v: any) => {
-        const idSet = new Set(ids);
-        const processLayers = (layers: any[]) => {
-          for (const layer of layers) {
-            if (idSet.has(layer.id)) {
-              const startFrame = Math.round(layer.startTime * fps);
-              const trimAmount = Math.max(0, frame - startFrame) / fps;
-              if (trimAmount > 0) {
-                layer.startTime += trimAmount;
-                layer.sourceStart = (layer.sourceStart || 0) + trimAmount;
-                layer.duration = (layer.duration || layer.sourceDuration || 5) - trimAmount;
-                layer.sourceDuration = (layer.sourceDuration || layer.duration || 5) - trimAmount;
-              }
-            } else if (layer.type === "group" && Array.isArray(layer.children)) {
-              processLayers(layer.children);
-            }
-          }
-        };
-        processLayers(v.layers);
-      }, { label: "Trim start" });
+      trimSelectedToPlayhead("right");
       break;
     }
     case "trim-end": {
-      const s = useEditorStore.getState();
-      const frame = s.currentFrame;
-      const fps = s.video.fps || 30;
-      const ids = s.selection.layerIds;
-      if (ids.length === 0) return;
-      s.commit((v: any) => {
-        const idSet = new Set(ids);
-        const processLayers = (layers: any[]) => {
-          for (const layer of layers) {
-            if (idSet.has(layer.id)) {
-              const startFrame = Math.round(layer.startTime * fps);
-              const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-              const endFrame = startFrame + durFrames;
-              const trimAmount = Math.max(0, endFrame - frame) / fps;
-              if (trimAmount > 0) {
-                layer.duration = (layer.duration || layer.sourceDuration || 5) - trimAmount;
-                layer.sourceDuration = (layer.sourceDuration || layer.duration || 5) - trimAmount;
-              }
-            } else if (layer.type === "group" && Array.isArray(layer.children)) {
-              processLayers(layer.children);
-            }
-          }
-        };
-        processLayers(v.layers);
-      }, { label: "Trim end" });
+      trimSelectedToPlayhead("left");
       break;
     }
 
@@ -158,7 +103,7 @@ function handleMenuAction(action: string) {
       break;
     }
     case "zoom-fit":
-      useEditorStore.getState().setViewport({ timelineScale: 1, previewZoom: 1, previewPanX: 0, previewPanY: 0 });
+      fitPreview();
       break;
     case "zoom-100":
       useEditorStore.getState().setViewport({ previewZoom: 1 });
@@ -186,28 +131,43 @@ function handleMenuAction(action: string) {
 
 export function useNativeMenuHandler() {
   useEffect(() => {
-    const eb = (window as any).__electrobun;
-    if (!eb) return;
+    let cleanupHandler: (() => void) | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
-    const prev = eb.receiveMessageFromBun;
-    eb.receiveMessageFromBun = (msg: unknown) => {
-      try {
-        const data = typeof msg === "string" ? JSON.parse(msg) : msg;
-        if (data?.type === "menu-action" && data.action) {
-          handleMenuAction(data.action);
-          return;
+    const attach = () => {
+      const eb = (window as any).__electrobun;
+      if (!eb || cleanupHandler) return;
+
+      const prev = eb.receiveMessageFromBun;
+      eb.receiveMessageFromBun = (msg: unknown) => {
+        try {
+          const data = typeof msg === "string" ? JSON.parse(msg) : msg;
+          if (data?.type === "menu-action" && data.action) {
+            handleMenuAction(data.action);
+            return;
+          }
+        } catch {
+          // Non-JSON message, ignore
         }
-      } catch {
-        // Non-JSON message, ignore
-      }
 
-      if (prev) {
-        prev(msg);
-      }
+        if (prev) {
+          prev(msg);
+        }
+      };
+
+      cleanupHandler = () => {
+        eb.receiveMessageFromBun = prev;
+      };
     };
 
+    attach();
+    if (!cleanupHandler) {
+      interval = setInterval(attach, 50);
+    }
+
     return () => {
-      eb.receiveMessageFromBun = prev;
+      if (interval) clearInterval(interval);
+      if (cleanupHandler) cleanupHandler();
     };
   }, []);
 }

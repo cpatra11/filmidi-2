@@ -38,6 +38,7 @@ import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
+import { splitAtPlayhead, trimSelectedToPlayhead } from "@/hooks/useKeyboardShortcuts";
 
 // Expand layer IDs to include linked partners
 function expandToPartners(ids: string[]): string[] {
@@ -121,82 +122,9 @@ export function Toolbar() {
       {/* Tools */}
       <ToolButton icon={MousePointer2} label="Pointer" shortcut="V" active={toolMode === "pointer"} onClick={() => setToolMode("pointer")} />
       <ToolButton icon={Scissors} label="Razor" shortcut="B" active={toolMode === "razor"} onClick={() => setToolMode("razor")} />
-      <ToolButton icon={SplitSquareVertical} label="Split" shortcut="S" onClick={() => {
-        const s = useEditorStore.getState();
-        const frame = s.currentFrame;
-        const fps = s.video.fps || 30;
-        const ids = expandToPartners(s.selection.layerIds);
-        if (ids.length === 0) return;
-        s.commit((v: any) => {
-          const idSet = new Set(ids);
-          const toAdd: any[] = [];
-          const processLayers = (layers: any[]) => {
-            for (const layer of layers) {
-              if (idSet.has(layer.id)) {
-                const startFrame = Math.round(layer.startTime * fps);
-                const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-                if (frame > startFrame && frame < startFrame + durFrames) {
-                  const splitOffset = (frame - startFrame) / fps;
-                  const origDur = layer.duration || layer.sourceDuration || 5;
-                  const linkId = layer.settings?.linkId;
-                  const rightLinkId = linkId ? `${linkId}-r-${Date.now()}` : "";
-                  toAdd.push({ ...layer, id: `${layer.id}-r-${Date.now()}`, name: `${layer.name || "Clip"} (R)`, startTime: layer.startTime + splitOffset, sourceStart: (layer.sourceStart || 0) + splitOffset, sourceDuration: origDur - splitOffset, duration: origDur - splitOffset, settings: { ...layer.settings, linkId: rightLinkId || linkId } });
-                  if (rightLinkId) layer.settings.linkId = rightLinkId;
-                  layer.duration = splitOffset;
-                  layer.sourceDuration = splitOffset;
-                }
-              } else if (layer.type === "group" && Array.isArray(layer.children)) processLayers(layer.children);
-            }
-          };
-          processLayers(v.layers);
-          v.layers.push(...toAdd);
-        }, { label: "Split at playhead" });
-      }} />
-      <ToolButton icon={ChevronLeft} label="Split Left" shortcut="⌥S" onClick={() => {
-        const s = useEditorStore.getState();
-        const frame = s.currentFrame;
-        const fps = s.video.fps || 30;
-        const ids = s.selection.layerIds;
-        if (ids.length === 0) return;
-        s.commit((v: any) => {
-          const idSet = new Set(ids);
-          for (const layer of v.layers) {
-            if (idSet.has(layer.id)) {
-              const startFrame = Math.round(layer.startTime * fps);
-              const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-              if (frame > startFrame && frame < startFrame + durFrames) {
-                const splitOffset = (frame - startFrame) / fps;
-                layer.duration = splitOffset;
-                layer.sourceDuration = splitOffset;
-              }
-            }
-          }
-        }, { label: "Trim end at playhead" });
-      }} />
-      <ToolButton icon={ChevronRight} label="Split Right" shortcut="⌥⇧S" onClick={() => {
-        const s = useEditorStore.getState();
-        const frame = s.currentFrame;
-        const fps = s.video.fps || 30;
-        const ids = s.selection.layerIds;
-        if (ids.length === 0) return;
-        s.commit((v: any) => {
-          const idSet = new Set(ids);
-          for (const layer of v.layers) {
-            if (idSet.has(layer.id)) {
-              const startFrame = Math.round(layer.startTime * fps);
-              const durFrames = Math.round((layer.duration || layer.sourceDuration || 5) * fps);
-              if (frame > startFrame && frame < startFrame + durFrames) {
-                const splitOffset = (frame - startFrame) / fps;
-                const origDur = layer.duration || layer.sourceDuration || 5;
-                layer.startTime = layer.startTime + splitOffset;
-                layer.sourceStart = (layer.sourceStart || 0) + splitOffset;
-                layer.duration = origDur - splitOffset;
-                layer.sourceDuration = origDur - splitOffset;
-              }
-            }
-          }
-        }, { label: "Trim start at playhead" });
-      }} />
+      <ToolButton icon={SplitSquareVertical} label="Split" shortcut="S" onClick={splitAtPlayhead} />
+      <ToolButton icon={ChevronLeft} label="Split Left" shortcut="⌥S" onClick={() => trimSelectedToPlayhead("left")} />
+      <ToolButton icon={ChevronRight} label="Split Right" shortcut="⌥⇧S" onClick={() => trimSelectedToPlayhead("right")} />
 
       <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
 

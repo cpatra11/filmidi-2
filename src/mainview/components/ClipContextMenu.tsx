@@ -17,6 +17,8 @@ import {
   EyeOff,
   Plus,
   CheckSquare,
+  Type,
+  Square,
 } from "lucide-react";
 import {
   ContextMenu,
@@ -47,6 +49,25 @@ export function ClipContextMenu({ children, contextTarget, onAction }: ClipConte
       <ContextMenuContent side="right" sideOffset={4}>
         {contextTarget === "clip" ? (
           <>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Plus size={14} />
+                Add
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ContextMenuItem onClick={handle("add-text")}>
+                  <Type size={14} />
+                  Add Text
+                </ContextMenuItem>
+                <ContextMenuItem onClick={handle("add-matte")}>
+                  <Square size={14} />
+                  Add Matte
+                </ContextMenuItem>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+
+            <ContextMenuSeparator />
+
             {/* AI Edit group */}
             <ContextMenuItem onClick={handle("ai-edit")}>
               <Wand2 size={14} />
@@ -161,10 +182,29 @@ export function ClipContextMenu({ children, contextTarget, onAction }: ClipConte
         ) : (
           <>
             {/* Empty area context menu */}
-            <ContextMenuItem onClick={handle("add-track")}>
-              <Plus size={14} />
-              Add Track
-            </ContextMenuItem>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <Plus size={14} />
+                Add
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
+                <ContextMenuItem onClick={handle("add-text")}>
+                  <Type size={14} />
+                  Add Text
+                </ContextMenuItem>
+                <ContextMenuItem onClick={handle("add-matte")}>
+                  <Square size={14} />
+                  Add Matte
+                </ContextMenuItem>
+                <ContextMenuItem onClick={handle("add-track")}>
+                  <Plus size={14} />
+                  Add Track
+                </ContextMenuItem>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+
+            <ContextMenuSeparator />
+
             <ContextMenuItem onClick={handle("paste")}>
               <Clipboard size={14} />
               Paste

@@ -91,7 +91,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "add_clips",
     description:
-      "Place one or more media assets onto the timeline at specific tracks and times. Creates linked audio for video clips. Overwrites any clips in the landing region. Batch undoable. Omit trackIndex to auto-assign lowest available track.",
+      "Place one or more media assets onto the timeline at specific tracks and times. Creates linked audio for video clips. Never overwrites existing clips: if the requested lane is occupied, the next compatible free lane is chosen. Omit trackIndex to auto-assign a compatible free track.",
     input_schema: {
       type: "object",
       properties: {
@@ -303,7 +303,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "ripple_delete_ranges",
     description:
-      "Delete time ranges from the timeline, rippling everything after to the left. Use for removing spans that aren't word-aligned. For word-aligned cuts, prefer remove_words.",
+      "Delete time ranges from the timeline, rippling everything after to the left. Use for removing spans that aren't word-aligned. For speech pauses, prefer remove_silence. For word-aligned cuts, prefer remove_words.",
     input_schema: {
       type: "object",
       properties: {
@@ -321,6 +321,27 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["ranges"],
+    },
+  },
+  {
+    name: "remove_silence",
+    description:
+      "Remove dead air from speech clips by reading the transcript and deleting only pauses longer than the threshold. Use this for trimming quiet sections in talking clips. Reuse existing audio/transcripts when present and avoid creating duplicate audio layers. Do not use beat detection for silence removal.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clipIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional — only process these clips. Omit to scan the whole timeline.",
+        },
+        minPauseSeconds: {
+          type: "number",
+          description: "Optional — minimum gap to delete between spoken words. Default: 0.5.",
+        },
+        language: { type: "string", description: "Optional — transcript language hint." },
+      },
+      required: [],
     },
   },
 
@@ -355,7 +376,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "add_texts",
     description:
-      "Add one or more text layers to the timeline. Each creates a text clip with content, styling, and timing. Use for titles, subtitles, lower thirds, watermarks.",
+      "Add one or more text layers to the timeline. Each creates a text clip with content, styling, and timing. Use for titles, subtitles, lower thirds, watermarks, and other on-screen text.",
     input_schema: {
       type: "object",
       properties: {
@@ -402,6 +423,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         alignment: { type: "string", enum: ["left", "center", "right"], description: "Optional — text alignment." },
         borderColor: { type: "string", description: "Optional — outline color." },
         backgroundColor: { type: "string", description: "Optional — background color." },
+        x: { type: "number", description: "Optional — horizontal position in canvas pixels." },
+        y: { type: "number", description: "Optional — vertical position in canvas pixels." },
+        centerX: { type: "number", description: "Optional — normalized horizontal position 0-1." },
+        centerY: { type: "number", description: "Optional — normalized vertical position 0-1." },
       },
       required: [],
     },
@@ -409,7 +434,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "add_captions",
     description:
-      "Transcribe spoken audio (on-device or cloud) and create styled caption clips on a single text track for the current run. Supports per-word animations, censor profanity, max words, text case. If adding for the whole timeline, omit clipIds and transcribe every relevant clip in one pass.",
+      "Transcribe spoken audio (on-device or cloud) and create styled caption clips on a single dedicated text track for the current run. Captions default to an aspect-aware, bottom-safe position and can be overridden with centerX/centerY. Reuse existing audio layers and transcript cache when possible, replace prior generated captions for the same clip region, and keep captions aligned to the edited timeline. Supports per-word animations, censor profanity, max words, and text case.",
     input_schema: {
       type: "object",
       properties: {
@@ -441,7 +466,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "remove_words",
     description:
-      "Descript-style text-based editing. Given word indices from get_transcript or exact tokens like 'um', split clips at boundaries and remove ranges. Handles pause gap, linked A/V partners. Cut aggressiveness: tight/balanced/loose. After a cut, indices shift — re-read get_transcript before the next call.",
+      "Descript-style text-based editing. Given word indices from get_transcript or exact tokens like 'um', split clips at boundaries and remove ranges. Handles pause gap, linked A/V partners. Cut aggressiveness: tight/balanced/loose. Use remove_silence for dead-air removal between spoken words. After a cut, indices shift — re-read get_transcript before the next call.",
     input_schema: {
       type: "object",
       properties: {
@@ -469,7 +494,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "extract_audio",
     description:
-      "Extract audio track from video clip(s) on the timeline. Creates a WAV audio layer linked to the video. Use this when the audio layer is missing or when you need to re-extract audio for transcription.",
+      "Extract audio track from video clip(s) on the timeline. Creates a WAV audio layer linked to the video. Skip clips that already have an extracted linked audio layer and use the existing audio layer for transcription when possible.",
     input_schema: {
       type: "object",
       properties: {
@@ -641,6 +666,20 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "search_web_media",
+    description:
+      "Search downloadable public web media when the user asks for internet music, sound effects, stock images, or video, or when suitable generation models are unavailable. Uses Wikimedia Commons for images and Internet Archive for audio/video. Returns direct URLs that can be passed to import_media, then add_clips or import_media with addToTimeline=true. Verify licensing before publishing.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to find, such as camera shutter sound, footsteps, or robot image." },
+        type: { type: "string", enum: ["audio", "image", "video"], description: "Media type to search for." },
+        limit: { type: "integer", description: "Optional — maximum results, default 8." },
+      },
+      required: ["query", "type"],
+    },
+  },
 
   // ─── MEDIA ORGANIZATION (7) ──────────────────────────────────────
   {
@@ -736,21 +775,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "import_media",
     description:
-      "Import media from a URL, local file path, or bytes. Bridge for assets from stock services, web search, or local files. Returns a placeholder asset id that resolves in the background.",
+      "Import media from a URL or local file path into the Media panel. Accepts source as either a URL string or an object with url/path. Returns a ready asset id. Set addToTimeline=true with startFrame/durationFrames when the asset should be placed immediately; otherwise use add_clips.",
     input_schema: {
       type: "object",
       properties: {
         source: {
-          type: "object",
-          properties: {
-            url: { type: "string", description: "URL to download from." },
-            path: { type: "string", description: "Local file path." },
-            bytes: { type: "string", description: "Base64-encoded bytes." },
-          },
+          anyOf: [
+            { type: "string" },
+            {
+              type: "object",
+              properties: {
+                url: { type: "string", description: "URL to download from." },
+                path: { type: "string", description: "Local file path." },
+                bytes: { type: "string", description: "Base64-encoded bytes." },
+              },
+            },
+          ],
           description: "Import source (one of url, path, or bytes).",
         },
         name: { type: "string", description: "Optional — display name for the asset." },
         folderId: { type: "string", description: "Optional — folder to place in." },
+        addToTimeline: { type: "boolean", description: "Optional — also place the imported asset on the timeline." },
+        startFrame: { type: "integer", description: "Optional — timeline frame for immediate placement." },
+        durationFrames: { type: "integer", description: "Optional — timeline duration for immediate placement." },
+        trackIndex: { type: "integer", description: "Optional — preferred timeline track for immediate placement." },
       },
       required: ["source"],
     },
@@ -760,7 +808,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "create_matte",
     description:
-      "Add a solid-color PNG to the library. Use for backgrounds, mattes, color bars. Pass hex color and optional aspect ratio (defaults to project dimensions).",
+      "Add a solid-color PNG to the library. Use for backgrounds, mattes, color bars, and safe title backdrops. Pass hex color and optional aspect ratio (defaults to project dimensions).",
     input_schema: {
       type: "object",
       properties: {
@@ -894,7 +942,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "export_project",
     description:
-      "Export the current project. Modes: video (H.264/H.265/ProRes, resolution options), xml (FCPXML for DaVinci/Premiere), filmidi (self-contained .filmidi package). Video renders in background; xml/filmidi finish inline.",
+      "Export the current project from the edited timeline state. Modes: video (H.264/H.265/ProRes, resolution options), xml (FCPXML for DaVinci/Premiere), filmidi (self-contained .filmidi package). Reuse the chosen save location when available.",
     input_schema: {
       type: "object",
       properties: {
@@ -1000,6 +1048,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 
   // ─── PROJECT NAVIGATION (3) ──────────────────────────────────────
+  {
+    name: "save_project",
+    description:
+      "Save the current project snapshot, including timeline and project metadata, to the active project record. Use after edits or before exporting.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "save_project_as",
+    description:
+      "Duplicate the current project into a new project with a new name and open the copy. Use when the user wants 'Save As'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Optional — new project name. Defaults to a copy name." },
+      },
+      required: [],
+    },
+  },
   {
     name: "get_projects",
     description:

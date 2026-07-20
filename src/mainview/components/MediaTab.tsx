@@ -56,6 +56,32 @@ export function MediaTab() {
     fileInputRef.current?.click();
   };
 
+  const handleCreateMatte = async () => {
+    const store = useMediaPanelStore.getState();
+    const hex = (window.prompt("Matte color (hex):", "#000000") || "#000000").trim() || "#000000";
+    const canvas = document.createElement("canvas");
+    canvas.width = 1920;
+    canvas.height = 1080;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = hex;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const url = canvas.toDataURL("image/png");
+    const id = `matte-${Date.now()}`;
+    store.addAsset({
+      id,
+      name: `Matte ${hex}`,
+      type: "image",
+      url,
+      duration: 5,
+      isGenerated: true,
+      folderId: store.currentFolderId,
+      thumbnailUrl: url,
+      createdAt: Date.now(),
+    });
+    store.showToast("Matte created");
+  };
+
   const importFiles = useCallback(async (files: FileList | File[]) => {
     const store = useMediaPanelStore.getState();
     const editor = useEditorStore.getState();
@@ -229,7 +255,7 @@ export function MediaTab() {
                 <FolderPlus size={14} />
                 New Folder
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => showToast("Create matte")}>
+              <DropdownMenuItem onClick={() => void handleCreateMatte()}>
                 <Square size={14} />
                 Create Matte
               </DropdownMenuItem>
