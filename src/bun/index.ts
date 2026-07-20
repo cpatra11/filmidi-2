@@ -28,7 +28,7 @@ async function getMainViewUrl(): Promise<string> {
 const url = await getMainViewUrl();
 
 const mainWindow = new BrowserWindow({
-  title: "Filmidi Editor",
+  title: "Filmidi",
   url,
   frame: {
     width: 1400,
