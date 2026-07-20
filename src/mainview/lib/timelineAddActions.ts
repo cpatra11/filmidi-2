@@ -1,5 +1,6 @@
 import { commands, useEditorStore } from "@videoflow/react-video-editor";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
+import { useTextDialogStore } from "@/store/useTextDialogStore";
 
 const { addLayerCommand } = commands;
 
@@ -13,8 +14,8 @@ function setLayerTrack(commit: any, layerId: string, track: number, kind: "audio
 export async function addTextLayerAtPlayhead(): Promise<void> {
   const editor = useEditorStore.getState();
   const fps = editor.video.fps || 30;
-  const text = window.prompt("Text to add:", "Text");
-  if (!text?.trim()) return;
+  const text = await useTextDialogStore.getState().open();
+  if (!text) return;
 
   const startTime = editor.currentFrame / fps;
   const duration = 3;
@@ -40,10 +41,10 @@ export async function addTextLayerAtPlayhead(): Promise<void> {
   editor.bridge?.seek(editor.currentFrame);
 }
 
-export async function addMatteLayerAtPlayhead(): Promise<void> {
+export async function addMatteLayerAtPlayhead(shapeType: string = "rectangle"): Promise<void> {
   const editor = useEditorStore.getState();
   const fps = editor.video.fps || 30;
-  const hex = (window.prompt("Matte color (hex):", "#000000") || "#000000").trim() || "#000000";
+  const hex = "#000000";
   const startTime = editor.currentFrame / fps;
   const duration = editor.video.duration || 5;
   const layerId = await addLayerCommand(editor.commit, {
@@ -56,7 +57,7 @@ export async function addMatteLayerAtPlayhead(): Promise<void> {
       height: "100%",
       position: [0.5, 0.5],
     },
-    extraSettings: { shapeType: "rectangle" },
+    extraSettings: { shapeType },
   });
 
   if (!layerId) return;

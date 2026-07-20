@@ -406,6 +406,35 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "add_shapes",
+    description:
+      "Add one or more vector shape layers directly to the timeline. Use for rectangles, ellipses, triangles, lines, mattes, overlays, and title backdrops. Shapes are placed on available video tracks and are visible in the preview and export.",
+    input_schema: {
+      type: "object",
+      properties: {
+        shapes: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              shapeType: { type: "string", enum: ["rectangle", "ellipse", "triangle", "line"] },
+              startFrame: { type: "integer" },
+              durationFrames: { type: "integer" },
+              trackIndex: { type: "integer" },
+              color: { type: "string", description: "Fill color in CSS or hex format." },
+              centerX: { type: "number", description: "Horizontal position from 0 to 1." },
+              centerY: { type: "number", description: "Vertical position from 0 to 1." },
+              width: { type: "number", description: "Width from 0 to 1." },
+              height: { type: "number", description: "Height from 0 to 1." },
+            },
+            required: ["shapeType", "startFrame", "durationFrames"],
+          },
+        },
+      },
+      required: ["shapes"],
+    },
+  },
+  {
     name: "update_text",
     description:
       "Modify text content or styling of an existing text/caption layer. Pass captionGroupId to restyle an entire caption track at once.",

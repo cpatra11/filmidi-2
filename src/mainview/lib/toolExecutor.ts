@@ -1573,6 +1573,46 @@ export async function executeTool(
               ],
             },
           });
+          const startTime = ((t.startFrame as number) ?? 0) / fps;
+          const duration = ((t.durationFrames as number) ?? 90) / fps;
+          const requestedTrack = t.trackIndex as number | undefined;
+          const track = requestedTrack === undefined
+            ? findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration)
+            : requestedTrack;
+          setTrack(commit, layerId, track);
+          results.push(layerId);
+        }
+        refreshPreview();
+        return JSON.stringify({ added: results });
+      }
+
+      case "add_shapes": {
+        const shapes = input.shapes as Array<Record<string, unknown>>;
+        if (!shapes || shapes.length === 0) return JSON.stringify({ error: "No shapes provided" });
+        const results: string[] = [];
+        for (const shape of shapes) {
+          const startFrame = Math.max(0, Math.floor((shape.startFrame as number) ?? 0));
+          const durationFrames = Math.max(1, Math.floor((shape.durationFrames as number) ?? 90));
+          const startTime = startFrame / fps;
+          const duration = durationFrames / fps;
+          const layerId = await addLayerCommand(commit, {
+            type: "shape",
+            source: "color",
+            startTime,
+            sourceDuration: duration,
+            properties: {
+              fill: (shape.color as string) ?? "#000000",
+              width: (shape.width as number) ?? 1,
+              height: (shape.height as number) ?? 1,
+              position: [(shape.centerX as number) ?? 0.5, (shape.centerY as number) ?? 0.5],
+            },
+            extraSettings: { shapeType: (shape.shapeType as string) ?? "rectangle" },
+          });
+          const requestedTrack = shape.trackIndex as number | undefined;
+          const track = requestedTrack === undefined
+            ? findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration)
+            : requestedTrack;
+          setTrack(commit, layerId, track);
           results.push(layerId);
         }
         refreshPreview();

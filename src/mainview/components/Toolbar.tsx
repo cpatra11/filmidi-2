@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Undo2,
@@ -29,6 +30,9 @@ import {
   Square,
   Plus,
   Upload,
+  Circle,
+  Triangle,
+  Minus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +40,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Separator } from "@/components/ui/separator";
 import { useAppStore } from "@/store/useAppStore";
 import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
@@ -99,6 +102,44 @@ function ToolButton({
   );
 }
 
+function ToolbarDivider() {
+  return <span aria-hidden="true" className="px-1 text-[13px] leading-none text-white/20">|</span>;
+}
+
+function ShapeSelector() {
+  const [open, setOpen] = useState(false);
+  const shapes = [
+    { type: "rectangle", label: "Rectangle", icon: Square },
+    { type: "ellipse", label: "Ellipse", icon: Circle },
+    { type: "triangle", label: "Triangle", icon: Triangle },
+    { type: "line", label: "Line", icon: Minus },
+  ];
+
+  return (
+    <div className="relative">
+      <Tooltip>
+        <TooltipTrigger
+          render={<Button variant="ghost" size="icon-sm" aria-label="Add shape" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="text-white/50 hover:text-white/80" />}
+        >
+          <Square size={14} />
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={4}>Add Shape</TooltipContent>
+      </Tooltip>
+      {open && (
+        <div className="absolute left-0 top-8 z-50 min-w-36 rounded-md border border-white/15 bg-[#151515] p-1 shadow-xl">
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-white/40">Shape</div>
+          {shapes.map(({ type, label, icon: Icon }) => (
+            <button key={type} type="button" onClick={() => { setOpen(false); void addMatteLayerAtPlayhead(type); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/10 hover:text-white">
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Toolbar() {
   const {
     toolMode,
@@ -123,7 +164,7 @@ export function Toolbar() {
       <ToolButton icon={Undo2} label="Undo" shortcut="⌘Z" onClick={() => useEditorStore.getState().undo()} />
       <ToolButton icon={Redo2} label="Redo" shortcut="⌘⇧Z" onClick={() => useEditorStore.getState().redo()} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Tools */}
       <ToolButton icon={MousePointer2} label="Pointer" shortcut="V" active={toolMode === "pointer"} onClick={() => setToolMode("pointer")} />
@@ -132,15 +173,15 @@ export function Toolbar() {
       <ToolButton icon={ChevronLeft} label="Split Left" shortcut="⌥S" onClick={() => trimSelectedToPlayhead("left")} />
       <ToolButton icon={ChevronRight} label="Split Right" shortcut="⌥⇧S" onClick={() => trimSelectedToPlayhead("right")} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Add timeline layers at the playhead */}
       <ToolButton icon={Type} label="Add Text" onClick={() => { void addTextLayerAtPlayhead(); }} />
-      <ToolButton icon={Square} label="Add Matte" onClick={() => { void addMatteLayerAtPlayhead(); }} />
+      <ShapeSelector />
       <ToolButton icon={Plus} label="Add Video Track" onClick={addVideoTrack} />
       <ToolButton icon={Upload} label="Import Media" shortcut="⌘I" onClick={() => { void importMediaFromPicker(); }} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Snap toggle */}
       <ToolButton icon={Magnet} label="Snap" shortcut="N" active={useAppStore.getState().snapEnabled} onClick={() => {
@@ -148,7 +189,7 @@ export function Toolbar() {
         s.setSnapEnabled(!s.snapEnabled);
       }} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Playback */}
       <ToolButton icon={isPlaying ? Pause : Play} label={isPlaying ? "Pause" : "Play"} shortcut="Space" onClick={() => {
@@ -171,7 +212,7 @@ export function Toolbar() {
         s.bridge?.seek(f);
       }} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Zoom */}
       <ToolButton icon={ZoomOut} label="Zoom Out" shortcut="⌘-" onClick={() => {
@@ -209,7 +250,7 @@ export function Toolbar() {
         />
       </div>
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Delete */}
       <ToolButton icon={Trash2} label="Delete" shortcut="Del" onClick={() => {
@@ -236,18 +277,18 @@ export function Toolbar() {
       <ToolButton icon={Sparkles} label="Agent" active={showAgentPanel} onClick={toggleAgentPanel} />
       <ToolButton icon={Music} label="Generate" active={showGenerationPanel} onClick={toggleGenerationPanel} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Panel toggles */}
       <ToolButton icon={showMediaPanel ? PanelLeft : PanelLeftClose} label="Media" shortcut="⌘⇧M" active={showMediaPanel} onClick={toggleMediaPanel} />
       <ToolButton icon={showInspector ? PanelRight : PanelRightClose} label="Inspector" shortcut="⌘⇧I" active={showInspector} onClick={toggleInspector} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Export */}
       <ToolButton icon={Download} label="Export" shortcut="⌘E" onClick={() => useExportStore.getState().open()} />
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-white/10" />
+      <ToolbarDivider />
 
       {/* Home */}
       <ToolButton icon={Home} label="Home" onClick={() => useProjectStore.getState().openProject(null)} />
