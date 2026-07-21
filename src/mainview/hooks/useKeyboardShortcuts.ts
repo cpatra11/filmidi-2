@@ -336,6 +336,16 @@ export function trimSelectedToPlayhead(side: "left" | "right") {
   }, { label: side === "left" ? "Trim end at playhead" : "Trim start at playhead" });
 }
 
+/** Remove the portion of each selected clip before the playhead. */
+export function removeLeftAtPlayhead() {
+  trimSelectedToPlayhead("right");
+}
+
+/** Remove the portion of each selected clip after the playhead. */
+export function removeRightAtPlayhead() {
+  trimSelectedToPlayhead("left");
+}
+
 export function cutSelectedLayers() {
   const s = useEditorStore.getState();
   const ids = expandToPartners(s.selection.layerIds);

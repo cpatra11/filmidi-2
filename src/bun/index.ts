@@ -3,6 +3,7 @@ import Electrobun from "electrobun/bun";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftSidecar";
 import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
@@ -59,8 +60,50 @@ const mcpPendingRequests = new Map<string, PendingRequest>();
 // Secure in-memory storage for sensitive credentials
 const secureStore = new Map<string, string>();
 const CREDENTIALS_FILE = join(homedir(), "Library", "Application Support", "com.filmidi.editor", "credentials.json");
+const KEYCHAIN_SERVICE = "com.filmidi.editor";
+const KEYCHAIN_ACCOUNT = "vercel-api-key";
+const IS_MACOS = process.platform === "darwin";
+
+function readKeychainKey(): string | null {
+  if (!IS_MACOS) return null;
+  try {
+    const value = execFileSync("security", ["find-generic-password", "-a", KEYCHAIN_ACCOUNT, "-s", KEYCHAIN_SERVICE, "-w"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeKeychainKey(value: string | null): boolean {
+  if (!IS_MACOS) return false;
+  try {
+    if (value) {
+      execFileSync("security", ["add-generic-password", "-U", "-a", KEYCHAIN_ACCOUNT, "-s", KEYCHAIN_SERVICE, "-w", value], {
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+    } else {
+      try {
+        execFileSync("security", ["delete-generic-password", "-a", KEYCHAIN_ACCOUNT, "-s", KEYCHAIN_SERVICE], {
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+      } catch {}
+    }
+    return true;
+  } catch (err) {
+    console.error("[credentials] Keychain operation failed:", err);
+    return false;
+  }
+}
 
 function loadCredentials() {
+  if (IS_MACOS) {
+    const key = readKeychainKey();
+    if (key) secureStore.set("vercel_api_key", key);
+    return;
+  }
   try {
     if (existsSync(CREDENTIALS_FILE)) {
       const data = JSON.parse(readFileSync(CREDENTIALS_FILE, "utf-8"));
@@ -72,6 +115,10 @@ function loadCredentials() {
 }
 
 function saveCredentials() {
+  if (IS_MACOS) {
+    writeKeychainKey(secureStore.get("vercel_api_key") ?? null);
+    return;
+  }
   try {
     const dir = dirname(CREDENTIALS_FILE);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -229,14 +276,18 @@ transport.registerHandler((msg: any) => {
         } else {
           secureStore.delete("vercel_api_key");
         }
-        saveCredentials();
+        if (IS_MACOS) {
+          writeKeychainKey(msg.key.length > 0 ? msg.key : null);
+        } else {
+          saveCredentials();
+        }
         transport.send({ type: "api-key-saved" });
       }
       break;
     }
 
     case "get-api-key": {
-      // Check memory first, then try loading from file
+      // Check memory first, then load from the OS keychain or restricted fallback.
       let key: string | null = secureStore.get("vercel_api_key") ?? null;
       if (!key) {
         loadCredentials();

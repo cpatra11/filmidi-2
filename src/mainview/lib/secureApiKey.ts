@@ -8,8 +8,8 @@ function getBridge(): { postMessage: (msg: unknown) => void } | null {
 }
 
 /**
- * Get the Vercel AI Gateway key from Bun's secure in-memory store (Electrobun)
- * or from localStorage (browser fallback).
+ * Get the Vercel AI Gateway key from Bun's secure native store (Keychain on
+ * macOS). Browser fallback is session-only and never persists across restarts.
  * Caches the result in a module variable so subsequent calls are instant.
  */
 export function getSecureApiKey(): Promise<string | null> {
@@ -18,8 +18,7 @@ export function getSecureApiKey(): Promise<string | null> {
 
   const bridge = getBridge();
   if (!bridge) {
-    // Browser fallback
-    cachedKey = localStorage.getItem(STORAGE_KEY);
+    cachedKey = sessionStorage.getItem(STORAGE_KEY);
     return Promise.resolve(cachedKey);
   }
 
@@ -46,7 +45,7 @@ export function getSecureApiKey(): Promise<string | null> {
     setTimeout(() => {
       if (fetchPromise) {
         (window as any).__electrobun.receiveMessageFromBun = prevHandler;
-        cachedKey = localStorage.getItem(STORAGE_KEY);
+        cachedKey = sessionStorage.getItem(STORAGE_KEY);
         fetchPromise = null;
         resolve(cachedKey);
       }
@@ -57,8 +56,8 @@ export function getSecureApiKey(): Promise<string | null> {
 }
 
 /**
- * Save the Vercel AI Gateway key. In Electrobun, sends it to Bun's secure in-memory store.
- * Also keeps a local cache, but does NOT write to localStorage.
+ * Save the Vercel AI Gateway key. Native Electrobun stores it in macOS
+ * Keychain; browser fallback lasts only for the current session.
  */
 export function setSecureApiKey(key: string): void {
   cachedKey = key || null;
@@ -68,15 +67,15 @@ export function setSecureApiKey(key: string): void {
     bridge.postMessage(JSON.stringify({ type: "set-api-key", key }));
   } else {
     if (key) {
-      localStorage.setItem(STORAGE_KEY, key);
+      sessionStorage.setItem(STORAGE_KEY, key);
     } else {
-      localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_KEY);
     }
   }
 }
 
 /**
- * Clear the API key from both Bun's store and localStorage.
+ * Clear the API key from native secure storage and the browser session.
  */
 export function clearSecureApiKey(): void {
   cachedKey = null;
@@ -84,7 +83,7 @@ export function clearSecureApiKey(): void {
   if (bridge) {
     bridge.postMessage(JSON.stringify({ type: "set-api-key", key: "" }));
   }
-  localStorage.removeItem(STORAGE_KEY);
+  sessionStorage.removeItem(STORAGE_KEY);
 }
 
 /**

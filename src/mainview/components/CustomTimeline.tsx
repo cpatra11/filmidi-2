@@ -230,7 +230,10 @@ function TimelineClip({
   const isLocked = (layer.settings as any)?.locked === true;
   const isAudio = layer.type === "audio";
   const isVideo = layer.type === "video";
-  const showThumbnail = (isVideo || layer.type === "image") && width > 60;
+  // Decoding a thumbnail for every long clip makes scrolling and dragging
+  // contend with media decoders. Keep the timeline responsive and decode only
+  // the selected visual clip; labels remain available for every clip.
+  const showThumbnail = (isVideo || layer.type === "image") && isSelected && width > 160;
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
 
   // Lazy-load thumbnail from first frame
@@ -279,6 +282,9 @@ function TimelineClip({
       onPointerDown={(e) => onPointerDown(e, layer)}
       onDoubleClick={(e) => onDoubleClick(e, layer)}
       onContextMenu={(e) => onContextMenu(e, layer)}
+      role="button"
+      aria-label={`${getDisplayName(layer)} ${layer.type} clip${hasLink ? ", linked" : ""}`}
+      title={`${getDisplayName(layer)} · ${bounds.start.toFixed(2)}s–${bounds.end.toFixed(2)}s${hasLink ? " · linked" : ""}`}
     >
       <div
         className="ct-clip-handle"
@@ -287,6 +293,9 @@ function TimelineClip({
           e.stopPropagation();
           onHandlePointerDown(e, layer, "start");
         }}
+        role="button"
+        aria-label={`Trim start of ${getDisplayName(layer)}`}
+        title="Trim clip start"
       />
       {showThumbnail && thumbnailUrl && (
         <div
@@ -368,6 +377,9 @@ function TimelineClip({
           e.stopPropagation();
           onHandlePointerDown(e, layer, "end");
         }}
+        role="button"
+        aria-label={`Trim end of ${getDisplayName(layer)}`}
+        title="Trim clip end"
       />
     </div>
   );

@@ -45,7 +45,7 @@ import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import { cn } from "@/lib/utils";
-import { splitAtPlayhead, trimSelectedToPlayhead } from "@/hooks/useKeyboardShortcuts";
+import { splitAtPlayhead, removeLeftAtPlayhead, removeRightAtPlayhead } from "@/hooks/useKeyboardShortcuts";
 import { importMediaFromPicker } from "@/lib/menuActions";
 import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead, addVideoTrack } from "@/lib/timelineAddActions";
 
@@ -81,6 +81,7 @@ function ToolButton({
             variant={active ? "secondary" : "ghost"}
             size="icon-sm"
             onClick={onClick}
+            aria-label={label}
             className={cn(
               "text-white/50 hover:text-white/80",
               active && "bg-white/10 text-white"
@@ -129,7 +130,7 @@ function ShapeSelector() {
         <div className="absolute left-0 top-8 z-50 min-w-36 rounded-md border border-white/15 bg-[#151515] p-1 shadow-xl">
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-white/40">Shape</div>
           {shapes.map(({ type, label, icon: Icon }) => (
-            <button key={type} type="button" onClick={() => { setOpen(false); void addMatteLayerAtPlayhead(type); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/10 hover:text-white">
+            <button key={type} type="button" aria-label={`Add ${label}`} title={`Add ${label}`} onClick={() => { setOpen(false); void addMatteLayerAtPlayhead(type); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-white/75 hover:bg-white/10 hover:text-white">
               <Icon size={14} />
               {label}
             </button>
@@ -170,8 +171,8 @@ export function Toolbar() {
       <ToolButton icon={MousePointer2} label="Pointer" shortcut="V" active={toolMode === "pointer"} onClick={() => setToolMode("pointer")} />
       <ToolButton icon={Scissors} label="Razor" shortcut="B" active={toolMode === "razor"} onClick={() => setToolMode("razor")} />
       <ToolButton icon={SplitSquareVertical} label="Split" shortcut="S" onClick={splitAtPlayhead} />
-      <ToolButton icon={ChevronLeft} label="Split Left" shortcut="⌥S" onClick={() => trimSelectedToPlayhead("left")} />
-      <ToolButton icon={ChevronRight} label="Split Right" shortcut="⌥⇧S" onClick={() => trimSelectedToPlayhead("right")} />
+      <ToolButton icon={ChevronLeft} label="Remove Left" shortcut="⌥←" onClick={removeLeftAtPlayhead} />
+      <ToolButton icon={ChevronRight} label="Remove Right" shortcut="⌥→" onClick={removeRightAtPlayhead} />
 
       <ToolbarDivider />
 

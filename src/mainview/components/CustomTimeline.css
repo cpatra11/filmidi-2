@@ -109,6 +109,8 @@
   overflow: auto;
   position: relative;
   background: var(--vf-panel);
+  overscroll-behavior: contain;
+  contain: layout paint;
 }
 
 .ct-body::-webkit-scrollbar {
