@@ -3,9 +3,9 @@
 Filmidi is an AI-native desktop video editor built around a precise, multi-track timeline. It combines direct editing controls with an agent that can inspect the current project and use editing tools to carry out requests such as importing media, arranging clips, trimming, ripple editing, transcription, captions, asset placement, and export.
 
 <p>
-  <a href="https://github.com/cpatra11/filmidi-q/releases/latest/download/Filmidi-v0.0.1-macos-arm64.dmg"><strong>Download for Mac (Apple Silicon)</strong></a>
+  <a href="https://github.com/cpatra11/filmidi-2/releases/latest/download/Filmidi-v0.0.1-macos-arm64.dmg"><strong>Download for Mac (Apple Silicon)</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/cpatra11/filmidi-q/releases/latest">View all releases</a>
+  <a href="https://github.com/cpatra11/filmidi-2/releases/latest">View all releases</a>
 </p>
 
 The downloadable build is a macOS Apple Silicon DMG. Add your Qwen Cloud API key from the welcome screen or Settings after installation.
@@ -65,10 +65,40 @@ The agent should inspect the timeline, transcript, and media library before edit
 
 On macOS, the optional Swift sidecar can provide Apple-specific media and hardware capabilities when its binary is packaged with the app. When it is unavailable, Filmidi logs the fallback and continues through Bun and VideoFlow. Production packaging includes the sidecar only when it has been built for the target architecture; non-macOS builds do not require it.
 
+## How Codex And GPT-5.6 Accelerated Filmidi
+
+AI-assisted development was part of the implementation workflow, not just a
+feature of the product:
+
+- **Codex accelerated the engineering loop.** It inspected the Electrobun,
+  Bun, VideoFlow, and FableCut implementations; traced issues through the
+  timeline, MCP, media, export, and native-menu paths; made focused changes;
+  ran type checks/builds; and exercised the live MCP server against real
+  timeline state. This shortened the report → diagnosis → patch → verification
+  loop, especially for linked audio/video edits and transcription failures.
+- **GPT-5.6 supported the high-level technical decisions.** It helped compare
+  the editor foundations, identify FableCut as the more reliable timeline
+  engine, design the agent-tool architecture, define sequential dependencies
+  such as transcription → silence removal → captions, and shape the Qwen Cloud
+  integration and MCP contract.
+- **The key implementation decision was to separate the editor from the
+  agent.** FableCut's JSON project remains the canonical timeline model;
+  Filmidi's agent reads that model, applies atomic patches, and verifies the
+  result instead of manipulating preview-only state.
+- **The workflow is auditable.** Tool calls, transcript logs, project
+  revisions, and MCP results make it possible to see what the agent changed and
+  reproduce the edit. Dependent operations run in order so failed
+  transcription cannot silently trigger incorrect captions or ripple edits.
+
+This let us spend less time rebuilding basic NLE behavior and more time
+implementing agent-native editing: timeline inspection, media placement,
+captions, silence removal, effects, transitions, keyframes, and export.
+
 ## License
 
 Filmidi Editor is released under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
 
 ## Repository
 
-This project is maintained in the `qchackathon` branch at [github.com/cpatra11/filmidi-q](https://github.com/cpatra11/filmidi-q).
+This project is maintained in the `build-week-challenge` branch at
+[github.com/cpatra11/filmidi-2](https://github.com/cpatra11/filmidi-2/tree/build-week-challenge).
