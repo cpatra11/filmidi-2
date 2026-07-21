@@ -841,7 +841,7 @@ transport.registerHandler((msg: any) => {
       break;
     }
 
-    case "stream-chat-init-legacy-disabled": {
+    case "stream-chat-init": {
       const { requestId, model, messages, tools, system, apiKey } = msg;
       if (!requestId || !apiKey) break;
 
@@ -885,9 +885,8 @@ transport.registerHandler((msg: any) => {
 
           const decoder = new TextDecoder();
           let buffer = "";
-          // Track current block: text or tool_use (thinking blocks are skipped)
-          let currentBlock: { type: "text" | "tool_use"; id?: string; name?: string; input?: string } | null = null;
           const events: Record<string, unknown>[] = [];
+          const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
 
           while (true) {
             const { done, value } = await reader.read();
@@ -906,51 +905,30 @@ transport.registerHandler((msg: any) => {
               let parsed: Record<string, unknown>;
               try { parsed = JSON.parse(data); } catch { continue; }
 
-              const eventType = parsed.type as string;
-
-              if (eventType === "content_block_start") {
-                const block = parsed.content_block as Record<string, unknown>;
-                if (block.type === "tool_use") {
-                  currentBlock = { type: "tool_use", id: block.id as string, name: block.name as string, input: "" };
-                } else if (block.type === "text") {
-                  currentBlock = { type: "text" };
-                } else {
-                  // thinking or unknown — skip
-                  currentBlock = null;
-                }
-                continue;
+              const choice = (parsed.choices as any[])?.[0];
+              const delta = choice?.delta;
+              if (delta?.content) events.push({ type: "text_delta", text: String(delta.content) });
+              for (const call of delta?.tool_calls ?? []) {
+                const index = Number(call.index ?? 0);
+                const current = toolCalls.get(index) ?? { id: "", name: "", arguments: "" };
+                current.id ||= String(call.id ?? "");
+                current.name ||= String(call.function?.name ?? "");
+                current.arguments += String(call.function?.arguments ?? "");
+                toolCalls.set(index, current);
               }
-
-              if (eventType === "content_block_delta") {
-                const delta = parsed.delta as Record<string, unknown>;
-                if (delta.type === "text_delta" && currentBlock?.type === "text") {
-                  const text = delta.text as string;
-                  if (text) events.push({ type: "text_delta", text });
-                } else if (delta.type === "input_json_delta" && currentBlock?.type === "tool_use") {
-                  currentBlock.input = (currentBlock.input ?? "") + (delta.partial_json as string);
-                }
-                continue;
-              }
-
-              if (eventType === "content_block_stop") {
-                if (currentBlock?.type === "tool_use" && currentBlock.id && currentBlock.name) {
+              if (choice?.finish_reason) {
+                for (const call of toolCalls.values()) {
                   let input: Record<string, unknown> = {};
-                  try { input = JSON.parse(currentBlock.input ?? "{}"); } catch {}
-                  events.push({ type: "tool_use", id: currentBlock.id, name: currentBlock.name, input });
+                  try { input = JSON.parse(call.arguments || "{}"); } catch {}
+                  events.push({ type: "tool_use", id: call.id, name: call.name, input });
                 }
-                currentBlock = null;
-                continue;
-              }
-
-              if (eventType === "message_delta") {
-                const delta = parsed.delta as Record<string, unknown> | undefined;
-                const usage = parsed.usage as Record<string, unknown> | undefined;
+                const usage = (parsed.usage ?? {}) as Record<string, unknown>;
                 events.push({
                   type: "stop",
-                  stopReason: (delta?.stop_reason as string) ?? null,
-                  usage: { input_tokens: (usage?.input_tokens as number) ?? 0, output_tokens: (usage?.output_tokens as number) ?? 0 },
+                  stopReason: choice.finish_reason === "tool_calls" ? "tool_use" : choice.finish_reason,
+                  usage: { input_tokens: Number(usage.prompt_tokens ?? 0), output_tokens: Number(usage.completion_tokens ?? 0) },
                 });
-                continue;
+                toolCalls.clear();
               }
             }
           }

@@ -4,12 +4,20 @@ export const AI_GATEWAY_OPENAI_BASE_URL = "https://ai-gateway.vercel.sh/v1";
 export const AI_GATEWAY_SDK_BASE_URL = "https://ai-gateway.vercel.sh/v4/ai";
 export const DEFAULT_TRANSCRIPTION_MODEL = "xai/grok-stt";
 
+/** AI SDK adds a User-Agent header that the Gateway CORS policy rejects. */
+export const browserSafeGatewayFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const headers = new Headers(init?.headers);
+  headers.delete("user-agent");
+  return globalThis.fetch(input, { ...init, headers });
+};
+
 export type GatewayCapability = "chat" | "image" | "video" | "audio" | "transcription" | "upscale";
 
 export function createFilmidiGateway(apiKey: string) {
   return createGateway({
     apiKey: apiKey.trim(),
     baseURL: AI_GATEWAY_SDK_BASE_URL,
+    fetch: browserSafeGatewayFetch as any,
   });
 }
 

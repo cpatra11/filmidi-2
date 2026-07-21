@@ -1,6 +1,6 @@
 import { createGateway } from "@ai-sdk/gateway";
 import { generateImage, experimental_generateVideo, experimental_generateSpeech } from "ai";
-import { AI_GATEWAY_SDK_BASE_URL } from "./aiGateway";
+import { AI_GATEWAY_SDK_BASE_URL, browserSafeGatewayFetch } from "./aiGateway";
 
 export type GenerationType = "image" | "video" | "audio";
 
@@ -53,7 +53,7 @@ export async function submitGeneration(
   params: GenerationParams,
 ): Promise<{ taskId?: string; resultUrl?: string }> {
   if (!apiKey.trim()) throw new Error("vercel_api_key_required");
-  const gateway = createGateway({ apiKey: apiKey.trim(), baseURL: AI_GATEWAY_SDK_BASE_URL });
+  const gateway = createGateway({ apiKey: apiKey.trim(), baseURL: AI_GATEWAY_SDK_BASE_URL, fetch: browserSafeGatewayFetch as any });
 
   if (type === "image") {
     const result = await generateImage({

@@ -92,6 +92,11 @@ export async function* streamChatVercel(
     signal?: AbortSignal;
   },
 ): AsyncGenerator<StreamEvent> {
+  if (typeof window !== "undefined" && (window as any).__electrobunBunBridge) {
+    yield* streamChatThroughBun(apiKey, { messages, tools, model, system, maxTokens, signal });
+    return;
+  }
+
   const response = await fetch(`${AI_GATEWAY_OPENAI_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey.trim()}` },
@@ -152,6 +157,70 @@ export async function* streamChatVercel(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+async function* streamChatThroughBun(
+  apiKey: string,
+  { messages, tools, model, system, maxTokens = 8192, signal }: {
+    messages: Message[];
+    tools?: ToolDefinition[];
+    model: string;
+    system?: string;
+    maxTokens?: number;
+    signal?: AbortSignal;
+  },
+): AsyncGenerator<StreamEvent> {
+  const bridge = (window as any).__electrobunBunBridge;
+  const requestId = crypto.randomUUID();
+  const events = await new Promise<Record<string, unknown>[]>((resolve, reject) => {
+    const eb = (window as any).__electrobun;
+    const previous = eb?.receiveMessageFromBun;
+    const timer = setTimeout(() => {
+      if (eb) eb.receiveMessageFromBun = previous;
+      reject(new Error("Gateway chat request timed out"));
+    }, 120_000);
+
+    if (!eb) {
+      clearTimeout(timer);
+      reject(new Error("Electrobun transport unavailable"));
+      return;
+    }
+    eb.receiveMessageFromBun = (message: unknown) => {
+      const data = typeof message === "string" ? (() => { try { return JSON.parse(message); } catch { return null; } })() : message;
+      if (!data || typeof data !== "object" || (data as any).type !== "stream-chat-result" || (data as any).requestId !== requestId) {
+        if (previous) previous(message);
+        return;
+      }
+      clearTimeout(timer);
+      eb.receiveMessageFromBun = previous;
+      const received = (data as any).events as Record<string, unknown>[] | undefined;
+      const error = received?.find((event) => event.type === "error");
+      if (error) reject(new Error(String(error.message ?? "Gateway chat failed")));
+      else resolve(received ?? []);
+    };
+
+    const abort = () => {
+      clearTimeout(timer);
+      eb.receiveMessageFromBun = previous;
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    bridge.postMessage(JSON.stringify({
+      type: "stream-chat-init",
+      requestId,
+      apiKey,
+      model,
+      messages: toOpenAIMessages(messages, system),
+      tools: toOpenAITools(tools),
+      maxTokens,
+    }));
+  });
+
+  for (const event of events) {
+    if (event.type === "text_delta") yield event as unknown as TextDeltaEvent;
+    else if (event.type === "tool_use") yield event as unknown as ToolUseEvent;
+    else if (event.type === "stop") yield event as unknown as StopEvent;
   }
 }
 
