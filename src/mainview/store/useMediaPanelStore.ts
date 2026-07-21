@@ -14,6 +14,7 @@ export interface MediaAsset {
   isGenerated: boolean;
   folderId: string | null;
   thumbnailUrl?: string;
+  sourcePath?: string;
   createdAt: number;
   tags?: string[];
 }

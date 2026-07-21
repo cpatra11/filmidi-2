@@ -29,6 +29,7 @@ import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { getMediaDuration } from "@/lib/mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { extractMovAudio, normalizeMovForPlayback } from "@/lib/movAudio";
+import { storeDataUrl, storeImportedFile } from "@/lib/mediaStorage";
 import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead } from "@/lib/timelineAddActions";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -375,14 +376,19 @@ export function Layout() {
           : "image" as const;
         const duration = await getMediaDuration(file, type);
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        let url = URL.createObjectURL(file);
+        const stored = await storeImportedFile(file, id);
+        let url = stored?.url ?? URL.createObjectURL(file);
         let normalized = false;
         if (type === "video" && (file.name.toLowerCase().endsWith(".mov") || file.type === "video/quicktime")) {
           const normalizedUrl = await normalizeMovForPlayback(file);
-          if (normalizedUrl) { url = normalizedUrl; normalized = true; }
+          if (normalizedUrl) {
+            const normalizedStored = await storeDataUrl(normalizedUrl, `${file.name}.mp4`, `${id}-normalized`);
+            url = normalizedStored?.url ?? normalizedUrl;
+            normalized = true;
+          }
         }
         const audioUrl = type === "video" && !normalized ? await extractMovAudio(file) : null;
-        mediaStore.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
+        mediaStore.addAsset({ id, name: file.name, type, url, sourcePath: stored?.path, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         const isVideoFile = type === "video";
         if (isVideoFile) {
           const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -549,14 +555,19 @@ export function Layout() {
                               const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
                               const duration = await getMediaDuration(file, type);
                               const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                              let url = URL.createObjectURL(file);
+                              const stored = await storeImportedFile(file, id);
+                              let url = stored?.url ?? URL.createObjectURL(file);
                               let normalized = false;
                               if (type === "video" && (file.name.toLowerCase().endsWith(".mov") || file.type === "video/quicktime")) {
                                 const normalizedUrl = await normalizeMovForPlayback(file);
-                                if (normalizedUrl) { url = normalizedUrl; normalized = true; }
+                                if (normalizedUrl) {
+                                  const normalizedStored = await storeDataUrl(normalizedUrl, `${file.name}.mp4`, `${id}-normalized`);
+                                  url = normalizedStored?.url ?? normalizedUrl;
+                                  normalized = true;
+                                }
                               }
                               const audioUrl = type === "video" && !normalized ? await extractMovAudio(file) : null;
-                              store.addAsset({ id, name: file.name, type, url, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
+                              store.addAsset({ id, name: file.name, type, url, sourcePath: stored?.path, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
                               if (type === "video") {
                                 const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
                                 const { commands: cmds } = await import("@videoflow/react-video-editor");

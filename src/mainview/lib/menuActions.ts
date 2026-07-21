@@ -12,6 +12,7 @@ import { serializeFilmidiPackage } from "./exportHelpers";
 import { getMediaDuration } from "./mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { extractMovAudio, normalizeMovForPlayback } from "@/lib/movAudio";
+import { storeDataUrl, storeImportedFile } from "@/lib/mediaStorage";
 
 const { addLayerCommand } = commands;
 
@@ -129,12 +130,17 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
     const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
     const duration = await getMediaDuration(file, type);
     const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    let url = URL.createObjectURL(file);
+    const stored = await storeImportedFile(file, id);
+    let url = stored?.url ?? URL.createObjectURL(file);
     let normalizedBy: string | undefined;
     if (type === "video" && (file.name.toLowerCase().endsWith(".mov") || file.type === "video/quicktime")) {
       try {
         const normalizedMov = await normalizeMovForPlayback(file);
-        if (normalizedMov) { url = normalizedMov; normalizedBy = "media-normalizer"; }
+        if (normalizedMov) {
+          const normalizedStored = await storeDataUrl(normalizedMov, `${file.name}.mp4`, `${id}-normalized`);
+          url = normalizedStored?.url ?? normalizedMov;
+          normalizedBy = "media-normalizer";
+        }
       } catch (error) {
         console.info("[media-import] MOV normalization unavailable; using original source", error);
       }
@@ -145,6 +151,7 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       name: file.name,
       type,
       url,
+      sourcePath: stored?.path,
       duration,
       isGenerated: false,
       folderId: mediaStore.currentFolderId,

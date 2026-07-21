@@ -7,6 +7,7 @@ import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftSidecar";
 import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
 import { normalizeMediaWithFfmpeg, probeMedia } from "./lib/mediaTools";
+import { startMediaServer } from "./lib/mediaServer";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -90,6 +91,8 @@ import { Database } from "bun:sqlite";
 
 const DB_DIR = join(homedir(), "Library", "Application Support", "com.filmidi.editor");
 mkdirSync(DB_DIR, { recursive: true });
+const mediaStorage = startMediaServer(join(DB_DIR, "media"));
+console.log(`[media-server] serving ${mediaStorage.root} at ${mediaStorage.baseUrl}`);
 const db = new Database(join(DB_DIR, "projects.db"));
 db.run("PRAGMA journal_mode=WAL");
 db.run(`CREATE TABLE IF NOT EXISTS projects (
@@ -394,7 +397,7 @@ transport.registerHandler((msg: any) => {
       (async () => {
         try {
           const { task, payload, requestId } = msg;
-          if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media") {
+          if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media" || task === "store-media" || task === "media-status") {
             let result: Record<string, unknown> | null;
             let backend = "bun-fallback";
             if (task === "gstreamer-status") {
@@ -406,6 +409,20 @@ transport.registerHandler((msg: any) => {
             } else if (task === "probe-media") {
               result = await probeMedia(payload ?? {});
               backend = "ffprobe";
+            } else if (task === "media-status") {
+              result = { available: true, baseUrl: mediaStorage.baseUrl, root: mediaStorage.root };
+              backend = "bun-media-server";
+            } else if (task === "store-media") {
+              const base64Data = typeof payload?.base64Data === "string" ? payload.base64Data : "";
+              const fileName = typeof payload?.fileName === "string" ? payload.fileName : "asset.bin";
+              const assetId = typeof payload?.assetId === "string" ? payload.assetId : crypto.randomUUID();
+              if (!base64Data) throw new Error("store-media requires base64Data");
+              const extension = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : ".bin";
+              const storedName = `${assetId}${extension.replace(/[^a-zA-Z0-9.]/g, "")}`;
+              const storedPath = join(mediaStorage.root, storedName);
+              writeFileSync(storedPath, Buffer.from(base64Data, "base64"));
+              result = { path: storedPath, url: `${mediaStorage.baseUrl}/media/${encodeURIComponent(storedName)}` };
+              backend = "bun-media-server";
             } else {
               result = await normalizeWithGStreamer(payload ?? {});
               if (result) backend = "gstreamer";

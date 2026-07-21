@@ -5,9 +5,9 @@
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cpatra11/filmidi-q.git"
+    "url": "https://github.com/cpatra11/filmidi-2.git"
   },
-  "homepage": "https://github.com/cpatra11/filmidi-q",
+  "homepage": "https://github.com/cpatra11/filmidi-2",
   "scripts": {
     "postinstall": "bun run patches/patch-dom-renderer.ts && bun run patches/patch-video-editor.ts && bun run patches/patch-video-layer.ts && bun run patches/patch-track-normalization.ts",
     "build:sidecar": "bash scripts/build-sidecar.sh",

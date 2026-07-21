@@ -17,6 +17,7 @@ import { findLinkedPartnerIn, getLayerLinkId } from "@/lib/linkUtils";
 import { dbSaveProject } from "./dbIPC";
 import { validateMoveUpdates } from "./timelineMove";
 import { findAvailableTrack, localTrackForKind, normalizeTrackForKind, VIDEO_TRACK_BASE } from "./timelineMove";
+import { storeDataUrl, storeRemoteMedia } from "./mediaStorage";
 import type { LayerJSON, VideoJSON } from "@videoflow/core";
 
 const {
@@ -2962,6 +2963,12 @@ async function executeToolInternal(
         const type = inferImportedMediaType(url);
         const assetId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const assetName = importedAssetName(url, name, type);
+        const stored = url.startsWith("data:")
+          ? await storeDataUrl(url, assetName, assetId)
+          : /^https?:\/\//i.test(url)
+            ? await storeRemoteMedia(url, assetName, assetId)
+            : null;
+        const stableUrl = stored?.url ?? url;
         const folderId = typeof input.folderId === "string"
           ? input.folderId
           : mediaStore.currentFolderId;
@@ -2969,7 +2976,8 @@ async function executeToolInternal(
           id: assetId,
           name: assetName,
           type,
-          url,
+          url: stableUrl,
+          sourcePath: stored?.path,
           duration: type === "image" ? 5 : 10,
           isGenerated: false,
           folderId,
@@ -2983,7 +2991,7 @@ async function executeToolInternal(
               id: assetId,
               name: assetName,
               type,
-              url,
+              url: stableUrl,
               duration: type === "image" ? 5 : 10,
             }, fps, placementOptions)
           : null;
@@ -2994,7 +3002,7 @@ async function executeToolInternal(
           assetId,
           name: assetName,
           type,
-          url,
+          url: stableUrl,
           folderId,
           timeline,
           note: timeline
@@ -3084,23 +3092,28 @@ async function executeToolInternal(
               // Auto-import to media library
               const mediaStore = useMediaPanelStore.getState();
               const assetId = `gen-${Date.now()}`;
+              const assetName = prompt.slice(0, 40).trim();
+              const extension = type === "video" ? ".mp4" : type === "image" ? ".png" : ".mp3";
+              const stored = await storeRemoteMedia(url, `${assetName}${extension}`, assetId);
+              const stableUrl = stored?.url ?? url;
               mediaStore.addAsset({
                 id: assetId,
-                name: prompt.slice(0, 40).trim(),
+                name: assetName,
                 type: type === "video" ? "video" : type === "image" ? "image" : "audio",
-                url,
+                url: stableUrl,
+                sourcePath: stored?.path,
                 duration: duration ?? 5,
                 isGenerated: true,
                 folderId: mediaStore.currentFolderId,
-                thumbnailUrl: type === "image" ? url : undefined,
+                thumbnailUrl: type === "image" ? stableUrl : undefined,
                 createdAt: Date.now(),
               });
               return JSON.stringify({
                 status: "succeeded",
-                resultUrl: url,
+                resultUrl: stableUrl,
                 assetId,
-                assetName: prompt.slice(0, 40).trim(),
-                note: `Generated ${type} added to library as "${prompt.slice(0, 40).trim()}". Use add_clips to place it on the timeline.`,
+                assetName,
+                note: `Generated ${type} added to library as "${assetName}". Use add_clips to place it on the timeline.`,
               });
             }
             return JSON.stringify({
@@ -3113,23 +3126,28 @@ async function executeToolInternal(
             const url = genResult.resultUrl;
             const mediaStore = useMediaPanelStore.getState();
             const assetId = `gen-${Date.now()}`;
+            const assetName = prompt.slice(0, 40).trim();
+            const extension = type === "video" ? ".mp4" : type === "image" ? ".png" : ".mp3";
+            const stored = await storeRemoteMedia(url, `${assetName}${extension}`, assetId);
+            const stableUrl = stored?.url ?? url;
             mediaStore.addAsset({
               id: assetId,
-              name: prompt.slice(0, 40).trim(),
+              name: assetName,
               type: type === "video" ? "video" : type === "image" ? "image" : "audio",
-              url,
+              url: stableUrl,
+              sourcePath: stored?.path,
               duration: duration ?? 5,
               isGenerated: true,
               folderId: mediaStore.currentFolderId,
-              thumbnailUrl: type === "image" ? url : undefined,
+              thumbnailUrl: type === "image" ? stableUrl : undefined,
               createdAt: Date.now(),
             });
             return JSON.stringify({
               status: "succeeded",
-              resultUrl: url,
+              resultUrl: stableUrl,
               assetId,
-              assetName: prompt.slice(0, 40).trim(),
-              note: `Generated ${type} added to library as "${prompt.slice(0, 40).trim()}". Use add_clips to place it on the timeline.`,
+              assetName,
+              note: `Generated ${type} added to library as "${assetName}". Use add_clips to place it on the timeline.`,
             });
           }
 

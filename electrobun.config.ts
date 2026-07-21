@@ -20,7 +20,9 @@ export default {
     copy: buildCopy,
     watchIgnore: ["dist/**"],
     mac: {
-      bundleCEF: false,
+      // Use a bundled Chromium runtime for media compatibility instead of
+      // inheriting the host macOS WebKit version.
+      bundleCEF: true,
       icons: "assets/icons/Filmidi.iconset",
     },
     linux: {
