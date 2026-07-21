@@ -801,7 +801,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
 # Audio Processing
 - Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable - tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
-- To add captions: FIRST call extract_audio on video clips to create audio layers, THEN call add_captions on the audio layer.
+- To add captions: call get_timeline first. Only call extract_audio when the selected video has no linked audio layer; otherwise reuse the existing audio layer and call add_captions on it.
 - extract_audio creates a linked audio layer with the same timing. Deleting or moving the video also affects the linked audio.
 - Captions default to a bottom-safe position chosen from the project aspect ratio: lower for landscape, slightly higher for square and portrait formats so wrapped lines stay inside the frame. Let add_captions choose the position unless the user asks for a specific placement; use centerX/centerY for an explicit override.
 

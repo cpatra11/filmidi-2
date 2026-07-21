@@ -491,11 +491,12 @@ function selectVideoExtractionTargets(layers: any[], targetClipIds: string[] | u
 
 function selectSilenceTargets(layers: any[], targetClipIds: string[] | undefined, fps: number): any[] {
   if (targetClipIds?.length) return selectTranscriptTargets(layers, targetClipIds, fps);
-  // Prefer original video sources. Extracted audio mirrors can be upload-only
-  // URLs and are not always suitable for another ASR request.
-  const videos = selectTranscriptTargets(layers.filter((layer: any) => layer.type === "video"), undefined, fps);
-  if (videos.length > 0) return videos;
-  return selectTranscriptTargets(layers, undefined, fps);
+  // Reuse the existing extracted/linked audio layer whenever it exists. This
+  // keeps transcript timing tied to the audio the user already prepared and
+  // avoids exporting the same video audio again.
+  const audioTargets = selectTranscriptTargets(layers.filter((layer: any) => layer.type === "audio"), undefined, fps);
+  if (audioTargets.length > 0) return audioTargets;
+  return selectTranscriptTargets(layers.filter((layer: any) => layer.type === "video"), undefined, fps);
 }
 
 function getCaptionTrackIndex(layers: any[], tracks: any[]): number {
@@ -1565,6 +1566,8 @@ async function executeToolInternal(
 
         let extracted = 0;
         let skipped = 0;
+        let failed = 0;
+        const failures: Array<{ clipId: string; reason: string }> = [];
         for (const layer of selectedTargets) {
           const liveLayers = useEditorStore.getState().video.layers ?? [];
           const source = getLayerSource(layer);
@@ -1614,11 +1617,13 @@ async function executeToolInternal(
             await cmds.setPropertyCommand(commit, layer.id, "mute", true);
             extracted++;
           } catch (e) {
+            failed++;
+            failures.push({ clipId: layer.id, reason: e instanceof Error ? e.message : String(e) });
             console.warn("[extract_audio] failed for", (source as string)?.slice(0, 60), e);
           }
         }
         refreshPreview();
-        return JSON.stringify({ extracted, skipped });
+        return JSON.stringify({ extracted, skipped, failed, failures, note: failed > 0 ? "Audio extraction failed for one or more clips; existing linked audio was not replaced." : undefined });
       }
 
       case "add_texts": {
