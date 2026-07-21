@@ -47,11 +47,15 @@ export function AssetThumbnail({ asset, selected, onSelect, size = 80 }: AssetTh
           id: asset.id,
           type: asset.type,
           url: asset.url,
+          audioUrl: asset.audioUrl,
           name: asset.name,
           duration: asset.duration,
         }));
+        e.dataTransfer.setData("text/plain", asset.name);
         e.dataTransfer.effectAllowed = "copy";
       }}
+      title={`Drag ${asset.name} to the timeline`}
+      aria-label={`Media asset ${asset.name}, drag to timeline`}
       onClick={(e) => onSelect?.(e.metaKey || e.ctrlKey)}
       onDoubleClick={() => {/* open/preview */}}
     >

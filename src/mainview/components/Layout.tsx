@@ -78,6 +78,7 @@ function HHandle() {
 export function Layout() {
   const { showAgentPanel, showMediaPanel, showInspector, showGenerationPanel } = useAppStore();
   const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
+  const timelineDropInFlightRef = useRef(false);
   const [contextTarget, setContextTarget] = useState<ContextTarget>("empty");
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
@@ -350,7 +351,10 @@ export function Layout() {
     e.preventDefault();
     e.stopPropagation();
     setIsTimelineDragOver(false);
+    if (timelineDropInFlightRef.current) return;
+    timelineDropInFlightRef.current = true;
 
+    try {
     const editor = useEditorStore.getState();
     const timelineSurface = e.currentTarget.querySelector<HTMLElement>(".ct-tracks-inner");
     const surfaceRect = timelineSurface?.getBoundingClientRect();
@@ -438,7 +442,6 @@ export function Layout() {
     }
 
     // Media asset drag from panel
-    try {
       const raw = e.dataTransfer.getData("application/json");
       if (!raw) return;
       const data = JSON.parse(raw);
@@ -458,7 +461,7 @@ export function Layout() {
           useEditorStore.getState().video.layers ?? [], "audio", startTime, data.duration || 5, trackAtDrop("audio"),
         );
         const audioLayerId = await addLayerCommand(editor.commit, {
-          type: "audio", source: data.url, sourceDuration: data.duration || 5, startTime,
+            type: "audio", source: data.audioUrl ?? data.url, sourceDuration: data.duration || 5, startTime,
         });
         if (audioLayerId) {
           setLayerTrack(editor.commit, audioLayerId, audioTrack);
@@ -496,6 +499,9 @@ export function Layout() {
       useMediaPanelStore.getState().showToast(
         `Could not add media: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+    finally {
+      timelineDropInFlightRef.current = false;
     }
   }, []);
 
