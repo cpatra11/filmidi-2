@@ -36,6 +36,7 @@ import { PreviewOverlays } from "./PreviewOverlays";
 import { TimelineTabBar } from "./TimelineTabBar";
 import type { ContextTarget } from "./ClipContextMenu";
 import { pasteLayers, splitAtPlayhead } from "@/hooks/useKeyboardShortcuts";
+import { importMediaFiles } from "@/lib/menuActions";
 
 function getDisplayName(urlOrFile: string | File | undefined): string {
   if (!urlOrFile) return "Clip";
@@ -78,6 +79,21 @@ export function Layout() {
   const [isTimelineDragOver, setIsTimelineDragOver] = useState(false);
   const [contextTarget, setContextTarget] = useState<ContextTarget>("empty");
   const previewContainerRef = useRef<HTMLDivElement>(null);
+
+  // VideoFlow's add-layer popover calls this importer. The app uses a custom
+  // timeline shell, so the callback must be registered here explicitly.
+  useEffect(() => {
+    const editor = useEditorStore.getState();
+    editor.setMediaImporter(async (files, options) => {
+      const fps = useEditorStore.getState().video.fps || 30;
+      const current = useEditorStore.getState();
+      await importMediaFiles(files, {
+        startTime: options?.startTime ?? current.currentFrame / fps,
+        track: options?.track,
+      });
+    });
+    return () => useEditorStore.getState().setMediaImporter(null);
+  }, []);
 
   const handleMediaAction = async (action: string) => {
     const store = useMediaPanelStore.getState();
@@ -485,7 +501,12 @@ export function Layout() {
       // Seek to refresh preview
       const s = useEditorStore.getState();
       s.bridge?.seek(s.currentFrame);
-    } catch {}
+    } catch (error) {
+      console.error("[timeline-import] failed to add media asset", error);
+      useMediaPanelStore.getState().showToast(
+        `Could not add media: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }, []);
 
   return (

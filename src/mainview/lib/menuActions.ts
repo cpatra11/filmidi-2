@@ -119,12 +119,15 @@ export async function importMediaFromPicker(): Promise<void> {
   await importMediaFiles(files);
 }
 
-export async function importMediaFiles(files: File[] | FileList): Promise<void> {
+export async function importMediaFiles(
+  files: File[] | FileList,
+  placement: { startTime?: number; track?: number } = {},
+): Promise<void> {
   const mediaStore = useMediaPanelStore.getState();
   const editor = useEditorStore.getState();
   const fileArr = Array.from(files);
   const fps = editor.video.fps || 30;
-  const startTime = editor.currentFrame / fps;
+  const startTime = placement.startTime ?? editor.currentFrame / fps;
 
   for (const file of fileArr) {
     const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
@@ -167,7 +170,7 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       const linkId = generateLinkId();
       const clipName = getDisplayName(file);
       const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, duration);
-      const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration);
+      const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, duration, placement.track);
       const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl ?? url, sourceDuration: duration, startTime });
       setLayerTrack(editor.commit, audioLayerId, audioTrack);
       await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
@@ -182,7 +185,13 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
       // the standalone audio renderer cannot decode.
       await cmds.setPropertyCommand(editor.commit, layerId, "mute", false);
     } else {
-      const track = findAvailableTrack(useEditorStore.getState().video.layers ?? [], type === "audio" ? "audio" : "video", startTime, duration);
+      const track = findAvailableTrack(
+        useEditorStore.getState().video.layers ?? [],
+        type === "audio" ? "audio" : "video",
+        startTime,
+        duration,
+        placement.track,
+      );
       const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
       if (layerId) setLayerTrack(editor.commit, layerId, track);
     }
