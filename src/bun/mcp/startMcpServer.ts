@@ -434,6 +434,11 @@ const TOOLS: ToolDef[] = [
     description: "List registered VideoFlow transition presets.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "list_effects",
+    description: "List registered VideoFlow effects.",
+    inputSchema: { type: "object", properties: {} },
+  },
 
   // ─── Audio Analysis (3) ───
   {

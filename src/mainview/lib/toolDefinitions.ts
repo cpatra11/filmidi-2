@@ -636,6 +636,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: "List registered VideoFlow transition presets and their supported layer categories and parameters.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "list_effects",
+    description: "List registered VideoFlow WebGL and layer effects. Use the exact effect name before calling apply_effect.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
 
   // ─── AUDIO ANALYSIS (3) ──────────────────────────────────────────
   {

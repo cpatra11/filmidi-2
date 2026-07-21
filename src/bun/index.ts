@@ -397,6 +397,43 @@ transport.registerHandler((msg: any) => {
       (async () => {
         try {
           const { task, payload, requestId } = msg;
+          if (task === "render-video-server") {
+            try {
+              const { default: ServerRenderer } = await import("@videoflow/renderer-server");
+              const video = payload?.video;
+              if (!video || typeof video !== "object") throw new Error("render-video-server requires a VideoFlow document");
+              console.info(`[videoflow-server] rendering ${String((video as any).duration ?? 0)}s project`);
+              const rendered = await ServerRenderer.render(video as any, {
+                outputType: "buffer",
+                ffmpeg: payload?.ffmpeg === true,
+              } as any);
+              const buffer = Buffer.isBuffer(rendered) ? rendered : Buffer.from(String(rendered));
+              const storedName = `render-${crypto.randomUUID()}.mp4`;
+              writeFileSync(join(mediaStorage.root, storedName), buffer);
+              transport.send({
+                type: "native-media-response",
+                requestId,
+                backend: "videoflow-server",
+                ok: true,
+                result: {
+                  url: `${mediaStorage.baseUrl}/media/${encodeURIComponent(storedName)}`,
+                  path: join(mediaStorage.root, storedName),
+                  size: buffer.byteLength,
+                  mimeType: "video/mp4",
+                },
+              });
+            } catch (error) {
+              console.error("[videoflow-server] render failed", error);
+              transport.send({
+                type: "native-media-response",
+                requestId,
+                backend: "videoflow-server",
+                ok: false,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            return;
+          }
           if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media" || task === "store-media" || task === "media-status") {
             let result: Record<string, unknown> | null;
             let backend = "bun-fallback";

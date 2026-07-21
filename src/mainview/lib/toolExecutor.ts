@@ -2311,8 +2311,13 @@ async function executeToolInternal(
       }
 
       case "list_transitions": {
-        const { listTransitions } = await import("@videoflow/renderer-browser");
-        return JSON.stringify({ transitions: listTransitions() });
+        const { getVideoFlowCapabilities } = await import("./videoFlowCapabilities");
+        return JSON.stringify({ transitions: getVideoFlowCapabilities().transitions });
+      }
+
+      case "list_effects": {
+        const { getVideoFlowCapabilities } = await import("./videoFlowCapabilities");
+        return JSON.stringify({ effects: getVideoFlowCapabilities().effects });
       }
 
       // ─── AUDIO ANALYSIS ─────────────────────────────────────────
@@ -3368,7 +3373,7 @@ async function executeToolInternal(
 
 const READ_ONLY_AGENT_TOOLS = new Set([
   "get_timeline", "get_media", "inspect_timeline", "inspect_media", "inspect_color",
-  "list_models", "list_transitions", "list_multicam_sources", "get_projects",
+  "list_models", "list_transitions", "list_effects", "list_multicam_sources", "get_projects",
 ]);
 
 function timelineVerificationSnapshot() {

@@ -16,7 +16,8 @@
     "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
     "hmr": "vite --port 5173",
     "build": "bun run build:sidecar && vite build && electrobun build --env=canary",
-    "build:prod": "bun run build:sidecar && vite build && electrobun build --env=production"
+    "build:prod": "bun run build:sidecar && vite build && electrobun build --env=production",
+    "test": "bun test"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.14",
@@ -38,11 +39,13 @@
     "@radix-ui/react-tooltip": "^1.2.12",
     "@shiguredo/rnnoise-wasm": "^2025.1.5",
     "@tanstack/react-query": "^5.101.2",
-    "@videoflow/core": "latest",
-    "@videoflow/react-video-editor": "latest",
-    "@videoflow/renderer-browser": "latest",
-    "@videoflow/renderer-dom": "^1.2.2",
+    "@videoflow/core": "1.2.2",
+    "@videoflow/react-video-editor": "1.2.2",
+    "@videoflow/renderer-browser": "1.2.2",
+    "@videoflow/renderer-dom": "1.2.2",
+    "@videoflow/renderer-server": "1.2.2",
     "ai": "^7.0.26",
+    "chromium-bidi": "0.6.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

@@ -31,6 +31,7 @@ import {
   type TimelineTrackKind,
 } from "@/lib/timelineMove";
 import { useAppStore } from "@/store/useAppStore";
+import { Lock, Unlock } from "lucide-react";
 import "./CustomTimeline.css";
 
 const PADDING_RIGHT = 800;
@@ -116,6 +117,8 @@ function TrackHeader({
   onToggleEnabled,
   onToggleMute,
   onToggleSolo,
+  locked,
+  onToggleLock,
 }: {
   trackIdx: number;
   trackName: string;
@@ -127,6 +130,8 @@ function TrackHeader({
   onToggleEnabled: () => void;
   onToggleMute?: () => void;
   onToggleSolo?: () => void;
+  locked?: boolean;
+  onToggleLock?: () => void;
 }) {
   const typeColor = trackType === "video" ? "#4A90E2" : trackType === "audio" ? "#4CAF50" : "#9B59B6";
   const typeIcon = trackType === "video" ? "V" : trackType === "audio" ? "A" : "T";
@@ -149,6 +154,14 @@ function TrackHeader({
         />
       </div>
       <div className="ct-track-header-toggles">
+        <button
+          data-variant="icon"
+          data-active={locked ? "true" : "false"}
+          onClick={onToggleLock}
+          title={locked ? "Unlock track" : "Lock track"}
+        >
+          {locked ? <Lock size={12} /> : <Unlock size={12} />}
+        </button>
         {trackType === "audio" && (
           <button
             data-variant="icon"
@@ -738,6 +751,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
 
       // Block interaction on locked clips
       if ((layer.settings as any)?.locked) return;
+      if ((video.tracks?.[layer.track ?? 0] as any)?.locked) return;
 
       // Razor/blade tool: split clip at click position
       const toolMode = useAppStore.getState().toolMode;
@@ -1061,6 +1075,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       e.stopPropagation();
       // Block trim on locked clips
       if ((layer.settings as any)?.locked) return;
+      if ((video.tracks?.[layer.track ?? 0] as any)?.locked) return;
       const editor = useEditorStore.getState();
       const startClientX = e.clientX;
       const bounds = layerTimelineBounds(layer);
@@ -1226,6 +1241,11 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     [updateTrackSettings],
   );
 
+  const handleTrackLock = useCallback(
+    (trackIdx: number, currentLocked: boolean) => updateTrackSettings(trackIdx, { locked: !currentLocked }),
+    [updateTrackSettings],
+  );
+
   // ─── Render ──────────────────────────────────────────────────
   const selectionSet = useMemo(
     () => new Set(selection.layerIds),
@@ -1304,6 +1324,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                 onRename={(n) => handleTrackRename(trackIdx, n)}
                 onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
                 onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
+                locked={(meta as any)?.locked === true}
+                onToggleLock={() => handleTrackLock(trackIdx, (meta as any)?.locked === true)}
               />
             );
           })}
@@ -1324,6 +1346,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                 onToggleEnabled={() => handleTrackToggle(trackIdx, enabled)}
                 onToggleMute={() => handleTrackMute(trackIdx, (meta as any)?.muted === true)}
                 onToggleSolo={() => handleTrackSolo(trackIdx, (meta as any)?.solo === true)}
+                locked={(meta as any)?.locked === true}
+                onToggleLock={() => handleTrackLock(trackIdx, (meta as any)?.locked === true)}
               />
             );
           })}
@@ -1348,13 +1372,14 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           {videoRows.slice().reverse().map(({ trackIdx, layers: row, kind }) => {
             const meta = trackMeta[trackIdx];
             const disabled = meta?.enabled === false;
+            const locked = (meta as any)?.locked === true;
             return (
               <div
                 key={`track-${trackIdx}`}
                 className="ct-track-row"
                 data-track-index={trackIdx}
                 data-track-kind={kind}
-                data-disabled={disabled || undefined}
+                data-disabled={disabled || locked || undefined}
                 style={{ height: trackHeight }}
               >
                 {row.map((layer) => (
@@ -1379,13 +1404,14 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           {audioRows.slice().reverse().map(({ trackIdx, layers: row, kind }) => {
             const meta = trackMeta[trackIdx];
             const disabled = meta?.enabled === false;
+            const locked = (meta as any)?.locked === true;
             return (
               <div
                 key={`track-${trackIdx}`}
                 className="ct-track-row ct-track-row-audio"
                 data-track-index={trackIdx}
                 data-track-kind={kind}
-                data-disabled={disabled || undefined}
+                data-disabled={disabled || locked || undefined}
                 style={{ height: trackHeight }}
               >
                 {row.map((layer) => (

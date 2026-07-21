@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
 import * as RadioGroup from "@radix-ui/react-radio-group";
@@ -19,6 +19,8 @@ import {
 import { useEditorStore } from "@videoflow/react-video-editor";
 import BrowserRenderer from "@videoflow/renderer-browser";
 import { getTimelineExportText, normalizeVideoForExport, pickSaveFile, saveBlob, saveText, serializeFilmidiPackage } from "@/lib/exportHelpers";
+import { requestNativeMedia } from "@/lib/nativeMediaBridge";
+import { validateVideoFlowDocument } from "@/lib/videoFlowDocument";
 
 /* ------------------------------------------------------------------ */
 /*  Select helpers                                                     */
@@ -231,6 +233,7 @@ export function ExportDialog() {
   } = useExportStore();
 
   const abortRef = useRef<AbortController | null>(null);
+  const [rendererBackend, setRendererBackend] = useState<"browser" | "server" | null>(null);
 
   const storeVideo = useEditorStore((s) => s.video);
   const duration = storeVideo.duration || 0;
@@ -255,6 +258,7 @@ export function ExportDialog() {
 
   const handleExport = async () => {
     const ext = getFileExtension({ destination, codec, timelineFormat: useExportStore.getState().timelineFormat });
+    setRendererBackend(null);
     startExport();
 
     if (destination === "timeline") {
@@ -299,13 +303,37 @@ export function ExportDialog() {
           height: outH,
           fps,
         });
+        const validation = validateVideoFlowDocument(video);
+        if (!validation.valid) throw new Error(`Timeline cannot be exported: ${validation.errors.join("; ")}`);
 
-        const raw = await BrowserRenderer.render(video, {
-          signal: ac.signal,
-          onProgress: (p) => setProgress(p),
-          worker: true,
-        });
-        const blob = raw instanceof Blob ? raw : new Blob([raw], { type: "video/mp4" });
+        let blob: Blob;
+        try {
+          const raw = await BrowserRenderer.render(video, {
+            signal: ac.signal,
+            onProgress: (p) => setProgress(p),
+            worker: true,
+          });
+          blob = raw instanceof Blob ? raw : new Blob([raw], { type: "video/mp4" });
+          setRendererBackend("browser");
+          console.info("[export] VideoFlow browser renderer completed", { bytes: blob.size });
+        } catch (browserError) {
+          if (ac.signal.aborted) throw browserError;
+          console.warn("[export] browser renderer failed; trying VideoFlow server renderer", browserError);
+          const serverResult = await requestNativeMedia<{
+            url?: string;
+            size?: number;
+            error?: string;
+          }>("render-video-server", { video, ffmpeg: false });
+          if (!serverResult?.url) {
+            throw new Error(`VideoFlow browser export failed and server fallback was unavailable${serverResult?.error ? `: ${serverResult.error}` : ""}`);
+          }
+          const response = await fetch(serverResult.url);
+          if (!response.ok) throw new Error(`Server-rendered video could not be read (${response.status})`);
+          blob = await response.blob();
+          setRendererBackend("server");
+          setProgress(1);
+          console.info("[export] VideoFlow server renderer completed", { bytes: serverResult.size ?? blob.size });
+        }
 
         abortRef.current = null;
         const saved = await saveBlob(blob, fileName, ext, "Video", savedFileHandle);
@@ -474,6 +502,11 @@ export function ExportDialog() {
               {sizeEstimate && isIdle && (
                 <div className="text-[10px] text-[#666688] font-mono">
                   {sizeEstimate}
+                </div>
+              )}
+              {isExporting && rendererBackend && (
+                <div className="text-[10px] text-[#666688]">
+                  Renderer: {rendererBackend === "browser" ? "WebCodecs" : "Server Chromium"}
                 </div>
               )}
             </div>

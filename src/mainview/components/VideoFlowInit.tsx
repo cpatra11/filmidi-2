@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useEditorStore } from "@videoflow/react-video-editor";
 import type { VideoJSON } from "@videoflow/react-video-editor";
+import { normalizeVideoFlowDocument } from "@/lib/videoFlowDocument";
 
 /**
  * Initializes the VideoFlow editor store with the given video data.
@@ -9,7 +10,8 @@ import type { VideoJSON } from "@videoflow/react-video-editor";
 export function VideoFlowInit({ video }: { video: VideoJSON }) {
   useEffect(() => {
     const store = useEditorStore.getState();
-    store.loadVideo(video);
+    const normalizedVideo = normalizeVideoFlowDocument(video);
+    store.loadVideo(normalizedVideo as VideoJSON);
     // Older projects may have audio layers without explicit playback
     // properties. Give those layers an audible default when reopened.
     store.commit((draft: any) => {

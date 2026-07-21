@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Loader2,
 } from "lucide-react";
+import { VideoFlowInspector } from "./VideoFlowInspector";
 
 // ─── Error boundary to prevent Sidebar crashes from killing the app ───
 
@@ -445,6 +446,7 @@ export function InspectorSidebar() {
           <SidebarErrorBoundary>
             <Sidebar />
           </SidebarErrorBoundary>
+          <VideoFlowInspector />
         </div>
       )}
 

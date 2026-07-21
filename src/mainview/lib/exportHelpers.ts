@@ -3,6 +3,7 @@ import { useProjectSaveStore } from "@/store/useProjectSaveStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useGenerationStore } from "@/store/useGenerationStore";
+import { normalizeVideoFlowDocument } from "./videoFlowDocument";
 
 export type SaveTarget =
   | { kind: "file"; handle: FileSystemFileHandle; path: string }
@@ -118,7 +119,7 @@ export function normalizeVideoForExport(video: any): any {
   if (Array.isArray(copy.layers)) {
     copy.layers = copy.layers.map((layer: any) => normalizeLayerForExport(layer));
   }
-  return copy;
+  return normalizeVideoFlowDocument(copy);
 }
 
 function escapeXml(text: string): string {
