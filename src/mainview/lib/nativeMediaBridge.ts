@@ -1,4 +1,4 @@
-export type NativeMediaBackend = "swift-sidecar" | "bun-fallback";
+export type NativeMediaBackend = "swift-sidecar" | "bun-fallback" | "gstreamer" | "ffmpeg" | "ffprobe";
 
 export type NativeMediaTask =
   | "transcribe-audio"
@@ -7,7 +7,9 @@ export type NativeMediaTask =
   | "export-video"
   | "sample-frames"
   | "gstreamer-normalize"
-  | "gstreamer-status";
+  | "gstreamer-status"
+  | "probe-media"
+  | "normalize-media";
 
 export interface NativeMediaRequest {
   task: NativeMediaTask;
@@ -57,7 +59,7 @@ export async function requestNativeMedia<T = unknown>(
 ): Promise<T | null> {
   // GStreamer is a Bun-hosted backend; do not route this task to the
   // optional Swift sidecar even when that sidecar is available.
-  if (task !== "gstreamer-normalize" && hasSwiftSidecarBridge()) {
+  if (task !== "gstreamer-normalize" && task !== "probe-media" && task !== "normalize-media" && hasSwiftSidecarBridge()) {
     try {
       const response = await window.__filmidiSwiftSidecar!.request({ task, payload });
       if (response == null) return null;

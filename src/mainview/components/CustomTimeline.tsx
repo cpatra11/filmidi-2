@@ -38,6 +38,9 @@ const HEADER_WIDTH = 180;
 const RULER_HEIGHT = 26;
 const MIN_SCALE = 20;
 const MAX_SCALE = 2000;
+// Keep long-form timelines responsive. The time model remains unbounded; this
+// only limits the rendered pixel surface and therefore the browser DOM size.
+const MAX_TIMELINE_WIDTH = 4_000_000;
 
 type DragMoveItem = {
   id: string;
@@ -380,7 +383,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const lastSnapGuideRef = useRef<number | null>(null);
 
   const { fps, duration: videoDuration } = video;
-  const scale = viewport.timelineScale;
+  const requestedScale = viewport.timelineScale;
   const isPlaying = useEditor((s) => s.isPlaying);
   const trackHeight = useAppStore((s) => s.trackHeight);
 
@@ -395,6 +398,16 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     return offset;
   }, [activeGroupPath]);
 
+  // VideoFlow normally maintains video.duration, but older imported projects
+  // can have a stale value. Always include the furthest layer edge so a long
+  // source is never clipped by the ruler or drag clamps.
+  const layerContentDuration = useMemo(() => {
+    return (video.layers ?? []).reduce((max, layer) => {
+      const bounds = layerTimelineBounds(layer);
+      return Math.max(max, Number.isFinite(bounds.end) ? bounds.end : 0);
+    }, 0);
+  }, [video.layers]);
+
   // Available duration inside current group
   const availableDuration = useMemo(() => {
     if (activeGroupPath && activeGroupPath.length > 0) {
@@ -408,10 +421,19 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         if (!found) break;
         groupLayer = found as LayerJSON;
       }
-      return groupLayer?.settings?.sourceDuration ?? videoDuration;
+      const groupDuration = groupLayer?.settings?.sourceDuration ?? videoDuration;
+      return Math.max(groupDuration, layerContentDuration);
     }
-    return videoDuration;
-  }, [video, activeGroupPath, videoDuration]);
+    return Math.max(videoDuration, layerContentDuration);
+  }, [video, activeGroupPath, videoDuration, layerContentDuration]);
+
+  // A 2-hour clip at a highly zoomed-in scale can otherwise create a multi-
+  // million-pixel layout and make pointer events appear to freeze. Reduce the
+  // display scale only in that pathological case; all clip times stay exact.
+  const scale = Math.min(
+    requestedScale,
+    availableDuration > 0 ? MAX_TIMELINE_WIDTH / availableDuration : requestedScale,
+  );
 
   // Track metadata
   const trackMeta = useMemo(() => {

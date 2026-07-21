@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftSidecar";
 import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
+import { normalizeMediaWithFfmpeg, probeMedia } from "./lib/mediaTools";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -393,17 +394,33 @@ transport.registerHandler((msg: any) => {
       (async () => {
         try {
           const { task, payload, requestId } = msg;
-          if (task === "gstreamer-status" || task === "gstreamer-normalize") {
-            const result = task === "gstreamer-status"
-              ? await getGStreamerStatus()
-              : await normalizeWithGStreamer(payload ?? {});
+          if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media") {
+            let result: Record<string, unknown> | null;
+            let backend = "bun-fallback";
+            if (task === "gstreamer-status") {
+              result = await getGStreamerStatus();
+              backend = "gstreamer";
+            } else if (task === "gstreamer-normalize") {
+              result = await normalizeWithGStreamer(payload ?? {});
+              backend = "gstreamer";
+            } else if (task === "probe-media") {
+              result = await probeMedia(payload ?? {});
+              backend = "ffprobe";
+            } else {
+              result = await normalizeWithGStreamer(payload ?? {});
+              if (result) backend = "gstreamer";
+              else {
+                result = await normalizeMediaWithFfmpeg(payload ?? {});
+                backend = "ffmpeg";
+              }
+            }
             transport.send({
               type: "native-media-response",
               requestId,
-              backend: result ? "gstreamer" : "bun-fallback",
+              backend,
               ok: task === "gstreamer-status" ? Boolean((result as any)?.available) : Boolean(result),
               result,
-              error: result ? null : "GStreamer runtime or required plugins are unavailable",
+              error: result ? null : `Media backend unavailable for ${task}`,
             });
             return;
           }
