@@ -29,6 +29,7 @@ import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { getMediaDuration } from "@/lib/mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { storeImportedFile } from "@/lib/mediaStorage";
+import { getImportedMediaType } from "@/lib/mediaType";
 import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead } from "@/lib/timelineAddActions";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -386,9 +387,7 @@ export function Layout() {
       const fps = editor.video.fps || 30;
       const startTime = dropStartTime;
       for (const file of files) {
-        const type = file.type.startsWith("video/") ? "video" as const
-          : file.type.startsWith("audio/") ? "audio" as const
-          : "image" as const;
+        const type = getImportedMediaType(file);
         const duration = await getMediaDuration(file, type);
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const stored = await storeImportedFile(file, id);
@@ -563,7 +562,7 @@ export function Layout() {
                           const startTime = editor.currentFrame / fps;
                           (async () => {
                             for (const file of files) {
-                              const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
+                              const type = getImportedMediaType(file);
                               const duration = await getMediaDuration(file, type);
                               const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
                               const stored = await storeImportedFile(file, id);

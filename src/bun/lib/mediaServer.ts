@@ -7,6 +7,33 @@ function safeName(value: string): string {
   return basename(value).replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function mediaMimeType(fileName: string, fallback: string): string {
+  const extension = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+  const byExtension: Record<string, string> = {
+    ".mov": "video/quicktime",
+    ".mp4": "video/mp4",
+    ".m4v": "video/x-m4v",
+    ".webm": "video/webm",
+    ".avi": "video/x-msvideo",
+    ".mkv": "video/x-matroska",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".aiff": "audio/aiff",
+    ".aif": "audio/aiff",
+    ".caf": "audio/x-caf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+  };
+  return byExtension[extension] || fallback || "application/octet-stream";
+}
+
 export function startMediaServer(root: string): { baseUrl: string; root: string } {
   mkdirSync(root, { recursive: true });
   const server = Bun.serve({
@@ -31,12 +58,13 @@ export function startMediaServer(root: string): { baseUrl: string; root: string 
       const path = join(root, fileName);
       if (!existsSync(path)) return new Response("Not found", { status: 404 });
       const file = Bun.file(path);
+      const contentType = mediaMimeType(fileName, file.type);
       const corsHeaders = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Expose-Headers": "Accept-Ranges,Content-Length,Content-Range",
         "Cache-Control": "public, max-age=31536000, immutable",
         "Accept-Ranges": "bytes",
-        "Content-Type": file.type || "application/octet-stream",
+        "Content-Type": contentType,
       };
       if (request.method === "HEAD") {
         return new Response(null, {

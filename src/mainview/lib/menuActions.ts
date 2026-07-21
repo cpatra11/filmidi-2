@@ -12,6 +12,7 @@ import { serializeFilmidiPackage } from "./exportHelpers";
 import { getMediaDuration } from "./mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { storeImportedFile } from "@/lib/mediaStorage";
+import { getImportedMediaType } from "@/lib/mediaType";
 
 const { addLayerCommand } = commands;
 
@@ -129,7 +130,7 @@ export async function importMediaFiles(
   const startTime = placement.startTime ?? editor.currentFrame / fps;
 
   for (const file of fileArr) {
-    const type = file.type.startsWith("video/") ? "video" as const : file.type.startsWith("audio/") ? "audio" as const : "image" as const;
+    const type = getImportedMediaType(file);
     const duration = await getMediaDuration(file, type);
     const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const stored = await storeImportedFile(file, id);
