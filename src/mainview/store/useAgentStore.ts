@@ -93,6 +93,43 @@ const AVAILABLE_MODELS = [
 
 const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-mini";
 
+// Read-only snapshots can be fetched together. Analysis and every edit are
+// intentionally sent in model order so transcript-dependent operations cannot
+// race their prerequisite transcription or mutate the timeline concurrently.
+const PARALLEL_SAFE_AGENT_TOOLS = new Set([
+  "get_timeline", "get_media", "inspect_timeline", "inspect_media", "inspect_color",
+  "get_capabilities", "validate_timeline", "diagnose_media", "list_models",
+  "list_transitions", "list_effects", "list_multicam_sources", "get_projects",
+]);
+
+async function executePendingAgentTools(
+  pendingTools: ToolUseEntry[],
+  executeTool: (name: string, input: Record<string, unknown>) => Promise<string>,
+) {
+  const prepared = pendingTools.map((tool) => {
+    let input: Record<string, unknown> = {};
+    try { input = JSON.parse(tool.inputJSON); } catch {}
+    return { tool, input };
+  });
+
+  const run = async ({ tool, input }: { tool: ToolUseEntry; input: Record<string, unknown> }) => {
+    const resultStr = await executeTool(tool.name, input);
+    let isError = false;
+    try { isError = !!JSON.parse(resultStr).error; } catch { isError = true; }
+    return { id: tool.id, name: tool.name, inputJSON: tool.inputJSON, result: { content: resultStr, isError } };
+  };
+
+  // The model controls tool order. Only a batch made entirely of independent
+  // reads may run concurrently; any analysis/edit in the batch is sequenced.
+  if (prepared.every(({ tool }) => PARALLEL_SAFE_AGENT_TOOLS.has(tool.name))) {
+    return Promise.all(prepared.map(run));
+  }
+
+  const results: Array<Awaited<ReturnType<typeof run>>> = [];
+  for (const item of prepared) results.push(await run(item));
+  return results;
+}
+
 function getInitialAgentModel(): string {
   const stored = localStorage.getItem("filmidi_agent_model");
   return stored && AVAILABLE_MODELS.some((entry) => entry.id === stored)
@@ -568,14 +605,7 @@ async function streamViaVercel(
           if (pendingTools.length === 0) break;
 
           const { executeTool } = await import("@/lib/toolExecutor");
-          const results = await Promise.all(pendingTools.map(async (tool) => {
-            let input: Record<string, unknown> = {};
-            try { input = JSON.parse(tool.inputJSON); } catch {}
-            const resultStr = await executeTool(tool.name, input);
-            let isError = false;
-            try { isError = !!JSON.parse(resultStr).error; } catch { isError = true; }
-            return { id: tool.id, name: tool.name, inputJSON: tool.inputJSON, result: { content: resultStr, isError } };
-          }));
+          const results = await executePendingAgentTools(pendingTools, executeTool);
 
           updateSession(sessionId, (sess) => ({
             messages: sess.messages.map((m) => m.id === assistantMsgId ? { ...m, toolUse: m.toolUse?.map((t) => results.find((r) => r.id === t.id) ?? t) } : m),
@@ -761,6 +791,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - After every mutating edit, inspect the returned verification object. If it reports missingClipIds or changed=false for an operation that should alter the timeline, call get_timeline and correct the edit before reporting success.
 - Transcript-driven cuts (filler words, duplicate/retake removal): read the WORD-level get_transcript end-to-end as prose at least once, then cut with remove_words. After a cut, indices shift - re-read get_transcript before the next remove_words.
 - Silence removal: call get_timeline first, then get_transcript to confirm the spoken-word timing. Call remove_silence with no clipIds to scan the whole timeline; do not call extract_audio when a linked audio layer already exists. Treat a result with analyzedClipIds empty or skipped entries as a failed analysis, not as proof that the video has no silence.
+- Tool scheduling: independent read-only tools may be requested together, but execute transcript analysis and all timeline edits in dependency order. Never assume add_captions or remove_silence can run before get_transcript completes. If a prerequisite returns an error or skipped/empty analysis, stop and report it instead of applying a speculative edit.
 
 # Generation
 - Costs real money and is not undoable. Propose the prompt, model, duration, and aspect ratio, then wait for confirmation before calling generate_video, generate_image, or generate_audio.

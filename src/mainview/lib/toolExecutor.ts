@@ -3482,6 +3482,11 @@ const READ_ONLY_AGENT_TOOLS = new Set([
   "get_capabilities", "validate_timeline", "diagnose_media", "list_models", "list_transitions", "list_effects", "list_multicam_sources", "get_projects",
 ]);
 
+// Tool calls can also arrive concurrently through MCP or the in-app agent.
+// Serialize analysis/editing calls so transcript reads, ripple edits, and
+// caption placement observe a stable timeline in the order requested.
+let agentMutationQueue: Promise<void> = Promise.resolve();
+
 function timelineVerificationSnapshot() {
   const video = useEditorStore.getState().video as any;
   return {
@@ -3505,31 +3510,38 @@ function timelineVerificationSnapshot() {
 
 /** Execute an agent tool and prove that the timeline state was observed afterward. */
 export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
-  if (READ_ONLY_AGENT_TOOLS.has(name)) return executeToolInternal(name, input);
-  const before = timelineVerificationSnapshot();
-  const result = await executeToolInternal(name, input);
-  let parsed: any;
-  try { parsed = JSON.parse(result); } catch { return result; }
-  if (!parsed || parsed.error) return result;
+  const run = async () => {
+    if (READ_ONLY_AGENT_TOOLS.has(name)) return executeToolInternal(name, input);
+    const before = timelineVerificationSnapshot();
+    const result = await executeToolInternal(name, input);
+    let parsed: any;
+    try { parsed = JSON.parse(result); } catch { return result; }
+    if (!parsed || parsed.error) return result;
 
-  const after = timelineVerificationSnapshot();
-  const beforeJson = JSON.stringify(before);
-  const afterJson = JSON.stringify(after);
-  const requestedIds = [
-    ...(Array.isArray(input.clipIds) ? input.clipIds : []),
-    ...(typeof input.clipId === "string" ? [input.clipId] : []),
-    ...(Array.isArray(input.entries) ? input.entries.map((entry: any) => entry?.clipId).filter(Boolean) : []),
-  ];
-  const existingIds = new Set(after.layers.map((layer: any) => layer.id));
-  parsed.verification = {
-    timelineRead: true,
-    changed: beforeJson !== afterJson,
-    layerCount: after.layerCount,
-    requestedClipIdsPresent: requestedIds.filter((id) => existingIds.has(id)),
-    missingClipIds: requestedIds.filter((id) => !existingIds.has(id)),
+    const after = timelineVerificationSnapshot();
+    const beforeJson = JSON.stringify(before);
+    const afterJson = JSON.stringify(after);
+    const requestedIds = [
+      ...(Array.isArray(input.clipIds) ? input.clipIds : []),
+      ...(typeof input.clipId === "string" ? [input.clipId] : []),
+      ...(Array.isArray(input.entries) ? input.entries.map((entry: any) => entry?.clipId).filter(Boolean) : []),
+    ];
+    const existingIds = new Set(after.layers.map((layer: any) => layer.id));
+    parsed.verification = {
+      timelineRead: true,
+      changed: beforeJson !== afterJson,
+      layerCount: after.layerCount,
+      requestedClipIdsPresent: requestedIds.filter((id) => existingIds.has(id)),
+      missingClipIds: requestedIds.filter((id) => !existingIds.has(id)),
+    };
+    if (parsed.verification.missingClipIds.length > 0) {
+      parsed.verification.warning = "One or more requested clip ids are not present after the operation.";
+    }
+    return JSON.stringify(parsed);
   };
-  if (parsed.verification.missingClipIds.length > 0) {
-    parsed.verification.warning = "One or more requested clip ids are not present after the operation.";
-  }
-  return JSON.stringify(parsed);
+
+  if (READ_ONLY_AGENT_TOOLS.has(name)) return run();
+  const queued = agentMutationQueue.then(run, run);
+  agentMutationQueue = queued.then(() => undefined, () => undefined);
+  return queued;
 }
