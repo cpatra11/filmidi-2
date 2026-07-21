@@ -1,15 +1,14 @@
-/**
- * Cloud transcription through Vercel AI Gateway.
- */
+/** Cloud transcription through Vercel AI Gateway's AI SDK provider. */
 
+import { experimental_transcribe as transcribe } from "ai";
 import { logTranscript } from "./transcriptLogger";
-import { getNativeMediaBackend, requestNativeMedia } from "./nativeMediaBridge";
 import { getSecureApiKey } from "./secureApiKey";
+import { createFilmidiGateway, DEFAULT_TRANSCRIPTION_MODEL, gatewayModelProvider } from "./aiGateway";
 
 export interface TranscriptionWord {
   text: string;
-  start: number; // seconds
-  end: number;   // seconds
+  start: number;
+  end: number;
   speaker?: string;
 }
 
@@ -25,182 +24,158 @@ export interface TranscriptionResult {
   language?: string;
   words: TranscriptionWord[];
   segments: TranscriptionSegment[];
+  model?: string;
+  provider?: string;
+  warnings?: string[];
 }
 
-const ASR_MODEL = "xai/grok-stt";
+export interface TranscriptionOptions {
+  language?: string;
+  startSeconds?: number;
+  endSeconds?: number;
+  diarization?: boolean;
+  model?: string;
+}
 
-/**
- * Transcribe audio from a URL using Vercel AI Gateway.
- */
+function splitWords(text: string): string[] {
+  return text.trim().split(/\s+/).filter(Boolean);
+}
+
+/** Derive usable word timings when a provider returns segments only. */
+export function wordsFromSegments(segments: TranscriptionSegment[]): TranscriptionWord[] {
+  const words: TranscriptionWord[] = [];
+  for (const segment of segments) {
+    const parts = splitWords(segment.text);
+    if (parts.length === 0) continue;
+    const start = Number.isFinite(segment.start) ? segment.start : 0;
+    const end = Math.max(start + 0.01, Number.isFinite(segment.end) ? segment.end : start + parts.length * 0.18);
+    const step = Math.max(0.01, (end - start) / parts.length);
+    parts.forEach((text, index) => {
+      words.push({
+        text,
+        start: start + index * step,
+        end: index === parts.length - 1 ? end : start + (index + 1) * step,
+        speaker: segment.speaker,
+      });
+    });
+  }
+  return words;
+}
+
+function wordsFromProviderMetadata(metadata: unknown, provider: string): TranscriptionWord[] {
+  const root = metadata as Record<string, any> | undefined;
+  const candidates = [
+    root?.[provider]?.words,
+    root?.[provider]?.wordTimings,
+    root?.words,
+    root?.wordTimings,
+  ];
+  const raw = candidates.find(Array.isArray) as Array<Record<string, unknown>> | undefined;
+  if (!raw) return [];
+  return raw.map((word) => ({
+    text: String(word.text ?? word.word ?? "").trim(),
+    start: Number(word.start ?? word.startSecond ?? word.start_time ?? 0),
+    end: Number(word.end ?? word.endSecond ?? word.end_time ?? word.start ?? 0),
+  })).filter((word) => word.text && word.end > word.start);
+}
+
+function filterResult(result: TranscriptionResult, options?: TranscriptionOptions): TranscriptionResult {
+  const start = options?.startSeconds;
+  const end = options?.endSeconds;
+  if (start === undefined && end === undefined) return result;
+  const words = result.words.filter((word) => (end === undefined || word.start <= end) && (start === undefined || word.end >= start));
+  const segments = result.segments.filter((segment) => (end === undefined || segment.start <= end) && (start === undefined || segment.end >= start));
+  return { ...result, words, segments, text: segments.map((segment) => segment.text).join(" ").trim() };
+}
+
+async function readSource(audioUrl: string): Promise<{ bytes: Uint8Array; mediaType: string }> {
+  const response = await fetch(audioUrl);
+  if (!response.ok) throw new Error(`Could not read local audio source (${response.status})`);
+  const mediaType = response.headers.get("content-type") || "audio/wav";
+  return { bytes: new Uint8Array(await response.arrayBuffer()), mediaType };
+}
+
 export async function transcribeAudio(
   audioUrl: string,
   apiKey: string,
-  options?: {
-    language?: string;
-    startSeconds?: number;
-    endSeconds?: number;
-    diarization?: boolean;
-  }
+  options?: TranscriptionOptions,
 ): Promise<TranscriptionResult> {
+  const effectiveApiKey = apiKey?.trim() || (await getSecureApiKey()) || "";
+  if (!effectiveApiKey) throw new Error("vercel_api_key_required");
+
+  const model = options?.model || DEFAULT_TRANSCRIPTION_MODEL;
   logTranscript("info", "transcribeAudio", "request", {
-    url: audioUrl.slice(0, 120),
-    hasVercelKey: !!(apiKey?.trim() || await getSecureApiKey()),
-    options,
+    source: audioUrl.slice(0, 120),
+    model,
+    provider: gatewayModelProvider(model),
+    language: options?.language ?? null,
+    diarization: options?.diarization === true,
   });
 
-  // Cloud transcription cannot fetch the editor's loopback media server. Upload local
-  // media-server files as multipart bytes directly to Vercel.
-  let resolvedUrl = audioUrl;
-  let localBlob: Blob | null = null;
+  let sourceUrl = audioUrl;
+  let sourceBlob: Blob | null = null;
   let needsUpload = audioUrl.startsWith("blob:");
   try {
     const parsed = new URL(audioUrl);
     needsUpload ||= parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
   } catch {
-    // File paths and custom app URLs are handled by the native fallback.
+    // Non-URL paths are passed through to the normal fetch error below.
   }
   if (needsUpload) {
-    const resp = await fetch(audioUrl);
-    if (!resp.ok) throw new Error(`Could not read local audio source (${resp.status})`);
-    const blob = await resp.blob();
-    localBlob = blob;
-    resolvedUrl = "local-multipart-source";
-    logTranscript("info", "transcribeAudio", "uploaded blob for ASR", {
-      source: audioUrl.slice(0, 80),
-      resolvedUrl: resolvedUrl.slice(0, 120),
-      mimeType: blob.type || "video/mp4",
-      uploadedLocalSource: true,
+    const response = await fetch(audioUrl);
+    if (!response.ok) throw new Error(`Could not read local audio source (${response.status})`);
+    sourceBlob = await response.blob();
+    sourceUrl = "local-binary-source";
+    logTranscript("info", "transcribeAudio", "loaded local source", {
+      source: audioUrl.slice(0, 100),
+      bytes: sourceBlob.size,
+      mediaType: sourceBlob.type || "audio/wav",
     });
   }
 
-  const effectiveApiKey = apiKey?.trim() || (await getSecureApiKey()) || "";
-  if (!effectiveApiKey) throw new Error("vercel_api_key_required");
-  logTranscript("info", "transcribeAudio", "route", { mode: "vercel", resolvedUrl: resolvedUrl.slice(0, 120) });
-  return transcribeViaVercel(localBlob ?? resolvedUrl, effectiveApiKey, options);
-}
+  const source = sourceBlob
+    ? { bytes: new Uint8Array(await sourceBlob.arrayBuffer()), mediaType: sourceBlob.type || "audio/wav" }
+    : await readSource(sourceUrl);
+  const gateway = createFilmidiGateway(effectiveApiKey);
 
-async function transcribeViaVercel(
-  audioSource: string | Blob,
-  apiKey: string,
-  options?: {
-    language?: string;
-    startSeconds?: number;
-    endSeconds?: number;
-    diarization?: boolean;
-  },
-): Promise<TranscriptionResult> {
-  const sourceBlob = audioSource instanceof Blob ? audioSource : await (async () => {
-    const sourceResp = await fetch(audioSource);
-    if (!sourceResp.ok) throw new Error(`Could not read audio source (${sourceResp.status})`);
-    return sourceResp.blob();
-  })();
-  const form = new FormData();
-  form.append("file", await sourceBlob, "filmidi-transcription-media");
-  form.append("model", ASR_MODEL);
-  form.append("response_format", "verbose_json");
-  form.append("timestamp_granularities[]", "word");
-
-  const response = await fetch("https://ai-gateway.vercel.sh/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
-  });
-  if (!response.ok) throw new Error(`Vercel transcription failed (${response.status}): ${await response.text()}`);
-
-  const data = await response.json() as any;
-  const words = (data.words ?? []).map((word: any) => ({
-    text: String(word.word ?? word.text ?? ""),
-    start: Number(word.start ?? 0),
-    end: Number(word.end ?? word.start ?? 0),
-  }));
-  const segments = (data.segments ?? []).map((segment: any) => ({
-    text: String(segment.text ?? ""),
-    start: Number(segment.start ?? 0),
-    end: Number(segment.end ?? segment.start ?? 0),
-  }));
-  return { text: String(data.text ?? segments.map((segment: TranscriptionSegment) => segment.text).join(" ")), language: data.language, words, segments };
-}
-
-function parseTranscriptionResult(
-  data: unknown,
-  options?: { language?: string; startSeconds?: number; endSeconds?: number }
-): TranscriptionResult {
-  const result = data as Record<string, unknown>;
-  const transcription = result.transcription as Record<string, unknown> | undefined;
-  const transcripts = (transcription?.transcripts ?? result.transcripts ?? []) as Array<Record<string, unknown>>;
-
-  const words: TranscriptionWord[] = [];
-  const segments: TranscriptionSegment[] = [];
-
-  for (const t of transcripts) {
-    const text = (t.text as string) ?? "";
-    // ASR returns timestamps in milliseconds — convert to seconds
-    const start = ((t.start_time as number) ?? (t.begin_time as number) ?? (t.start as number) ?? 0) / 1000;
-    const end = ((t.end_time as number) ?? (t.end as number) ?? 0) / 1000;
-    const speaker = (t.speaker as string) ?? (t.speaker_id as string) ?? undefined;
-
-    // Words may be at transcript level or nested inside sentence segments.
-    let sentenceWords: Array<Record<string, unknown>> = [];
-    const topWords = t.words as Array<Record<string, unknown>> | undefined;
-    const sentences = t.sentences as Array<Record<string, unknown>> | undefined;
-    if (topWords) {
-      sentenceWords = topWords;
-    } else if (sentences) {
-      for (const s of sentences) {
-        const sWords = s.words as Array<Record<string, unknown>> | undefined;
-        if (sWords) sentenceWords.push(...sWords);
-      }
-      if (sentenceWords.length === 0) {
-        for (const s of sentences) {
-          const sText = (s.text as string) ?? "";
-          const sStart = ((s.begin_time as number) ?? (s.start_time as number) ?? 0) / 1000;
-          const sEnd = ((s.end_time as number) ?? 0) / 1000;
-          if (sText) {
-            sentenceWords.push({ text: sText, begin_time: sStart, end_time: sEnd });
-          }
-        }
-      }
-    }
-    const segmentWords = sentenceWords.length > 0 ? sentenceWords : (text
-      ? [{ text, begin_time: start * 1000, end_time: end * 1000 }]
-      : []);
-    for (const w of segmentWords) {
-      const wText = (w.text as string) ?? "";
-      // Convert milliseconds to seconds
-      const wStart = ((w.start_time as number) ?? (w.begin_time as number) ?? (w.start as number) ?? start * 1000) / 1000;
-      const wEnd = ((w.end_time as number) ?? (w.end as number) ?? end * 1000) / 1000;
-      const wSpeaker = (w.speaker as string) ?? (w.speaker_id as string) ?? speaker;
-
-      if (options?.startSeconds !== undefined && wEnd < options.startSeconds) continue;
-      if (options?.endSeconds !== undefined && wStart > options.endSeconds) continue;
-
-      words.push({ text: wText, start: wStart, end: wEnd, speaker: wSpeaker });
-    }
-
-    if (options?.startSeconds !== undefined && end < options.startSeconds) continue;
-    if (options?.endSeconds !== undefined && start > options.endSeconds) continue;
-
-    segments.push({ text, start, end, speaker });
+  try {
+    const result = await transcribe({
+      model: gateway.transcription(model),
+      audio: source.bytes,
+      providerOptions: options?.language ? { [gatewayModelProvider(model)]: { language: options.language } } : undefined,
+    });
+    const segments: TranscriptionSegment[] = (result.segments ?? []).map((segment: any) => ({
+      text: String(segment.text ?? "").trim(),
+      start: Number(segment.startSecond ?? segment.start ?? 0),
+      end: Number(segment.endSecond ?? segment.end ?? segment.startSecond ?? 0),
+    })).filter((segment) => segment.text && segment.end >= segment.start);
+    const words = wordsFromProviderMetadata((result as any).providerMetadata, gatewayModelProvider(model));
+    const timedWords = words.length > 0 ? words : wordsFromSegments(segments);
+    const normalized: TranscriptionResult = {
+      text: String(result.text ?? segments.map((segment) => segment.text).join(" ")).trim(),
+      language: result.language,
+      words: timedWords,
+      segments,
+      model,
+      provider: gatewayModelProvider(model),
+      warnings: (result.warnings ?? []).map((warning: any) => String(warning?.message ?? warning)),
+    };
+    const filtered = filterResult(normalized, options);
+    logTranscript("info", "transcribeAudio", "success", {
+      model,
+      provider: normalized.provider,
+      wordCount: filtered.words.length,
+      segmentCount: filtered.segments.length,
+      source: sourceUrl,
+    });
+    return filtered;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logTranscript("error", "transcribeAudio", "gateway failed", { model, provider: gatewayModelProvider(model), error: message });
+    throw new Error(`Vercel transcription failed for ${model} via AI SDK Gateway: ${message}`);
   }
-
-  logTranscript("debug", "transcribeAudio", "parsed transcript payload", {
-    transcriptCount: transcripts.length,
-    wordCount: words.length,
-    segmentCount: segments.length,
-    language: options?.language ?? null,
-  });
-
-  return {
-    text: segments.map((s) => s.text).join(" "),
-    language: options?.language,
-    words,
-    segments,
-  };
 }
-/**
- * Upload audio blob to a temporary URL for ASR.
- * In web context, return a temporary local URL for native media handling.
- */
+
 export function audioBlobToUrl(blob: Blob): string {
   return URL.createObjectURL(blob);
 }

@@ -1,4 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { AI_GATEWAY_OPENAI_BASE_URL } from "./aiGateway";
 import { streamText, isStepCount } from "ai";
 
 // ─── Tool Definition (matches frontend format) ─────────────────
@@ -278,7 +279,7 @@ export async function runAgentLoop(params: AgentLoopParams, signal?: AbortSignal
 
   try {
     const anthropic = createAnthropic({
-      baseURL: "https://ai-gateway.vercel.sh/v1",
+      baseURL: AI_GATEWAY_OPENAI_BASE_URL,
       apiKey,
       headers: { "anthropic-version": "2023-06-01" },
     });

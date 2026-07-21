@@ -1,3 +1,5 @@
+import { AI_GATEWAY_OPENAI_BASE_URL } from "./aiGateway";
+
 export interface ToolUseEvent {
   type: "tool_use";
   id: string;
@@ -90,7 +92,7 @@ export async function* streamChatVercel(
     signal?: AbortSignal;
   },
 ): AsyncGenerator<StreamEvent> {
-  const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+  const response = await fetch(`${AI_GATEWAY_OPENAI_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey.trim()}` },
     body: JSON.stringify({

@@ -1,3 +1,5 @@
+import { AI_GATEWAY_OPENAI_BASE_URL } from "./aiGateway";
+
 const STORAGE_KEY = "filmidi_vercel_api_key";
 
 let cachedKey: string | null = null;
@@ -99,7 +101,7 @@ export function hasCachedApiKey(): boolean {
 export async function validateApiKey(key: string): Promise<string | null> {
   if (!key.trim()) return "Vercel API key is empty";
   try {
-    const response = await fetch("https://ai-gateway.vercel.sh/v1/models", {
+    const response = await fetch(`${AI_GATEWAY_OPENAI_BASE_URL}/models`, {
       headers: { Authorization: `Bearer ${key.trim()}` },
     });
     if (!response.ok) return `Vercel API key rejected (${response.status})`;

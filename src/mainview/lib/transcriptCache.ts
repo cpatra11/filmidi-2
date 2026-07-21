@@ -4,6 +4,7 @@
  */
 
 import type { TranscriptionResult } from "./cloudTranscription";
+import { DEFAULT_TRANSCRIPTION_MODEL } from "./aiGateway";
 
 const DB_NAME = "filmidi-transcripts";
 const DB_VERSION = 1;
@@ -28,11 +29,12 @@ async function openDB(): Promise<IDBDatabase> {
   });
 }
 
-function cacheKey(url: string, lang?: string, startSec?: number, endSec?: number): string {
+function cacheKey(url: string, lang?: string, startSec?: number, endSec?: number, model = DEFAULT_TRANSCRIPTION_MODEL): string {
   const parts = [url];
   if (lang) parts.push(lang);
   if (startSec !== undefined) parts.push(`s${startSec}`);
   if (endSec !== undefined) parts.push(`e${endSec}`);
+  parts.push(`m${model}`);
   return parts.join("|");
 }
 
@@ -40,9 +42,10 @@ export async function getCachedTranscript(
   url: string,
   lang?: string,
   startSec?: number,
-  endSec?: number
+  endSec?: number,
+  model = DEFAULT_TRANSCRIPTION_MODEL
 ): Promise<TranscriptionResult | null> {
-  const key = cacheKey(url, lang, startSec, endSec);
+  const key = cacheKey(url, lang, startSec, endSec, model);
 
   // Check memory cache
   const mem = memoryCache.get(key);
@@ -78,9 +81,10 @@ export async function setCachedTranscript(
   result: TranscriptionResult,
   lang?: string,
   startSec?: number,
-  endSec?: number
+  endSec?: number,
+  model = result.model || DEFAULT_TRANSCRIPTION_MODEL
 ): Promise<void> {
-  const key = cacheKey(url, lang, startSec, endSec);
+  const key = cacheKey(url, lang, startSec, endSec, model);
 
   // Memory cache
   memoryCache.set(key, result);

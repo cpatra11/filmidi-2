@@ -107,6 +107,8 @@ const AUDIO_MODELS = [
 
 const TRANSCRIPTION_MODELS = [
   { id: "xai/grok-stt", name: "Grok STT", type: "transcription" as const },
+  { id: "openai/gpt-4o-mini-transcribe", name: "GPT-4o mini transcribe", type: "transcription" as const },
+  { id: "openai/whisper-1", name: "Whisper 1", type: "transcription" as const },
 ];
 
 const UPSCALE_MODELS = [

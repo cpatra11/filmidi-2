@@ -9,6 +9,7 @@ import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftS
 import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
 import { extractAudioWithFfmpeg, normalizeMediaWithFfmpeg, probeMedia } from "./lib/mediaTools";
 import { startMediaServer } from "./lib/mediaServer";
+import { AI_GATEWAY_OPENAI_BASE_URL } from "./lib/aiGateway";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -591,10 +592,20 @@ transport.registerHandler((msg: any) => {
     }
 
     case "transcribe-audio-legacy-disabled": {
-      // Run transcription entirely in Bun (avoids browser CORS issues)
+      // Kept as a protocol guard for older clients. Transcription now runs through
+      // the renderer's AI SDK Gateway provider, which supports the current model API.
       (async () => {
         try {
           const { audioUrl, apiKey, requestId } = msg;
+          transport.send({
+            type: "transcription-result",
+            requestId,
+            error: "Legacy Bun transcription is disabled. Use the AI SDK Gateway transcription provider.",
+          });
+          return;
+
+          // Unreachable compatibility code below is retained for old packaged builds.
+          // New callers must never use the legacy raw transcription endpoint.
           const effectiveApiKey = apiKey || secureStore.get("vercel_api_key");
           if (!audioUrl || !requestId) {
             writeTranscriptLog("error", "transcribe-audio", "Missing required fields", {
@@ -622,7 +633,7 @@ transport.registerHandler((msg: any) => {
             hasApiKey: true,
           });
 
-          const ASR_ENDPOINT = "https://ai-gateway.vercel.sh/v1/audio/transcriptions";
+          const ASR_ENDPOINT = "";
           const POLL_ENDPOINT = "";
 
           // Submit transcription task
@@ -815,7 +826,7 @@ transport.registerHandler((msg: any) => {
             toolArr[toolArr.length - 1].cache_control = { type: "ephemeral" };
           }
 
-          const res = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+          const res = await fetch(`${AI_GATEWAY_OPENAI_BASE_URL}/chat/completions`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

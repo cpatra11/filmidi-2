@@ -32,6 +32,7 @@ import { normalizeVideoFlowDocument, validateVideoFlowDocument } from "./videoFl
 import { getVideoFlowCapabilities } from "./videoFlowCapabilities";
 import { getSecureApiKey } from "./secureApiKey";
 import { getTimelineDuration } from "./timelineMetrics";
+import { AI_GATEWAY_OPENAI_BASE_URL, DEFAULT_TRANSCRIPTION_MODEL, normalizeGatewayModel } from "./aiGateway";
 
 const {
   addLayerCommand,
@@ -3261,24 +3262,28 @@ async function executeToolInternal(
 
       case "upscale_media": return JSON.stringify({ error: "Upscaling is not available in this build." });
       case "list_models": {
+        const requestedType = typeof input.type === "string" ? input.type : undefined;
+        const matchesType = (model: { type?: string; id?: string }) => {
+          if (!requestedType) return true;
+          const type = String(model.type ?? "").toLowerCase();
+          const id = String(model.id ?? "").toLowerCase();
+          if (requestedType === "transcription") return type.includes("transcri") || id.includes("transcri") || id.includes("whisper") || id.includes("grok-stt");
+          if (requestedType === "chat") return type === "chat" || type === "language" || type === "languageModel";
+          if (requestedType === "audio") return type.includes("audio") || type.includes("speech") || id.includes("tts") || id.includes("music");
+          return type.includes(requestedType.toLowerCase());
+        };
         const vercelKey = await getSecureApiKey();
         if (vercelKey) {
           try {
-            const response = await fetch("https://ai-gateway.vercel.sh/v1/models", { headers: { Authorization: `Bearer ${vercelKey}` } });
+            const response = await fetch(`${AI_GATEWAY_OPENAI_BASE_URL}/models`, { headers: { Authorization: `Bearer ${vercelKey}` } });
             if (response.ok) {
               const body = await response.json() as { data?: Array<Record<string, unknown>> };
-              const models = (body.data ?? []).map((model) => ({
-                id: String(model.id ?? ""),
-                name: String(model.name ?? model.id ?? ""),
-                type: String(model.type ?? model.modelType ?? "language"),
-                description: String(model.description ?? "Vercel AI Gateway model"),
-              })).filter((model) => model.id);
-              return JSON.stringify({ models, source: "vercel-ai-gateway" });
+              const models = (body.data ?? []).map(normalizeGatewayModel).filter((model): model is NonNullable<typeof model> => !!model);
+              return JSON.stringify({ models: models.filter(matchesType), source: "vercel-ai-gateway" });
             }
           } catch {}
         }
-        return JSON.stringify({
-        models: [
+        const fallbackModels = [
           // Chat — Vercel AI Gateway
           { id: "openai/gpt-5.4-mini", name: "GPT-5.4 mini", type: "chat", description: "Lower-cost tool-calling agent" },
           { id: "openai/gpt-5.4-nano", name: "GPT-5.4 nano", type: "chat", description: "Lowest-cost tool-calling agent" },
@@ -3299,10 +3304,14 @@ async function executeToolInternal(
           { id: "google/veo-3.1-generate-001", name: "Veo 3.1", type: "video", description: "Text-to-video generation" },
           { id: "klingai/kling-v2.6-i2v", name: "Kling v2.6 I2V", type: "video", description: "Image-to-video generation" },
           { id: "xai/grok-tts", name: "Grok TTS", type: "audio", description: "Text-to-speech" },
-          { id: "xai/grok-stt", name: "Grok STT", type: "transcription", description: "Speech-to-text" },
+          { id: DEFAULT_TRANSCRIPTION_MODEL, name: "Grok STT", type: "transcription", description: "Speech-to-text through AI SDK Gateway" },
+          { id: "openai/gpt-4o-mini-transcribe", name: "GPT-4o mini transcribe", type: "transcription", description: "Speech-to-text through AI SDK Gateway" },
+          { id: "openai/whisper-1", name: "Whisper 1", type: "transcription", description: "Speech-to-text through AI SDK Gateway" },
           // Upscale
           { id: "hitpaw-upscaler-v2", name: "HitPaw Upscaler v2", type: "upscale", description: "AI upscaling" },
-        ],
+        ];
+        return JSON.stringify({
+        models: fallbackModels.filter(matchesType),
         source: "built-in-fallback",
         note: vercelKey ? "Vercel model discovery failed; showing fallback catalog." : "Add a Vercel AI Gateway key for live model discovery.",
       });
