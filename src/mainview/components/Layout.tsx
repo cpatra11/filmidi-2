@@ -733,15 +733,15 @@ function EditorPlaybar() {
       height: 38, background: "var(--vf-panel)", borderTop: "1px solid var(--vf-panel-border)",
       userSelect: "none", fontSize: 12, color: "var(--vf-text-dim)",
     }}>
-      <button onClick={goToStart} style={btn}>
+      <button onClick={goToStart} style={btn} aria-label="Go to start" title="Go to start">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3v8M5 7l5-4v8z" /></svg>
       </button>
-      <button onClick={togglePlay} style={{ ...btn, color: "var(--vf-primary)" }}>
+      <button onClick={togglePlay} style={{ ...btn, color: "var(--vf-primary)" }} aria-label={playing ? "Pause preview" : "Play preview"} title={playing ? "Pause preview" : "Play preview"}>
         {playing
           ? <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="2" width="4" height="12" rx="1" /><rect x="9" y="2" width="4" height="12" rx="1" /></svg>
           : <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6z" /></svg>}
       </button>
-      <button onClick={goToEnd} style={btn}>
+      <button onClick={goToEnd} style={btn} aria-label="Go to end" title="Go to end">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 3v8M9 7L4 3v8z" /></svg>
       </button>
 
@@ -769,11 +769,11 @@ function EditorPlaybar() {
 
       <div style={{ flex: 1 }} />
 
-      <button onClick={() => zoomBy(0.8)} style={btn}>
+      <button onClick={() => zoomBy(0.8)} style={btn} aria-label="Zoom out preview" title="Zoom out preview">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.25"><circle cx="6" cy="6" r="4" /><line x1="9" y1="9" x2="12" y2="12" /><line x1="4" y1="6" x2="8" y2="6" /></svg>
       </button>
-      <button onClick={zoomFit} style={{ ...btn, fontSize: 11, fontFamily: "var(--vf-font-mono)", padding: "4px 8px" }}>Fit</button>
-      <button onClick={() => zoomBy(1.25)} style={btn}>
+      <button onClick={zoomFit} style={{ ...btn, fontSize: 11, fontFamily: "var(--vf-font-mono)", padding: "4px 8px" }} aria-label="Fit preview" title="Fit preview">Fit</button>
+      <button onClick={() => zoomBy(1.25)} style={btn} aria-label="Zoom in preview" title="Zoom in preview">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.25"><circle cx="6" cy="6" r="4" /><line x1="9" y1="9" x2="12" y2="12" /><line x1="4" y1="6" x2="8" y2="6" /><line x1="6" y1="4" x2="6" y2="8" /></svg>
       </button>
     </div>
