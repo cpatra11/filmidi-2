@@ -91,6 +91,15 @@ const AVAILABLE_MODELS = [
   { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", provider: "Google", price: "Higher cost", toolCalls: true },
 ];
 
+const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-mini";
+
+function getInitialAgentModel(): string {
+  const stored = localStorage.getItem("filmidi_agent_model");
+  return stored && AVAILABLE_MODELS.some((entry) => entry.id === stored)
+    ? stored
+    : DEFAULT_AGENT_MODEL;
+}
+
 type AgentTaskIntent =
   | "edit"
   | "caption"
@@ -610,7 +619,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   draft: "",
   isStreaming: false,
   streamError: null,
-  model: localStorage.getItem("filmidi_agent_model") ?? "openai/gpt-5.4-mini",
+  model: getInitialAgentModel(),
   errorCount: 0,
   agentEditHistory: [],
   agentTurn: 0,

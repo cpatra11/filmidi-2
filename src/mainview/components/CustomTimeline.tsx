@@ -400,7 +400,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const activeGroup = useEditor((s) => s.activeGroupPath);
 
   const bodyRef = useRef<HTMLDivElement>(null);
-  const rulerRef = useRef<HTMLDivElement>(null);
+  const rulerInnerRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef<HTMLDivElement>(null);
   const scrollLeftRef = useRef(0);
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
@@ -557,8 +557,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
     if (!body) return;
     scrollLeftRef.current = body.scrollLeft;
     // Sync ruler position
-    if (rulerRef.current) {
-      rulerRef.current.style.transform = `translateX(${-body.scrollLeft}px)`;
+    if (rulerInnerRef.current) {
+      rulerInnerRef.current.style.transform = `translateX(${-body.scrollLeft}px)`;
     }
   }, []);
 
@@ -1343,10 +1343,9 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
       {/* Ruler */}
       <div
         className="ct-ruler"
-        ref={rulerRef}
         onPointerDown={handleRulerPointerDown}
       >
-        <div className="ct-ruler-inner" style={{ width: totalWidth }}>
+        <div ref={rulerInnerRef} className="ct-ruler-inner" style={{ width: totalWidth }}>
           {ticks.map((tick, i) => (
             <div
               key={i}
