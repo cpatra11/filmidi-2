@@ -57,12 +57,21 @@ export async function transcribeAudio(
     options,
   });
 
-  // Convert blob URLs to accessible URLs before routing
+  // Cloud ASR cannot fetch Filmidi's loopback media server. Upload local
+  // media-server files through the existing ASR bridge, just like blob URLs.
   let resolvedUrl = audioUrl;
-  if (audioUrl.startsWith("blob:")) {
+  let needsUpload = audioUrl.startsWith("blob:");
+  try {
+    const parsed = new URL(audioUrl);
+    needsUpload ||= parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  } catch {
+    // File paths and custom app URLs are handled by the native fallback.
+  }
+  if (needsUpload) {
     const { uploadAudioForASR } = await import("@/lib/agentIPC");
-    // Upload the blob directly — DashScope ASR accepts video (MP4) and audio files
+    // Upload the bytes directly — DashScope ASR receives a public WAV/MP4 URL.
     const resp = await fetch(audioUrl);
+    if (!resp.ok) throw new Error(`Could not read local audio source (${resp.status})`);
     const blob = await resp.blob();
     const dataUrl: string = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -76,6 +85,7 @@ export async function transcribeAudio(
       source: audioUrl.slice(0, 80),
       resolvedUrl: resolvedUrl.slice(0, 120),
       mimeType: blob.type || "video/mp4",
+      uploadedLocalSource: true,
     });
   }
 
