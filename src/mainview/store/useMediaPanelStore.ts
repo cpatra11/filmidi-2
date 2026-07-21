@@ -10,6 +10,8 @@ export interface MediaAsset {
   name: string;
   type: FilterType;
   url: string;
+  /** Browser-safe companion audio for containers Web Audio cannot decode directly. */
+  audioUrl?: string;
   duration: number;
   isGenerated: boolean;
   folderId: string | null;

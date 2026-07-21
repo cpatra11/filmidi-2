@@ -13,6 +13,7 @@ import { getMediaDuration } from "./mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { storeImportedFile } from "@/lib/mediaStorage";
 import { getImportedMediaType } from "@/lib/mediaType";
+import { getAudioSourceForPlayback } from "@/lib/movAudio";
 
 const { addLayerCommand } = commands;
 
@@ -135,15 +136,14 @@ export async function importMediaFiles(
     const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const stored = await storeImportedFile(file, id);
     let url = stored?.url ?? URL.createObjectURL(file);
-    // Keep MOV files in their original container. VideoFlow/CEF can play the
-    // source directly, and cloud transcription uploads the existing local
-    // audio layer when ASR needs a public URL.
-    const audioUrl = type === "video" ? url : null;
+    // Preserve the MOV for video; use an AAC companion for VideoFlow's Web Audio mixer.
+    const audioUrl = type === "video" ? await getAudioSourceForPlayback(file, id, url) : null;
     mediaStore.addAsset({
       id,
       name: file.name,
       type,
       url,
+      audioUrl: audioUrl && audioUrl !== url ? audioUrl : undefined,
       sourcePath: stored?.path,
       duration,
       isGenerated: false,

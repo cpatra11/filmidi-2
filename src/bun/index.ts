@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftSidecar";
 import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
-import { normalizeMediaWithFfmpeg, probeMedia } from "./lib/mediaTools";
+import { extractAudioWithFfmpeg, normalizeMediaWithFfmpeg, probeMedia } from "./lib/mediaTools";
 import { startMediaServer } from "./lib/mediaServer";
 
 const DEV_SERVER_PORT = 5173;
@@ -434,7 +434,7 @@ transport.registerHandler((msg: any) => {
             }
             return;
           }
-          if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media" || task === "store-media" || task === "media-status") {
+          if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media" || task === "extract-audio" || task === "store-media" || task === "media-status") {
             let result: Record<string, unknown> | null;
             let backend = "bun-fallback";
             if (task === "gstreamer-status") {
@@ -446,6 +446,9 @@ transport.registerHandler((msg: any) => {
             } else if (task === "probe-media") {
               result = await probeMedia(payload ?? {});
               backend = "ffprobe";
+            } else if (task === "extract-audio") {
+              result = await extractAudioWithFfmpeg(payload ?? {});
+              backend = "ffmpeg";
             } else if (task === "media-status") {
               result = { available: true, baseUrl: mediaStorage.baseUrl, root: mediaStorage.root };
               backend = "bun-media-server";

@@ -96,3 +96,30 @@ export async function normalizeMediaWithFfmpeg(payload: Record<string, unknown>)
     rmSync(workDir, { recursive: true, force: true });
   }
 }
+
+/** Extract only the audio stream; the original video container remains untouched. */
+export async function extractAudioWithFfmpeg(payload: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const ffmpeg = await findCommand("ffmpeg");
+  const base64Data = typeof payload.base64Data === "string" ? payload.base64Data : "";
+  if (!ffmpeg || !base64Data) return null;
+  const workDir = mkdtempSync(join(tmpdir(), "filmidi-audio-"));
+  const inputPath = join(workDir, "input");
+  const outputPath = join(workDir, "audio.m4a");
+  try {
+    writeFileSync(inputPath, Buffer.from(base64Data, "base64"));
+    const result = await run(ffmpeg, [
+      "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
+      "-vn", "-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k",
+      "-movflags", "+faststart", outputPath,
+    ]);
+    if (result.code !== 0 || !existsSync(outputPath)) return null;
+    const bytes = readFileSync(outputPath);
+    return {
+      backend: "ffmpeg",
+      dataUrl: `data:audio/mp4;base64,${bytes.toString("base64")}`,
+      mimeType: "audio/mp4",
+    };
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
+  }
+}

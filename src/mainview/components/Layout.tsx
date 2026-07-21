@@ -30,6 +30,7 @@ import { getMediaDuration } from "@/lib/mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { storeImportedFile } from "@/lib/mediaStorage";
 import { getImportedMediaType } from "@/lib/mediaType";
+import { getAudioSourceForPlayback } from "@/lib/movAudio";
 import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead } from "@/lib/timelineAddActions";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -121,7 +122,7 @@ export function Layout() {
             const clipName = getDisplayName(asset.name);
             const audioTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "audio", startTime, sourceDuration);
             const videoTrack = findAvailableTrack(useEditorStore.getState().video.layers ?? [], "video", startTime, sourceDuration);
-            const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.url, sourceDuration, startTime });
+            const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: asset.audioUrl ?? asset.url, sourceDuration, startTime });
             setLayerTrack(editor.commit, audioLayerId, audioTrack);
             await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
             await cmds.setPropertyCommand(editor.commit, audioLayerId, "mute", false);
@@ -392,8 +393,8 @@ export function Layout() {
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const stored = await storeImportedFile(file, id);
         let url = stored?.url ?? URL.createObjectURL(file);
-        const audioUrl = type === "video" ? url : null;
-        mediaStore.addAsset({ id, name: file.name, type, url, sourcePath: stored?.path, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
+        const audioUrl = type === "video" ? await getAudioSourceForPlayback(file, id, url) : null;
+        mediaStore.addAsset({ id, name: file.name, type, url, audioUrl: audioUrl && audioUrl !== url ? audioUrl : undefined, sourcePath: stored?.path, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         const isVideoFile = type === "video";
         if (isVideoFile) {
           const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -567,8 +568,8 @@ export function Layout() {
                               const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
                               const stored = await storeImportedFile(file, id);
                               let url = stored?.url ?? URL.createObjectURL(file);
-                              const audioUrl = type === "video" ? url : null;
-                              store.addAsset({ id, name: file.name, type, url, sourcePath: stored?.path, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
+                              const audioUrl = type === "video" ? await getAudioSourceForPlayback(file, id, url) : null;
+                              store.addAsset({ id, name: file.name, type, url, audioUrl: audioUrl && audioUrl !== url ? audioUrl : undefined, sourcePath: stored?.path, duration, isGenerated: false, folderId: store.currentFolderId, createdAt: Date.now() });
                               if (type === "video") {
                                 const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
                                 const { commands: cmds } = await import("@videoflow/react-video-editor");

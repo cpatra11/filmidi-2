@@ -634,7 +634,7 @@ function setTrack(commitFn: any, layerId: string, track: number) {
 
 async function placeAssetOnTimeline(
   commitFn: any,
-  asset: { id: string; name?: string; type: "video" | "audio" | "image"; url: string; duration?: number },
+  asset: { id: string; name?: string; type: "video" | "audio" | "image"; url: string; audioUrl?: string; duration?: number },
   fps: number,
   options: { startFrame: number; durationFrames?: number; trackIndex?: number },
 ): Promise<{ layerId: string; audioLayerId?: string; startFrame: number; durationFrames: number; track: number } | null> {
@@ -681,7 +681,7 @@ async function placeAssetOnTimeline(
     );
     audioLayerId = await addLayerCommand(commitFn, {
       type: "audio",
-      source: asset.url,
+      source: asset.audioUrl ?? asset.url,
       sourceDuration,
       startTime,
     });

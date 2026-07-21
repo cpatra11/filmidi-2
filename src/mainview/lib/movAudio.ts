@@ -1,4 +1,5 @@
 import { requestNativeMedia } from "./nativeMediaBridge";
+import { storeDataUrl } from "./mediaStorage";
 
 function isMov(file: File): boolean {
   return file.name.toLowerCase().endsWith(".mov") || file.type === "video/quicktime";
@@ -33,7 +34,6 @@ export async function normalizeMovForPlayback(file: File): Promise<string | null
 /** Extracts an AAC/M4A stream from Apple MOV media for browser playback. */
 export async function extractMovAudio(file: File): Promise<string | null> {
   if (!isMov(file)) return null;
-  if (!/Mac/i.test(navigator.platform) && !/Mac OS X/i.test(navigator.userAgent)) return null;
 
   try {
     const buffer = await file.arrayBuffer();
@@ -53,4 +53,13 @@ export async function extractMovAudio(file: File): Promise<string | null> {
     console.warn("[mov-audio] extraction failed; keeping original source", error);
     return null;
   }
+}
+
+/** Keep the original video URL, but provide VideoFlow's Web Audio mixer with AAC. */
+export async function getAudioSourceForPlayback(file: File, assetId: string, originalUrl: string): Promise<string> {
+  if (!isMov(file)) return originalUrl;
+  const dataUrl = await extractMovAudio(file);
+  if (!dataUrl) return originalUrl;
+  const stored = await storeDataUrl(dataUrl, `${assetId}.m4a`, `${assetId}-audio`);
+  return stored?.url ?? dataUrl;
 }
