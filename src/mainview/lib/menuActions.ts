@@ -11,8 +11,7 @@ import { dbChooseProjectLocation, dbWriteProjectFile } from "./dbIPC";
 import { serializeFilmidiPackage } from "./exportHelpers";
 import { getMediaDuration } from "./mediaDuration";
 import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
-import { extractMovAudio, normalizeMovForPlayback } from "@/lib/movAudio";
-import { storeDataUrl, storeImportedFile } from "@/lib/mediaStorage";
+import { storeImportedFile } from "@/lib/mediaStorage";
 
 const { addLayerCommand } = commands;
 
@@ -135,20 +134,10 @@ export async function importMediaFiles(
     const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const stored = await storeImportedFile(file, id);
     let url = stored?.url ?? URL.createObjectURL(file);
-    let normalizedBy: string | undefined;
-    if (type === "video" && (file.name.toLowerCase().endsWith(".mov") || file.type === "video/quicktime")) {
-      try {
-        const normalizedMov = await normalizeMovForPlayback(file);
-        if (normalizedMov) {
-          const normalizedStored = await storeDataUrl(normalizedMov, `${file.name}.mp4`, `${id}-normalized`);
-          url = normalizedStored?.url ?? normalizedMov;
-          normalizedBy = "media-normalizer";
-        }
-      } catch (error) {
-        console.info("[media-import] MOV normalization unavailable; using original source", error);
-      }
-    }
-    const audioUrl = type === "video" && !normalizedBy ? await extractMovAudio(file) : null;
+    // Keep MOV files in their original container. VideoFlow/CEF can play the
+    // source directly, and cloud transcription uploads the existing local
+    // audio layer when ASR needs a public URL.
+    const audioUrl = type === "video" ? url : null;
     mediaStore.addAsset({
       id,
       name: file.name,
@@ -160,9 +149,6 @@ export async function importMediaFiles(
       folderId: mediaStore.currentFolderId,
       createdAt: Date.now(),
     });
-    if (normalizedBy) {
-      mediaStore.showToast(`${file.name} normalized for playback`, "success");
-    }
     if (type === "video") {
       const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
       const { commands: cmds } = await import("@videoflow/react-video-editor");
