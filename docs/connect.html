@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Connect Filmidi to MCP and configure a Qwen BYOK API key." />
-    <title>Filmidi | MCP and BYOK setup</title>
+    <meta name="description" content="Connect Filmidi to MCP and the Filmidi AI backend." />
+    <title>Filmidi | MCP and backend setup</title>
     <style>
       :root { color-scheme: dark; --bg: #080909; --panel: #111313; --line: #242827; --text: #f3f5f4; --muted: #9ba4a1; --accent: #b9f56f; --accent-ink: #152008; }
       * { box-sizing: border-box; } body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.65 Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -22,7 +22,7 @@
     <header><nav class="shell"><a class="brand" href="./"><span class="mark">F</span><span>Filmidi</span></a><div class="links"><a href="./">Overview</a><a href="https://github.com/cpatra11/filmidi-q">GitHub</a></div></nav></header>
     <main class="shell">
       <h1>Connect Filmidi to MCP.</h1>
-      <p class="lede">Use Filmidi’s local MCP server to let an MCP-compatible client inspect the timeline, media library, transcript, and editing tools. Configure your own Qwen key in the app; credentials stay on your machine.</p>
+      <p class="lede">Use Filmidi’s local MCP server to let an MCP-compatible client inspect the timeline, media library, transcript, and editing tools. AI requests use the authenticated Filmidi backend and Vercel AI Gateway.</p>
       <section><h2>1. Start Filmidi</h2><p>Open the Filmidi app. Its local MCP server starts with the app and listens on loopback:</p><pre>http://127.0.0.1:19790/mcp</pre><p>The server is local-only. Filmidi must remain open while an external MCP client is connected.</p></section>
       <section><h2>2. Configure an MCP client</h2><p>Add Filmidi as an MCP server in the client’s MCP configuration. For HTTP MCP clients, use:</p><pre>{
   "mcpServers": {
@@ -31,8 +31,8 @@
     }
   }
 }</pre><p>Restart or reconnect the MCP client after saving its configuration. The client should complete the MCP handshake, then expose Filmidi’s timeline and media tools.</p></section>
-      <section><h2>3. Add your Qwen BYOK key</h2><ol><li>Open Filmidi and go to the welcome screen or <strong>Settings → Agent</strong>.</li><li>Choose the Qwen-compatible provider and paste your API key into the API key field.</li><li>Save or test the connection, then select the desired available model.</li><li>Return to the agent panel and send a request grounded in the open timeline.</li></ol><div class="note">Filmidi does not package an API key in the DMG or source repository. The key is stored in the app’s local credential store and is only used for requests from your installation. Never commit it to a project or share it in chat.</div></section>
-      <section><h2>4. Verify the connection</h2><p>In the MCP client, call the tool list or ask Filmidi for the current timeline. A healthy connection returns the MCP tools and project state. In Filmidi, the MCP status and diagnostic logs are available from the help or agent tooling.</p><h3>Common problems</h3><p><strong>Server already initialized:</strong> disconnect the old MCP session and create one fresh connection. Each client should reuse its session instead of sending a second initialize request.</p><p><strong>Connection refused:</strong> open Filmidi first and confirm the client is using port <code>19790</code>.</p><p><strong>Not Acceptable:</strong> the client must support MCP’s <code>text/event-stream</code> response type; use an MCP-compatible connector rather than opening the endpoint as a normal webpage.</p><p><strong>Transcription or generation errors:</strong> verify the Qwen key, selected model, network access, and the processing mode in Filmidi Settings.</p></section>
+      <section><h2>3. Connect AI features</h2><ol><li>Open Filmidi and go to <strong>Settings → Account</strong>.</li><li>Sign in with an email and password, or use Google, to receive a Filmidi backend session.</li><li>Choose a backend model in <strong>Settings → Models</strong>.</li><li>Return to the agent panel and send a request grounded in the open timeline.</li></ol><div class="note">The Vercel AI Gateway key stays on the backend. It is not packaged in the DMG and is never stored in the desktop app.</div></section>
+      <section><h2>4. Verify the connection</h2><p>In the MCP client, call the tool list or ask Filmidi for the current timeline. A healthy connection returns the MCP tools and project state. In Filmidi, the MCP status and diagnostic logs are available from the help or agent tooling.</p><h3>Common problems</h3><p><strong>Server already initialized:</strong> disconnect the old MCP session and create one fresh connection. Each client should reuse its session instead of sending a second initialize request.</p><p><strong>Connection refused:</strong> open Filmidi first and confirm the client is using port <code>19790</code>.</p><p><strong>Not Acceptable:</strong> the client must support MCP’s <code>text/event-stream</code> response type; use an MCP-compatible connector rather than opening the endpoint as a normal webpage.</p><p><strong>AI errors:</strong> confirm the backend is running, the account session is valid, and <code>AI_GATEWAY_API_KEY</code> is configured on the backend.</p></section>
       <section><h2>Use the agent effectively</h2><p>Ask the agent to inspect the timeline before editing. Useful requests include: “show the current timeline,” “add captions to spoken clips,” “place this image when ‘screen’ is said,” “remove only transcript-confirmed pauses,” and “export the edited timeline.” The agent should verify the result with a fresh timeline read after each operation.</p></section>
     </main>
     <footer><div class="shell"><span>Filmidi Editor is open source under GPL-3.0-or-later.</span><a href="./">Back to Filmidi</a><a href="https://github.com/cpatra11/filmidi-q">GitHub repository</a></div></footer>

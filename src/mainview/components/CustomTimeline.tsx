@@ -24,6 +24,7 @@ import {
   VIDEO_TRACK_BASE,
   clampMoveToTrack,
   clampTimeDeltaToFreeSpace,
+  buildTimelineMovePlan,
   getTimelineTrackKind,
   localTrackForKind,
   normalizeTrackForKind,
@@ -398,6 +399,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   const dragMoveStateRef = useRef<DragMoveState | null>(null);
   const dragMoveRafRef = useRef<number | null>(null);
   const lastSnapGuideRef = useRef<number | null>(null);
+  const pendingMoveUpdatesRef = useRef<Array<{ id: string; startTime: number; track?: number }> | null>(null);
 
   const { fps, duration: videoDuration } = video;
   const requestedScale = viewport.timelineScale;
@@ -912,6 +914,35 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         setDragPreview(next);
       };
 
+      const previewUpdates = (updates: Array<{ id: string; startTime: number; track?: number }>) => {
+        const next = new Map<string, DragPreview>();
+        const liveLayers = useEditorStore.getState().video.layers ?? [];
+        for (const update of updates) {
+          let item = initialPositions.get(update.id);
+          if (!item) {
+            const liveLayer = liveLayers.find((candidate: any) => candidate.id === update.id);
+            if (!liveLayer) continue;
+            const itemKind = getTimelineTrackKind(liveLayer);
+            item = {
+              id: update.id,
+              startTime: liveLayer.settings?.startTime ?? 0,
+              track: normalizeTrackForKind(liveLayer.track, itemKind),
+              kind: itemKind,
+              duration: layerTimelineBounds(liveLayer).end - layerTimelineBounds(liveLayer).start,
+            };
+          }
+          const targetTrack = update.track === undefined
+            ? item.track
+            : normalizeTrackForKind(update.track, item.kind);
+          next.set(update.id, {
+            timeDelta: Math.max(0, update.startTime) - item.startTime,
+            trackDelta: localTrackForKind(targetTrack, item.kind) - localTrackForKind(item.track, item.kind),
+          });
+        }
+        dragPreviewRef.current = next;
+        setDragPreview(next);
+      };
+
       const runDragMove = () => {
         const drag = dragMoveStateRef.current;
         if (!drag || drag.pointerId !== pointerId) return;
@@ -952,6 +983,8 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           .map((id) => drag.initial.get(id))
           .filter((item): item is DragMoveItem => !!item);
         const selectedSet = new Set(drag.ids);
+        pendingMoveUpdatesRef.current = null;
+
         const fits = (timeDelta: number, deltaTrack: number) =>
           moveItems.every((item) => {
             const nextTrack = normalizeTrackForKind(item.track + deltaTrack, item.kind);
@@ -965,6 +998,26 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           previewMove(timeOnly, trackOnly);
           return;
         }
+
+        const sameTrack = trackOnly === 0;
+        if (sameTrack && moveItems.length >= 1) {
+          const plan = buildTimelineMovePlan(
+            liveLayers,
+            drag.primaryId,
+            Math.max(0, primary.startTime + timeOnly),
+            primary.track,
+            "swap",
+          );
+          if (plan.updates.length > 0 && plan.mode === "swap") {
+            const validation = validateMoveUpdates(liveLayers, plan.updates);
+            if (validation.ok) {
+              pendingMoveUpdatesRef.current = plan.updates;
+              previewUpdates(plan.updates);
+              return;
+            }
+          }
+        }
+
         if (trackOnly !== 0 && fits(0, trackOnly)) {
           previewMove(0, trackOnly);
           return;
@@ -993,7 +1046,10 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           const desiredStart = Math.max(0, item.startTime + timeOnly);
           const clampedStart = clampMoveToTrack(liveLayers, desiredTrack, desiredStart, item.duration, selectedSet);
           if (clampedStart !== null) {
-            previewMove(clampedStart - item.startTime, desiredTrack - item.track);
+            previewMove(
+              clampedStart - item.startTime,
+              localTrackForKind(desiredTrack, item.kind) - localTrackForKind(item.track, item.kind),
+            );
             return;
           }
         }
@@ -1040,17 +1096,26 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         }
         const preview = dragPreviewRef.current;
         const firstPreview = preview.get(moveIdArray[0]);
-        if (firstPreview) {
+        const plannedUpdates = pendingMoveUpdatesRef.current;
+        if (plannedUpdates?.length) {
+          const validation = validateMoveUpdates(useEditorStore.getState().video.layers ?? [], plannedUpdates);
+          if (validation.ok) void commands.moveLayersCommand(editor.commit, plannedUpdates);
+          else console.warn("[timeline] prevented invalid swap commit", validation);
+        } else if (firstPreview) {
           const updates = moveItemsForCommit.map((item) => ({
               id: item.id,
               startTime: Math.max(0, item.startTime + firstPreview.timeDelta),
-              track: Math.max(0, item.track + firstPreview.trackDelta),
+              track: normalizeTrackForKind(
+                localTrackForKind(item.track, item.kind) + firstPreview.trackDelta,
+                item.kind,
+              ),
             }));
           const validation = validateMoveUpdates(useEditorStore.getState().video.layers ?? [], updates);
           if (validation.ok) void commands.moveLayersCommand(editor.commit, updates);
           else console.warn("[timeline] prevented invalid move commit", validation);
         }
         dragPreviewRef.current = new Map();
+        pendingMoveUpdatesRef.current = null;
         setDragPreview(new Map());
         dragMoveStateRef.current = null;
         try {

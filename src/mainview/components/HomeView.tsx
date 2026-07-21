@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useProjectStore, type ProjectEntry } from "@/store/useProjectStore";
 import { useAppStore } from "@/store/useAppStore";
-import { useAccountStore } from "@/store/useAccountStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { Button } from "@/components/ui/button";
@@ -413,33 +412,12 @@ export function HomeView() {
 }
 
 function AccountPopoverInHome() {
-  const { email, name, plan, creditsRemaining, isSignedIn } = useAccountStore();
-  const signedIn = isSignedIn();
   const { openTab } = useSettingsStore();
 
   return (
-    <div className="flex items-center gap-2">
-      <button
-        onClick={() => openTab("account")}
-        className="flex items-center gap-2 text-xs text-white/40 hover:text-white/70 transition-colors cursor-pointer"
-      >
-        {signedIn ? (
-          <>
-            <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center">
-              <User className="w-3.5 h-3.5 text-white/60" />
-            </div>
-            <span className="truncate max-w-[120px]">{name || email || "Signed In"}</span>
-          </>
-        ) : (
-          <>
-            <User className="w-3.5 h-3.5" />
-            <span>Sign In</span>
-          </>
-        )}
-      </button>
-      {signedIn && plan && (
-        <span className="text-[10px] uppercase text-white/30 font-medium ml-auto">{plan}</span>
-      )}
-    </div>
+    <button onClick={() => openTab("agent")} className="flex items-center gap-2 text-xs text-white/40 hover:text-white/70 transition-colors cursor-pointer">
+      <KeyRound className="w-3.5 h-3.5" />
+      <span>Vercel API key</span>
+    </button>
   );
 }

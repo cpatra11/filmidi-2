@@ -1,4 +1,4 @@
-const STORAGE_KEY = "filmidi_qwen_api_key";
+const STORAGE_KEY = "filmidi_vercel_api_key";
 
 let cachedKey: string | null = null;
 let fetchPromise: Promise<string | null> | null = null;
@@ -8,7 +8,7 @@ function getBridge(): { postMessage: (msg: unknown) => void } | null {
 }
 
 /**
- * Get the API key from Bun's secure in-memory store (Electrobun)
+ * Get the Vercel AI Gateway key from Bun's secure in-memory store (Electrobun)
  * or from localStorage (browser fallback).
  * Caches the result in a module variable so subsequent calls are instant.
  */
@@ -57,7 +57,7 @@ export function getSecureApiKey(): Promise<string | null> {
 }
 
 /**
- * Save the API key. In Electrobun, sends it to Bun's secure in-memory store.
+ * Save the Vercel AI Gateway key. In Electrobun, sends it to Bun's secure in-memory store.
  * Also keeps a local cache, but does NOT write to localStorage.
  */
 export function setSecureApiKey(key: string): void {
@@ -95,23 +95,17 @@ export function hasCachedApiKey(): boolean {
 }
 
 /**
- * Validate an API key by making a test request to DashScope.
- * Returns null if valid, or an error message string if invalid.
+ * Validate a Vercel AI Gateway key with a small authenticated model request.
  */
 export async function validateApiKey(key: string): Promise<string | null> {
+  if (!key.trim()) return "Vercel API key is empty";
   try {
-    const resp = await fetch("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models", {
-      headers: { Authorization: `Bearer ${key}` },
+    const response = await fetch("https://ai-gateway.vercel.sh/v1/models", {
+      headers: { Authorization: `Bearer ${key.trim()}` },
     });
-    if (resp.ok) return null;
-    if (resp.status === 401) return "Invalid API key — check your key at qwencloud.com";
-    if (resp.status === 403) {
-      const text = await resp.text().catch(() => "");
-      if (text.includes("quota")) return "API key has no quota — add credits in DashScope console";
-      return "API key is not authorized for this service";
-    }
-    return `API key validation failed (HTTP ${resp.status})`;
-  } catch (e) {
-    return `Could not validate API key: ${e instanceof Error ? e.message : "network error"}`;
+    if (!response.ok) return `Vercel API key rejected (${response.status})`;
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Could not reach Vercel AI Gateway";
   }
 }

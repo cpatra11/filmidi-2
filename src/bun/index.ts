@@ -225,9 +225,9 @@ transport.registerHandler((msg: any) => {
     case "set-api-key": {
       if (typeof msg.key === "string") {
         if (msg.key.length > 0) {
-          secureStore.set("qwen_api_key", msg.key);
+          secureStore.set("vercel_api_key", msg.key);
         } else {
-          secureStore.delete("qwen_api_key");
+          secureStore.delete("vercel_api_key");
         }
         saveCredentials();
         transport.send({ type: "api-key-saved" });
@@ -237,10 +237,10 @@ transport.registerHandler((msg: any) => {
 
     case "get-api-key": {
       // Check memory first, then try loading from file
-      let key: string | null = secureStore.get("qwen_api_key") ?? null;
+      let key: string | null = secureStore.get("vercel_api_key") ?? null;
       if (!key) {
         loadCredentials();
-        key = secureStore.get("qwen_api_key") ?? null;
+        key = secureStore.get("vercel_api_key") ?? null;
       }
       transport.send({ type: "api-key-value", key });
       break;
@@ -504,11 +504,10 @@ transport.registerHandler((msg: any) => {
     }
 
     case "upload-audio-for-asr": {
-      // Upload audio blob to a public URL for ASR.
-      // Tries the local backend first, then public mirrors, then a local file fallback.
+      // Upload audio to the configured Filmidi backend, which stores it in R2.
       (async () => {
         try {
-          const { base64Data, mimeType, requestId } = msg;
+          const { base64Data, mimeType, requestId, backendUrl, sessionToken } = msg;
           if (!base64Data || !requestId) {
             transport.send({ type: "upload-audio-result", requestId, error: "Missing base64Data or requestId" });
             return;
@@ -518,83 +517,21 @@ transport.registerHandler((msg: any) => {
           const ext = mimeType?.includes("video") ? ".mp4" : mimeType?.includes("wav") ? ".wav" : ".mp3";
           const fileName = `filmidi-audio-${Date.now()}${ext}`;
 
-          // 1. Try backend upload first.
-          try {
-            const formData = new FormData();
-            formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
-            const resp = await fetchWithTimeout("http://localhost:3000/api/v1/uploads", {
-              method: "POST",
-              body: formData,
-            }, 12_000);
-            if (resp.ok) {
-              const data = await resp.json() as any;
-              if (typeof data?.url === "string" && data.url) {
-                transport.send({ type: "upload-audio-result", requestId, url: data.url });
-                return;
-              }
-            }
-          } catch (_) {}
-
-          // 2. Try catbox.moe (free, no auth, no expiry)
-          try {
-            const formData = new FormData();
-            formData.append("reqtype", "fileupload");
-            formData.append("fileToUpload", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
-            const resp = await fetchWithTimeout("https://catbox.moe/user/api.php", {
-              method: "POST",
-              body: formData,
-            }, 12_000);
-            if (resp.ok) {
-              const url = (await resp.text()).trim();
-              if (url && url.startsWith("https://")) {
-                transport.send({ type: "upload-audio-result", requestId, url });
-                return;
-              }
-            }
-          } catch (_) {}
-
-          // 3. Try tempfile.org
-          try {
-            const formData = new FormData();
-            formData.append("files", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
-            formData.append("expiryHours", "1");
-            const resp = await fetchWithTimeout("https://tempfile.org/api/upload/local", {
-              method: "POST",
-              body: formData,
-            }, 12_000);
-            if (resp.ok) {
-              const data = await resp.json() as any;
-              if (data?.success && data?.files?.[0]?.id) {
-                const fileId = data.files[0].id;
-                transport.send({ type: "upload-audio-result", requestId, url: `https://tempfile.org/${fileId}/download` });
-                return;
-              }
-            }
-          } catch (_) {}
-
-          // 4. Try backend upload (UploadThing)
-          try {
-            const formData = new FormData();
-            formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
-            const resp = await fetchWithTimeout("http://localhost:3000/api/v1/uploads", {
-              method: "POST",
-              body: formData,
-            }, 12_000);
-            if (resp.ok) {
-              const data = await resp.json() as any;
-              if (data?.url) {
-                transport.send({ type: "upload-audio-result", requestId, url: data.url });
-                return;
-              }
-            }
-          } catch (_) {}
-
-          // 5. Last resort: local file for debugging.
-          const tempDir = join(homedir(), "Library", "Caches", "com.filmidi.editor", "audio");
-          mkdirSync(tempDir, { recursive: true });
-          const filePath = join(tempDir, fileName);
-          writeFileSync(filePath, buffer);
-          transport.send({ type: "upload-audio-result", requestId, url: `file://${filePath}` });
+          const targetUrl = String(backendUrl || "http://localhost:3000").replace(/\/$/, "");
+          const formData = new FormData();
+          formData.append("file", new Blob([buffer], { type: mimeType || "audio/wav" }), fileName);
+          const headers: Record<string, string> = {};
+          if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+          const resp = await fetchWithTimeout(`${targetUrl}/api/v1/uploads`, {
+            method: "POST",
+            headers,
+            body: formData,
+          }, 30_000);
+          const data = await resp.json().catch(() => ({})) as any;
+          if (!resp.ok || typeof data?.url !== "string" || !data.url) {
+            throw new Error(`Backend media upload failed (${resp.status})`);
+          }
+          transport.send({ type: "upload-audio-result", requestId, url: data.url });
         } catch (err: any) {
           transport.send({ type: "upload-audio-result", requestId: msg.requestId, error: err?.message ?? String(err) });
         }
@@ -602,12 +539,12 @@ transport.registerHandler((msg: any) => {
       break;
     }
 
-    case "transcribe-audio": {
+    case "transcribe-audio-legacy-disabled": {
       // Run transcription entirely in Bun (avoids browser CORS issues)
       (async () => {
         try {
           const { audioUrl, apiKey, requestId } = msg;
-          const effectiveApiKey = apiKey || secureStore.get("qwen_api_key");
+          const effectiveApiKey = apiKey || secureStore.get("vercel_api_key");
           if (!audioUrl || !requestId) {
             writeTranscriptLog("error", "transcribe-audio", "Missing required fields", {
               hasAudioUrl: !!audioUrl,
@@ -622,9 +559,9 @@ transport.registerHandler((msg: any) => {
             writeTranscriptLog("error", "transcribe-audio", "Missing API key", {
               requestId,
               hasApiKey: !!apiKey,
-              hasStoredKey: !!secureStore.get("qwen_api_key"),
+              hasStoredKey: !!secureStore.get("vercel_api_key"),
             });
-            transport.send({ type: "transcription-result", requestId, error: "No Qwen API key configured. Add one in Settings > Agent." });
+            transport.send({ type: "transcription-result", requestId, error: "No Vercel AI Gateway key configured. Add one in Settings > Agent." });
             return;
           }
 
@@ -634,8 +571,8 @@ transport.registerHandler((msg: any) => {
             hasApiKey: true,
           });
 
-          const ASR_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/asr/transcription";
-          const POLL_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/tasks";
+          const ASR_ENDPOINT = "https://ai-gateway.vercel.sh/v1/audio/transcriptions";
+          const POLL_ENDPOINT = "";
 
           // Submit transcription task
           const submitResp = await fetch(ASR_ENDPOINT, {
@@ -643,10 +580,9 @@ transport.registerHandler((msg: any) => {
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${effectiveApiKey}`,
-              "X-DashScope-Async": "enable",
             },
             body: JSON.stringify({
-              model: "qwen3-asr-flash-filetrans",
+              model: "xai/grok-stt",
               input: { file_url: audioUrl },
               parameters: { channel_id: [0], enable_words: true },
             }),
@@ -767,7 +703,7 @@ transport.registerHandler((msg: any) => {
       break;
     }
 
-    case "agent-message": {
+    case "agent-message-legacy-disabled": {
       // Cancel any previous agent run
       if (currentAgentController) {
         currentAgentController.abort();
@@ -775,7 +711,7 @@ transport.registerHandler((msg: any) => {
       }
       const controller = new AbortController();
       currentAgentController = controller;
-      const apiKey = secureStore.get("qwen_api_key");
+      const apiKey = secureStore.get("vercel_api_key");
       if (!apiKey) {
         transport.send({
           type: "agent-error",
@@ -806,7 +742,7 @@ transport.registerHandler((msg: any) => {
       break;
     }
 
-    case "stream-chat-init": {
+    case "stream-chat-init-legacy-disabled": {
       const { requestId, model, messages, tools, system, apiKey } = msg;
       if (!requestId || !apiKey) break;
 
@@ -828,12 +764,11 @@ transport.registerHandler((msg: any) => {
             toolArr[toolArr.length - 1].cache_control = { type: "ephemeral" };
           }
 
-          const res = await fetch("https://dashscope-intl.aliyuncs.com/apps/anthropic/v1/messages", {
+          const res = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "x-api-key": apiKey,
-              "anthropic-version": "2023-06-01",
+              Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify(body),
             signal: controller.signal,
@@ -864,7 +799,7 @@ transport.registerHandler((msg: any) => {
             buffer = lines.pop() ?? "";
 
             for (const line of lines) {
-              // DashScope sends `data:{...}` with no space — accept both forms
+              // Accept both compact and spaced SSE data prefixes.
               if (!line.startsWith("data:")) continue;
               const data = line.slice(5).trim();
               if (!data) continue;

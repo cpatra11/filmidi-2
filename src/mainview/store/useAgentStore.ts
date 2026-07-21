@@ -1,10 +1,9 @@
 import { create } from "zustand";
-import { streamChatBackend, Message } from "@/lib/qwenClient";
+import { streamChatVercel, Message } from "@/lib/aiGatewayClient";
 import { sendAgentMessage, cancelAgentStream } from "@/lib/agentIPC";
 import { getTimelineContext, getMediaContext } from "@/lib/toolExecutor";
 import { useMediaPanelStore } from "./useMediaPanelStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
-import { useAccountStore } from "./useAccountStore";
 import { useSettingsStore } from "./useSettingsStore";
 import { getSecureApiKey, setSecureApiKey, clearSecureApiKey } from "@/lib/secureApiKey";
 
@@ -71,49 +70,25 @@ interface AgentState {
 }
 
 const STORAGE_KEY = "filmidi_agent_sessions";
-const API_KEY_STORAGE_KEY = "filmidi_qwen_api_key";
 const STARTER_SESSION_TITLE = "New chat";
 
 function makeId() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-const MODEL_MAP: Record<string, string> = {
-  "qwen-max":    "qwen3.7-max",
-  "qwen-plus":   "qwen3.7-plus",
-  "qwen-flash":  "qwen3.6-flash",
-  "qwen-turbo":  "qwen3.6-flash",
-  // Qwen models — canonical ids pass through
-  "qwen3.8-max-preview":  "qwen3.8-max-preview",
-  "qwen3.7-max":          "qwen3.7-max",
-  "qwen3.7-plus":         "qwen3.7-plus",
-  "qwen3.6-max-preview":  "qwen3.6-max-preview",
-  "qwen3.6-plus":         "qwen3.6-plus",
-  "qwen3.6-flash":        "qwen3.6-flash",
-  "qwen3.5-flash":        "qwen3.5-flash",
-  // Third-party models on Qwen Cloud
-  "deepseek-v4-pro":      "deepseek-v4-pro",
-  "deepseek-v4-flash":    "deepseek-v4-flash",
-  "kimi-k2.7-code":       "kimi-k2.7-code",
-  "glm-5.2":              "glm-5.2",
-  "minimax-m2.5":         "minimax-m2.5",
-};
+const MODEL_MAP: Record<string, string> = {};
 
 const AVAILABLE_MODELS = [
-  // Qwen — newest first
-  { id: "qwen3.8-max-preview", name: "Qwen 3.8 Max (Preview)" },
-  { id: "qwen3.7-max",         name: "Qwen 3.7 Max" },
-  { id: "qwen3.7-plus",        name: "Qwen 3.7 Plus (Recommended)" },
-  { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview" },
-  { id: "qwen3.6-plus",        name: "Qwen 3.6 Plus" },
-  { id: "qwen3.6-flash",       name: "Qwen 3.6 Flash (Fallback)" },
-  { id: "qwen3.5-flash",       name: "Qwen 3.5 Flash" },
-  // Third-party
-  { id: "deepseek-v4-pro",     name: "DeepSeek V4 Pro" },
-  { id: "deepseek-v4-flash",   name: "DeepSeek V4 Flash" },
-  { id: "kimi-k2.7-code",      name: "Kimi K2.7 Code" },
-  { id: "glm-5.2",             name: "GLM 5.2" },
-  { id: "minimax-m2.5",        name: "MiniMax M2.5" },
+  { id: "openai/gpt-5.4-mini", name: "GPT-5.4 mini", provider: "OpenAI", price: "$0.75/M input · $4.50/M output", toolCalls: true },
+  { id: "openai/gpt-5.4-nano", name: "GPT-5.4 nano", provider: "OpenAI", price: "Low cost", toolCalls: true },
+  { id: "openai/gpt-4.1-mini", name: "GPT-4.1 mini", provider: "OpenAI", price: "Low cost", toolCalls: true },
+  { id: "openai/gpt-4.1-nano", name: "GPT-4.1 nano", provider: "OpenAI", price: "Lowest cost", toolCalls: true },
+  { id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", provider: "Google", price: "Low cost", toolCalls: true },
+  { id: "xai/grok-4.1-fast", name: "Grok 4.1 Fast", provider: "xAI", price: "Fast", toolCalls: true },
+  { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5", provider: "Anthropic", price: "Fast", toolCalls: true },
+  { id: "openai/gpt-5.4", name: "GPT-5.4", provider: "OpenAI", price: "Higher cost", toolCalls: true },
+  { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", provider: "Anthropic", price: "Higher cost", toolCalls: true },
+  { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", provider: "Google", price: "Higher cost", toolCalls: true },
 ];
 
 type AgentTaskIntent =
@@ -468,17 +443,14 @@ async function streamViaBun(
   });
 }
 
-async function streamViaBackend(
+async function streamViaVercel(
   sessionId: string,
   requestId: string,
-  sessionToken: string,
+  apiKey: string,
   model: string,
   systemMsg: string,
 ) {
-  // Keep the existing backend streaming path for cloud users
-  // (API key stays on backend, frontend streams via SSE)
-  // This reuses the old streamChatBackend + manual loop approach
-  const { streamChatBackend } = await import("@/lib/qwenClient");
+  const { streamChatVercel } = await import("@/lib/aiGatewayClient");
   const { TOOL_DEFINITIONS } = await import("@/lib/toolDefinitions");
 
   const session = useAgentStore.getState().sessions.find((s) => s.id === sessionId);
@@ -500,12 +472,11 @@ async function streamViaBackend(
     ],
   }));
 
-  // Build messages for backend (using the backend's message format)
-  // Backend uses Anthropic message format - build messages inline
-  const qwenMessages: Message[] = [];
+  // Build provider-neutral messages inline for Vercel's OpenAI-compatible API.
+  const gatewayMessages: Message[] = [];
 
   // Inject context
-  qwenMessages.push({
+  gatewayMessages.push({
     role: "user",
     content: `[Timeline context]\n${getTimelineContext()}\n\n[Media library]\n${getMediaContext()}`,
   });
@@ -526,7 +497,7 @@ async function streamViaBackend(
         blocks.push({ type: "text", text: `[The user referenced media inline: ${msg.mentions.filter((m) => m.imageDataUrl).map((m) => m.name).join(", ")}]` });
       }
       blocks.push({ type: "text", text: msg.content });
-      qwenMessages.push({ role: "user", content: blocks });
+      gatewayMessages.push({ role: "user", content: blocks });
     } else {
       const blocks: any[] = [];
       if (msg.content) blocks.push({ type: "text", text: msg.content });
@@ -541,7 +512,7 @@ async function streamViaBackend(
           }
         }
       }
-      qwenMessages.push({ role: "assistant", content: blocks });
+      gatewayMessages.push({ role: "assistant", content: blocks });
     }
   }
 
@@ -553,8 +524,8 @@ async function streamViaBackend(
     while (maxToolRounds > 0) {
       maxToolRounds--;
 
-      const stream = streamChatBackend(sessionToken, {
-        messages: qwenMessages,
+      const stream = streamChatVercel(apiKey, {
+        messages: gatewayMessages,
         tools: TOOL_DEFINITIONS,
         model,
         system: systemMsg,
@@ -603,12 +574,12 @@ async function streamViaBackend(
 
           assistantContent = "";
 
-          // Add tool results to qwenMessages for next round
+          // Add tool results to the gateway conversation for the next round
           for (const r of results) {
-            qwenMessages.push({ role: "assistant", content: [
+            gatewayMessages.push({ role: "assistant", content: [
               { type: "tool_use", id: r.id, name: r.name, input: JSON.parse(r.inputJSON || "{}") },
             ]});
-            qwenMessages.push({ role: "user", content: [
+            gatewayMessages.push({ role: "user", content: [
               { type: "tool_result", tool_use_id: r.id, content: r.result.content, is_error: r.result.isError },
             ]});
           }
@@ -639,7 +610,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   draft: "",
   isStreaming: false,
   streamError: null,
-  model: localStorage.getItem("filmidi_agent_model") ?? "qwen3.7-plus",
+  model: localStorage.getItem("filmidi_agent_model") ?? "openai/gpt-5.4-mini",
   errorCount: 0,
   agentEditHistory: [],
   agentTurn: 0,
@@ -694,14 +665,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const state = get();
     if (!text.trim() || state.isStreaming) return;
 
-    const apiKey = await getApiKey();
-    const account = useAccountStore.getState();
-    const isBackendUser = account.isSignedIn();
-    if (!apiKey && !isBackendUser) {
-      set({
-        streamError:
-          "No API key configured. Set it in Settings > Agent or sign in with Google to use the agent.",
-      });
+    const apiKey = await getSecureApiKey();
+    if (!apiKey) {
+      set({ streamError: "Add a Vercel AI Gateway API key in Settings > Agent to use chat. Timeline editing through MCP remains available without a key." });
       return;
     }
 
@@ -755,9 +721,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         ).join("\n")
       : "";
 
-    const effectiveAudioMode = (apiKey || isBackendUser)
-      ? "cloud"
-      : useSettingsStore.getState().audioProcessingMode;
+    const effectiveAudioMode = useSettingsStore.getState().audioProcessingMode;
 
     const baseSystemMsg = `You are a creative AI assistant connected to Filmidi, an AI-native video editor. Help the user build and edit their project by calling the tools available to you.
 
@@ -793,14 +757,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - Costs real money and is not undoable. Propose the prompt, model, duration, and aspect ratio, then wait for confirmation before calling generate_video, generate_image, or generate_audio.
 - Generated assets are automatically imported into the media library. Use add_clips to place them on the timeline.
 - Available chat models: use list_models type='chat' to see all text models. The agent dropdown shows common options.
-- For music generation, use fun-music models with prompt describing style/mood. For TTS, use qwen3-tts-flash or cosyvoice models.
+- For music generation, use the available Vercel model catalog or search_web_media for licensed music. For TTS, use a Vercel speech model.
 - Available models across all types: use list_models to discover image, video, audio, and upscale models.
 - For internet music, sound effects, stock images, or video, use search_web_media when the user asks for web media or when no suitable generation model is available. Choose a direct downloadable result, call import_media with its URL, then call add_clips with the exact requested startFrame and durationFrames. You may use import_media with addToTimeline=true for a single placement. Do not stop after searching or importing; finish by placing the asset on the timeline.
 - For SFX/music requested at a transcript moment, first get the transcript/timeline frame, then search_web_media type='audio', import the selected result, and add it on an audio track at that frame. Preserve existing dialogue by using the collision-aware track allocation.
 - Web search/import is a free-media workflow and does not need generation confirmation. When the user directly asks to add a riser, SFX, or background music, complete the search, import, and timeline placement in the same turn.
 
 # Audio Processing
-- Audio processing mode is set to "${effectiveAudioMode}". In "local" mode, transcription and captions are unavailable - tell the user to switch to Cloud mode in Settings > Audio Processing. In "cloud" mode, use Qwen ASR for transcription. Audio denoising uses local RNNoise WASM in both modes.
+- Audio processing mode is set to "${effectiveAudioMode}". Cloud transcription and captions require the Vercel API key; audio denoising uses local RNNoise WASM in both modes.
 - To add captions: call get_timeline first. Only call extract_audio when the selected video has no linked audio layer; otherwise reuse the existing audio layer and call add_captions on it.
 - extract_audio creates a linked audio layer with the same timing. Deleting or moving the video also affects the linked audio.
 - Captions default to a bottom-safe position chosen from the project aspect ratio: lower for landscape, slightly higher for square and portrait formats so wrapped lines stay inside the frame. Let add_captions choose the position unless the user asks for a specific placement; use centerX/centerY for an explicit override.
@@ -820,16 +784,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const intent = detectAgentIntent(cleaned, mentions);
     const systemMsg = buildSystemPrompt(baseSystemMsg, intent, editHistoryText);
 
-    // Route: cloud users → backend API (key on server), direct users → Bun IPC (key in Bun)
-    const useBackend = isBackendUser && account.sessionToken;
-
-    if (useBackend) {
-      // Backend path: key stays on server, frontend streams via SSE
-      await streamViaBackend(sessionId, requestId, account.sessionToken!, model, systemMsg);
-    } else {
-      // Direct path: key stays in Bun, agent loop runs in Bun
-      await streamViaBun(sessionId, requestId, model, systemMsg);
-    }
+    await streamViaVercel(sessionId, requestId, apiKey, model, systemMsg);
   },
 
   cancelStream: () => {

@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 import { transcribeAudio } from "@/lib/cloudTranscription";
 import { getSecureApiKey } from "@/lib/secureApiKey";
 import { useSettingsStore } from "@/store/useSettingsStore";
-import { useAccountStore } from "@/store/useAccountStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
 
 interface Speaker {
@@ -40,7 +39,7 @@ export function SpeechTab() {
 
     const settingsMode = useSettingsStore.getState().audioProcessingMode;
     const apiKey = await getSecureApiKey();
-    const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
+    const hasCloudAccess = !!apiKey;
     const effectiveMode = hasCloudAccess ? "cloud" : settingsMode;
 
     if (effectiveMode !== "cloud") {
@@ -50,7 +49,7 @@ export function SpeechTab() {
     }
 
     if (!hasCloudAccess) {
-      setIdentifyError("No API key set and not signed in. Configure in the Agent panel first.");
+      setIdentifyError("Add a Vercel AI Gateway API key in Settings > Agent first.");
       setIsIdentifying(false);
       return;
     }

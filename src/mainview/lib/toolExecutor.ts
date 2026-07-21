@@ -2,7 +2,6 @@ import { useEditorStore } from "@videoflow/react-video-editor";
 import { commands } from "@videoflow/react-video-editor";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
-import { useAccountStore } from "@/store/useAccountStore";
 import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useProjectSaveStore } from "@/store/useProjectSaveStore";
@@ -10,17 +9,28 @@ import { useGenerationStore } from "@/store/useGenerationStore";
 import { transcribeAudio } from "./cloudTranscription";
 import { logTranscript } from "./transcriptLogger";
 import { requestNativeMedia } from "./nativeMediaBridge";
-import { getSecureApiKey } from "./secureApiKey";
 import { submitGeneration, waitForTask } from "./generationApi";
 import { getTimelineExportText, saveText, serializeFilmidiPackage } from "./exportHelpers";
 import { findLinkedPartnerIn, getLayerLinkId } from "@/lib/linkUtils";
 import { dbSaveProject } from "./dbIPC";
 import { validateMoveUpdates } from "./timelineMove";
-import { findAvailableTrack, localTrackForKind, normalizeTrackForKind, VIDEO_TRACK_BASE } from "./timelineMove";
+import {
+  buildLinkedMoveUpdates,
+  buildSwapMoveUpdates,
+  buildTimelineMovePlan,
+  expandLinkedLayerIds,
+  findAvailableTrack,
+  getLayerStart,
+  localTrackForKind,
+  normalizeMoveUpdates,
+  normalizeTrackForKind,
+  VIDEO_TRACK_BASE,
+} from "./timelineMove";
 import { storeDataUrl, storeRemoteMedia } from "./mediaStorage";
 import type { LayerJSON, VideoJSON } from "@videoflow/core";
 import { normalizeVideoFlowDocument, validateVideoFlowDocument } from "./videoFlowDocument";
 import { getVideoFlowCapabilities } from "./videoFlowCapabilities";
+import { getSecureApiKey } from "./secureApiKey";
 
 const {
   addLayerCommand,
@@ -161,10 +171,45 @@ function computeDelta(
 
 // ─── CONTEXT HELPERS ──────────────────────────────────────────────
 
+function getTimelineEditUnits(layers: any[], fps: number) {
+  const visited = new Set<string>();
+  return layers
+    .map((layer) => {
+      if (visited.has(layer.id)) return null;
+      const unitIds = expandLinkedLayerIds(layers, [layer.id]);
+      for (const id of unitIds) visited.add(id);
+      const unitLayers = unitIds
+        .map((id) => layers.find((candidate) => candidate.id === id))
+        .filter(Boolean);
+      const starts = unitLayers.map((item) => Math.round(getLayerTiming(item).startTime * fps));
+      const ends = unitLayers.map((item) => {
+        const timing = getLayerTiming(item);
+        const speed = Math.max(Math.abs(timing.speed || 1), MIN_SPEED);
+        return Math.round((timing.startTime + timing.sourceDuration / speed) * fps);
+      });
+      const primary = unitLayers.find((item) => item.type !== "audio") ?? unitLayers[0];
+      const linkId = getLayerLinkId(primary);
+      return {
+        id: linkId ? `link:${linkId}` : primary.id,
+        primaryClipId: primary.id,
+        linkId: linkId ?? null,
+        clipIds: unitIds,
+        types: unitLayers.map((item) => item.type),
+        startFrame: Math.min(...starts),
+        endFrame: Math.max(...ends),
+        tracks: unitLayers.map((item) => ({ clipId: item.id, type: item.type, track: item.track ?? 0 })),
+        source: getLayerSource(primary),
+      };
+    })
+    .filter(Boolean)
+    .sort((a: any, b: any) => a.startFrame - b.startFrame);
+}
+
 export function getTimelineContext(): string {
   const s = useEditorStore.getState();
   const v = s.video;
   const layers = v.layers ?? [];
+  const fps = v.fps ?? 30;
   const selected = s.selection.layerIds;
   return JSON.stringify({
     fps: v.fps,
@@ -176,6 +221,7 @@ export function getTimelineContext(): string {
     canGenerate: true,
     layerCount: layers.length,
     selectedLayerIds: selected,
+    editUnits: getTimelineEditUnits(layers, fps),
     tracks: (v.tracks ?? []).map((t: { name?: string; enabled?: boolean }, i: number) => ({
       index: i,
       name: t.name ?? `Track ${i + 1}`,
@@ -1258,41 +1304,48 @@ async function executeToolInternal(
       case "move_clips": {
         const clips = input.clips as Array<Record<string, unknown>>;
         if (!clips || clips.length === 0) return JSON.stringify({ error: "No clips provided" });
-        const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
+        const mode = String(input.mode ?? "move") as "move" | "swap" | "reorder";
         const allLayers = editor.video.layers ?? [];
         const updates: Array<{ id: string; startTime: number; track?: number }> = [];
         const seenIds = new Set<string>();
-        for (const c of clips) {
-          const layerId = c.layerId as string;
-          const startTime = Math.max(0, c.startTime as number);
-          const track = c.track !== undefined ? Math.max(0, c.track as number) : undefined;
-          if (!seenIds.has(layerId)) {
-            updates.push({ id: layerId, startTime, track });
-            seenIds.add(layerId);
+
+        if (mode === "swap") {
+          const first = clips[0];
+          const sourceId = first.layerId as string;
+          const targetId = (first.targetLayerId ?? first.beforeLayerId ?? first.afterLayerId ?? clips[1]?.layerId) as string | undefined;
+          if (!sourceId || !targetId) return JSON.stringify({ error: "swap mode requires layerId and targetLayerId, or two clip entries" });
+          for (const update of buildSwapMoveUpdates(allLayers, sourceId, targetId)) {
+            if (seenIds.has(update.id)) continue;
+            updates.push(update);
+            seenIds.add(update.id);
           }
-          // Also move linked partner by the same delta
-          const partner = findLinkedPartnerIn(allLayers, layerId);
-          if (partner && !seenIds.has(partner.id)) {
-            const actualStart = (allLayers.find((l: any) => l.id === layerId))?.settings?.startTime ?? 0;
-            const delta = startTime - actualStart;
-            const origStart = partner.settings?.startTime ?? 0;
-            const originalTrack = (allLayers.find((l: any) => l.id === layerId))?.track ?? 0;
-            const trackDelta = track === undefined ? 0 : track - originalTrack;
-            updates.push({
-              id: partner.id,
-              startTime: Math.max(0, origStart + delta),
-              track: Math.max(0, Math.floor((partner.track ?? 0) + trackDelta)),
-            });
-            seenIds.add(partner.id);
+        } else {
+          for (const c of clips) {
+            const layerId = c.layerId as string;
+            const layer = allLayers.find((candidate: any) => candidate.id === layerId);
+            if (!layer) continue;
+            const startTime = c.startTime === undefined
+              ? getLayerStart(layer)
+              : Math.max(0, Number(c.startTime));
+            const track = c.track !== undefined ? Number(c.track) : undefined;
+            const planned = mode === "reorder"
+              ? buildTimelineMovePlan(allLayers, layerId, startTime, track, "swap").updates
+              : buildLinkedMoveUpdates(allLayers, layerId, startTime, track);
+            for (const update of planned) {
+              if (seenIds.has(update.id)) continue;
+              updates.push(update);
+              seenIds.add(update.id);
+            }
           }
         }
-        const validation = validateMoveUpdates(allLayers, updates);
+        const normalizedUpdates = normalizeMoveUpdates(allLayers, updates);
+        const validation = validateMoveUpdates(allLayers, normalizedUpdates);
         if (!validation.ok) {
           return JSON.stringify({ error: validation.reason, layerId: validation.layerId, moved: [] });
         }
-        await moveLayersCommand(commit, updates);
+        await moveLayersCommand(commit, normalizedUpdates);
         refreshPreview();
-        return JSON.stringify({ moved: updates });
+        return JSON.stringify({ moved: normalizedUpdates, mode });
       }
 
       case "split_clips": {
@@ -1443,11 +1496,8 @@ async function executeToolInternal(
         const minPauseSeconds = Math.max(0.15, Number(input.minPauseSeconds ?? 0.5));
         const language = input.language as string | undefined;
 
-        const apiKey = await getSecureApiKey();
-        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
-        if (!hasCloudAccess) {
-          return JSON.stringify({ error: "Qwen API key or Filmidi Pro account required for transcription." });
-        }
+        const vercelKey = await getSecureApiKey();
+        if (!vercelKey) return JSON.stringify({ error: "vercel_api_key_required", action: "open_settings" });
 
         const { findLinkedPartnerIn } = await import("@/lib/linkUtils");
         const { getCachedTranscript, setCachedTranscript } = await import("./transcriptCache");
@@ -1473,7 +1523,7 @@ async function executeToolInternal(
           let transcript = await getCachedTranscript(source, language);
           if (!transcript) {
             try {
-              transcript = await transcribeAudio(source, apiKey || "", { language });
+              transcript = await transcribeAudio(source, "", { language });
               await setCachedTranscript(source, transcript, language);
             } catch (err) {
               logTranscript("warn", "remove_silence", "transcription failed", {
@@ -1800,14 +1850,8 @@ async function executeToolInternal(
           return JSON.stringify({ error: "No audio/video clips found for captioning." });
         }
 
-        // Get API key or backend status — if either is present, cloud mode is available
-        const apiKey = (await getSecureApiKey());
-        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
-        const mode = hasCloudAccess ? "cloud" : settingsMode;
-
-        if (mode === "local" || !hasCloudAccess) {
-          return JSON.stringify({ error: "A Qwen API key or Filmidi Pro account is required for captions. Add a key in Settings > Agent." });
-        }
+        const vercelKey = await getSecureApiKey();
+        if (!vercelKey) return JSON.stringify({ error: "vercel_api_key_required", action: "open_settings" });
 
         logTranscript("info", "add_captions", "start", {
           clipIds: targetClipIds ?? "entire timeline",
@@ -1867,7 +1911,7 @@ async function executeToolInternal(
           let transcript = await getCachedTranscript(source, language);
           if (!transcript) {
             try {
-              transcript = await transcribeAudio(source, apiKey || "", { language });
+              transcript = await transcribeAudio(source, "", { language });
               await setCachedTranscript(source, transcript, language);
               logTranscript("info", "add_captions", "transcribed clip", {
                 clipId: layer.id,
@@ -2015,10 +2059,9 @@ async function executeToolInternal(
 
         if (!words && !matches) return JSON.stringify({ error: "Provide words (indices) or matches (tokens) to remove" });
 
-        // First, get the transcript to resolve word indices
-        const apiKey = (await getSecureApiKey());
-        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
-        if (!hasCloudAccess) return JSON.stringify({ error: "Qwen API key or Filmidi Pro account required for transcription." });
+        // First, get the transcript to resolve word indices.
+        const vercelKey = await getSecureApiKey();
+        if (!vercelKey) return JSON.stringify({ error: "vercel_api_key_required", action: "open_settings" });
 
 
 
@@ -2040,7 +2083,7 @@ async function executeToolInternal(
           let transcript = await getCachedTranscript(source);
           if (!transcript) {
             try {
-              transcript = await transcribeAudio(source, apiKey || "");
+              transcript = await transcribeAudio(source, "");
               await setCachedTranscript(source, transcript);
             } catch { continue; }
           }
@@ -2573,14 +2616,8 @@ async function executeToolInternal(
           return JSON.stringify({ error: "No audio/video clips found to transcribe." });
         }
 
-        // Get API key or backend status — if either is present, cloud mode is available
-        const apiKey = (await getSecureApiKey());
-        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
-        const mode = hasCloudAccess ? "cloud" : settingsMode;
-
-        if (mode === "local" || !hasCloudAccess) {
-          return JSON.stringify({ error: "A Qwen API key or Filmidi Pro account is required for transcription. Add a key in Settings > Agent." });
-        }
+        const vercelKey = await getSecureApiKey();
+        if (!vercelKey) return JSON.stringify({ error: "vercel_api_key_required", action: "open_settings" });
 
 
         logTranscript("info", "get_transcript", "start", {
@@ -2605,7 +2642,7 @@ async function executeToolInternal(
           if (!transcript) {
             // Transcribe via cloud ASR
             try {
-              transcript = await transcribeAudio(source, apiKey || "", { language });
+              transcript = await transcribeAudio(source, "", { language });
               await setCachedTranscript(source, transcript, language);
               logTranscript("info", "get_transcript", "transcribed clip", {
                 clipId: layer.id,
@@ -3097,14 +3134,11 @@ async function executeToolInternal(
       case "generate_video":
       case "generate_image":
       case "generate_audio": {
-        const apiKey = await getSecureApiKey();
-        const hasCloudAccess = !!apiKey || useAccountStore.getState().isSignedIn();
-        if (!hasCloudAccess) {
-          return JSON.stringify({ error: "No API key configured. Add one in Settings > Agent, or sign in with Google." });
-        }
+        const vercelKey = await getSecureApiKey();
+        if (!vercelKey) return JSON.stringify({ error: "vercel_api_key_required", action: "open_settings" });
 
         const prompt = input.prompt as string;
-        const model = (input.model as string) || (name === "generate_image" ? "qwen-image-2.0-pro" : "");
+        const model = (input.model as string) || (name === "generate_image" ? "google/imagen-4.0-generate-001" : "");
         const duration = input.duration as number | undefined;
         const aspectRatio = input.aspectRatio as string | undefined;
         const resolution = input.resolution as string | undefined;
@@ -3146,10 +3180,10 @@ async function executeToolInternal(
         }
 
         try {
-          const genResult = await submitGeneration(apiKey || "", type, params as any);
+          const genResult = await submitGeneration(vercelKey, type, params as any);
 
           if (genResult.taskId) {
-            const pollResult = await waitForTask(apiKey || "", genResult.taskId);
+            const pollResult = await waitForTask(vercelKey, genResult.taskId);
             if (pollResult.status === "succeeded" && pollResult.resultUrls?.length) {
               const url = pollResult.resultUrls[0];
               // Auto-import to media library
@@ -3224,50 +3258,54 @@ async function executeToolInternal(
         return JSON.stringify({ status: "cancelled", note: "Generation cancellation not implemented yet — the task will complete in the background." });
       }
 
-      case "upscale_media": return JSON.stringify({ error: "Upscaling requires HitPaw backend — not available with direct API key. Sign in with Google to use upscaling." });
-      case "list_models": return JSON.stringify({
+      case "upscale_media": return JSON.stringify({ error: "Upscaling is not available in this build." });
+      case "list_models": {
+        const vercelKey = await getSecureApiKey();
+        if (vercelKey) {
+          try {
+            const response = await fetch("https://ai-gateway.vercel.sh/v1/models", { headers: { Authorization: `Bearer ${vercelKey}` } });
+            if (response.ok) {
+              const body = await response.json() as { data?: Array<Record<string, unknown>> };
+              const models = (body.data ?? []).map((model) => ({
+                id: String(model.id ?? ""),
+                name: String(model.name ?? model.id ?? ""),
+                type: String(model.type ?? model.modelType ?? "language"),
+                description: String(model.description ?? "Vercel AI Gateway model"),
+              })).filter((model) => model.id);
+              return JSON.stringify({ models, source: "vercel-ai-gateway" });
+            }
+          } catch {}
+        }
+        return JSON.stringify({
         models: [
-          // Chat — Qwen
-          { id: "qwen3.8-max-preview", name: "Qwen 3.8 Max Preview", type: "chat", description: "Newest flagship, preview" },
-          { id: "qwen3.7-max", name: "Qwen 3.7 Max", type: "chat", description: "Highest intelligence, best for complex tasks" },
-          { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", type: "chat", description: "Balanced performance and speed" },
-          { id: "qwen3.6-max-preview", name: "Qwen 3.6 Max Preview", type: "chat", description: "Strong reasoning and coding" },
-          { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", type: "chat", description: "Strong reasoning with vision" },
-          { id: "qwen3.6-flash", name: "Qwen 3.6 Flash", type: "chat", description: "Fast and cost-effective" },
-          { id: "qwen3.5-flash", name: "Qwen 3.5 Flash", type: "chat", description: "Economical, good for simple tasks" },
-          // Chat — Third-party on Qwen Cloud
-          { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", type: "chat", description: "High-performance reasoning" },
-          { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", type: "chat", description: "Fast reasoning" },
-          { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", type: "chat", description: "Code-specialized" },
-          { id: "glm-5.2", name: "GLM 5.2", type: "chat", description: "General purpose" },
-          { id: "minimax-m2.5", name: "MiniMax M2.5", type: "chat", description: "General purpose" },
+          // Chat — Vercel AI Gateway
+          { id: "openai/gpt-5.4-mini", name: "GPT-5.4 mini", type: "chat", description: "Lower-cost tool-calling agent" },
+          { id: "openai/gpt-5.4-nano", name: "GPT-5.4 nano", type: "chat", description: "Lowest-cost tool-calling agent" },
+          { id: "openai/gpt-4.1-mini", name: "GPT-4.1 mini", type: "chat", description: "Low-cost tool-calling agent" },
+          { id: "openai/gpt-4.1-nano", name: "GPT-4.1 nano", type: "chat", description: "Lowest-cost tool-calling agent" },
+          { id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", type: "chat", description: "Low-cost tool-calling agent" },
+          { id: "xai/grok-4.1-fast", name: "Grok 4.1 Fast", type: "chat", description: "Fast tool-calling agent" },
+          { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5", type: "chat", description: "Fast tool-calling agent" },
+          { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", type: "chat", description: "Balanced editing and reasoning" },
+          { id: "openai/gpt-5.4", name: "GPT-5.4", type: "chat", description: "General reasoning" },
+          { id: "xai/grok-4.5", name: "Grok 4.5", type: "chat", description: "Fast reasoning" },
+          { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", type: "chat", description: "Multimodal reasoning" },
           // Image
-          { id: "qwen-image-2.0-pro", name: "Qwen-Image 2.0 Pro", type: "image", description: "High-quality image generation" },
-          { id: "qwen-image-2.0-turbo", name: "Qwen-Image 2.0 Turbo", type: "image", description: "Fast image generation" },
-          { id: "wan2.7-image-pro", name: "Wan 2.7 Image Pro", type: "image", description: "High-quality text-to-image" },
-          { id: "wan2.6-t2i", name: "Wan 2.6 T2I", type: "image", description: "Efficient text-to-image" },
-          { id: "wan2.7-t2v", name: "Wan 2.7 T2V", type: "video", description: "Text-to-video 5s" },
-          { id: "wan2.7-i2v", name: "Wan 2.7 I2V", type: "video", description: "Image-to-video 5s" },
-          { id: "wan2.7-r2v", name: "Wan 2.7 R2V", type: "video", description: "Reference-to-video 5s" },
-          { id: "wan2.7-videoedit", name: "Wan 2.7 Video Edit", type: "video", description: "Video-to-video editing" },
-          { id: "happyhorse-1.1-t2v", name: "HappyHorse 1.1 T2V", type: "video", description: "High-quality text-to-video" },
-          { id: "happyhorse-1.1-i2v", name: "HappyHorse 1.1 I2V", type: "video", description: "Image-to-video" },
-          { id: "happyhorse-1.1-r2v", name: "HappyHorse 1.1 R2V", type: "video", description: "Reference-to-video" },
-          { id: "qwen3-tts-flash", name: "Qwen3 TTS Flash", type: "audio", description: "Fast text-to-speech" },
-          { id: "qwen3-tts-instruct-flash", name: "Qwen3 TTS Instruct", type: "audio", description: "Instruction-following TTS" },
-          { id: "cosyvoice-v3-plus", name: "CosyVoice v3 Plus", type: "audio", description: "High-quality TTS" },
-          { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", type: "audio", description: "Fast TTS" },
-          { id: "fun-music-v1", name: "FunMusic v1", type: "audio", description: "Music generation" },
-          { id: "fun-music-preview", name: "FunMusic Preview", type: "audio", description: "Music generation preview" },
-          // Transcription
-          { id: "fun-asr", name: "Fun ASR", type: "transcription", description: "Batch file transcription with speaker diarization" },
-          { id: "fun-asr-realtime", name: "Fun ASR Realtime", type: "transcription", description: "Real-time ASR with hotwords" },
-          { id: "qwen3-asr-flash-realtime", name: "Qwen3 ASR Flash", type: "transcription", description: "Real-time ASR with emotion recognition" },
-          { id: "qwen3-asr-flash-filetrans", name: "Qwen3 ASR File", type: "transcription", description: "Batch file transcription" },
+          { id: "google/imagen-4.0-generate-001", name: "Imagen 4", type: "image", description: "High-quality image generation" },
+          { id: "google/imagen-4.0-fast-generate", name: "Imagen 4 Fast", type: "image", description: "Fast image generation" },
+          { id: "bfl/flux-2-pro", name: "Flux 2 Pro", type: "image", description: "High-quality image generation" },
+          { id: "bfl/flux-2-flex", name: "Flux 2 Flex", type: "image", description: "Flexible image generation" },
+          { id: "google/veo-3.1-generate-001", name: "Veo 3.1", type: "video", description: "Text-to-video generation" },
+          { id: "klingai/kling-v2.6-i2v", name: "Kling v2.6 I2V", type: "video", description: "Image-to-video generation" },
+          { id: "xai/grok-tts", name: "Grok TTS", type: "audio", description: "Text-to-speech" },
+          { id: "xai/grok-stt", name: "Grok STT", type: "transcription", description: "Speech-to-text" },
           // Upscale
           { id: "hitpaw-upscaler-v2", name: "HitPaw Upscaler v2", type: "upscale", description: "AI upscaling" },
         ],
+        source: "built-in-fallback",
+        note: vercelKey ? "Vercel model discovery failed; showing fallback catalog." : "Add a Vercel AI Gateway key for live model discovery.",
       });
+      }
 
       // ─── PROJECT ────────────────────────────────────────────────
       case "set_project_settings": {

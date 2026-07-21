@@ -140,7 +140,11 @@ let asrPendingResolvers = new Map<string, { resolve: (url: string) => void; reje
  * Upload audio blob data to a public URL via Bun IPC (tempfile.org).
  * Used by cloudTranscription.ts when the source is a blob: URL.
  */
-export function uploadAudioForASR(base64Data: string, mimeType: string): Promise<string> {
+export function uploadAudioForASR(
+  base64Data: string,
+  mimeType: string,
+  options?: { backendUrl?: string; sessionToken?: string },
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const bridge = (window as any).__electrobunBunBridge;
     if (!bridge) {
@@ -219,6 +223,8 @@ export function uploadAudioForASR(base64Data: string, mimeType: string): Promise
           requestId,
           base64Data: uploadBase64,
           mimeType: uploadBlob.type || "audio/wav",
+          backendUrl: options?.backendUrl,
+          sessionToken: options?.sessionToken,
         }));
       } catch (error) {
         clearTimeout(timer);

@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { submitGeneration, waitForTask, type GenerationType, type GenerationParams } from "@/lib/generationApi";
-import { useAccountStore } from "./useAccountStore";
-import { getSecureApiKey, hasCachedApiKey } from "@/lib/secureApiKey";
+import { getSecureApiKey } from "@/lib/secureApiKey";
 
 export type { GenerationType };
 
@@ -91,36 +90,23 @@ interface GenerationState {
 }
 
 const VIDEO_MODELS = [
-  { id: "wan2.7-t2v", name: "Wan 2.7 T2V", type: "video" as const },
-  { id: "wan2.7-i2v", name: "Wan 2.7 I2V", type: "video" as const },
-  { id: "wan2.7-r2v", name: "Wan 2.7 R2V", type: "video" as const },
-  { id: "wan2.7-videoedit", name: "Wan 2.7 Video Edit", type: "video" as const },
-  { id: "happyhorse-1.1-t2v", name: "HappyHorse 1.1 T2V", type: "video" as const },
-  { id: "happyhorse-1.1-i2v", name: "HappyHorse 1.1 I2V", type: "video" as const },
-  { id: "happyhorse-1.1-r2v", name: "HappyHorse 1.1 R2V", type: "video" as const },
+  { id: "google/veo-3.1-generate-001", name: "Veo 3.1", type: "video" as const },
+  { id: "klingai/kling-v2.6-i2v", name: "Kling v2.6 I2V", type: "video" as const },
 ];
 
 const IMAGE_MODELS = [
-  { id: "qwen-image-2.0-pro", name: "Qwen-Image 2.0 Pro", type: "image" as const },
-  { id: "qwen-image-2.0-turbo", name: "Qwen-Image 2.0 Turbo", type: "image" as const },
-  { id: "wan2.7-image-pro", name: "Wan 2.7 Image Pro", type: "image" as const },
-  { id: "wan2.6-t2i", name: "Wan 2.6 T2I", type: "image" as const },
+  { id: "google/imagen-4.0-generate-001", name: "Imagen 4", type: "image" as const },
+  { id: "google/imagen-4.0-fast-generate", name: "Imagen 4 Fast", type: "image" as const },
+  { id: "bfl/flux-2-pro", name: "Flux 2 Pro", type: "image" as const },
+  { id: "bfl/flux-2-flex", name: "Flux 2 Flex", type: "image" as const },
 ];
 
 const AUDIO_MODELS = [
-  { id: "qwen3-tts-flash", name: "Qwen3 TTS Flash", type: "audio" as const },
-  { id: "qwen3-tts-instruct-flash", name: "Qwen3 TTS Instruct", type: "audio" as const },
-  { id: "cosyvoice-v3-plus", name: "CosyVoice v3 Plus", type: "audio" as const },
-  { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", type: "audio" as const },
-  { id: "fun-music-v1", name: "FunMusic v1", type: "audio" as const },
-  { id: "fun-music-preview", name: "FunMusic Preview", type: "audio" as const },
+  { id: "xai/grok-tts", name: "Grok TTS", type: "audio" as const },
 ];
 
 const TRANSCRIPTION_MODELS = [
-  { id: "fun-asr", name: "Fun ASR", type: "transcription" as const },
-  { id: "fun-asr-realtime", name: "Fun ASR Realtime", type: "transcription" as const },
-  { id: "qwen3-asr-flash-realtime", name: "Qwen3 ASR Flash Realtime", type: "transcription" as const },
-  { id: "qwen3-asr-flash-filetrans", name: "Qwen3 ASR File", type: "transcription" as const },
+  { id: "xai/grok-stt", name: "Grok STT", type: "transcription" as const },
 ];
 
 const UPSCALE_MODELS = [
@@ -132,13 +118,7 @@ const THIRD_PARTY_MODELS = new Set<string>();
 export { VIDEO_MODELS, IMAGE_MODELS, AUDIO_MODELS, THIRD_PARTY_MODELS };
 
 export function getModelsForType(type: GenerationType) {
-  const isDirect = !useAccountStore.getState().isSignedIn();
-  const all = getTypeModels(type);
-  if (isDirect) {
-    // Direct mode (own API key) — hide third-party models that need the backend proxy
-    return all.filter((m) => !THIRD_PARTY_MODELS.has(m.id));
-  }
-  return all;
+  return getTypeModels(type);
 }
 
 function getTypeModels(type: GenerationType) {
@@ -156,27 +136,17 @@ export function getCostForConfig(
   resolution: string,
 ): number | null {
   const videoRates: Record<string, Record<string, number>> = {
-    "wan2.7-t2v": { "720p": 5, "1080p": 12 },
-    "wan2.7-i2v": { "720p": 5, "1080p": 12 },
-    "wan2.7-r2v": { "720p": 5, "1080p": 12 },
-    "wan2.7-videoedit": { "720p": 5, "1080p": 12 },
-    "happyhorse-1.1-t2v": { "720p": 4, "1080p": 10 },
-    "happyhorse-1.1-i2v": { "720p": 4, "1080p": 10 },
-    "happyhorse-1.1-r2v": { "720p": 4, "1080p": 10 },
+    "google/veo-3.1-generate-001": { "720p": 5, "1080p": 12 },
+    "klingai/kling-v2.6-i2v": { "720p": 5, "1080p": 12 },
   };
   const imageCredits: Record<string, number> = {
-    "qwen-image-2.0-pro": 8,
-    "qwen-image-2.0-turbo": 3,
-    "wan2.7-image-pro": 10,
-    "wan2.6-t2i": 2,
+    "google/imagen-4.0-generate-001": 8,
+    "google/imagen-4.0-fast-generate": 3,
+    "bfl/flux-2-pro": 10,
+    "bfl/flux-2-flex": 5,
   };
   const audioRates: Record<string, number> = {
-    "qwen3-tts-flash": 5,
-    "qwen3-tts-instruct-flash": 5,
-    "cosyvoice-v3-plus": 8,
-    "cosyvoice-v3-flash": 3,
-    "fun-music-v1": 25,
-    "fun-music-preview": 10,
+    "xai/grok-tts": 5,
   };
 
   if (type === "video") {
@@ -198,10 +168,6 @@ export function getCostForConfig(
 }
 
 const HISTORY_STORAGE_KEY = "filmidi_generation_history";
-
-async function getApiKey(): Promise<string | null> {
-  return getSecureApiKey();
-}
 
 function loadHistory(): GenerationHistoryEntry[] {
   try {
@@ -324,9 +290,9 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
     const state = get();
     if (!state.prompt.trim() || state.isGenerating) return;
 
-    const apiKey = await getApiKey();
-    if (!apiKey) {
-      set({ generationError: "No API key set. Open the Agent panel to set your Qwen API key." });
+    const vercelKey = await getSecureApiKey();
+    if (!vercelKey) {
+      set({ generationError: "Add a Vercel AI Gateway API key in Settings > Agent." });
       return;
     }
 
@@ -367,7 +333,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       };
 
       set({ generationProgress: "Submitting..." });
-      const submitResult = await submitGeneration(apiKey, state.selectedType, params);
+      const submitResult = await submitGeneration(vercelKey, state.selectedType, params);
 
       // Synchronous result (image/audio without async)
       if (submitResult.resultUrl) {
@@ -397,7 +363,7 @@ export const useGenerationStore = create<GenerationState>((set, get) => ({
       if (submitResult.taskId) {
         set({ generationProgress: "Generating..." });
         const result = await waitForTask(
-          apiKey,
+          vercelKey,
           submitResult.taskId,
           (status) => {
             const label = status === "running" ? "Generating..." :

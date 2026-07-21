@@ -1,9 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Settings, ChevronDown, Download } from "lucide-react";
+import { Settings, ChevronDown, Download, KeyRound } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
 import { useExportStore } from "@/store/useExportStore";
 import { useSettingsStore } from "@/store/useSettingsStore";
-import { AccountPopover } from "./AccountPopover";
 
 export function TitleBar() {
   const { projectName, setProjectName } = useAppStore();
@@ -117,8 +116,13 @@ export function TitleBar() {
         <Download size={13} className="text-white/40 hover:text-white/70" />
       </button>
 
-      {/* Account */}
-      <AccountPopover />
+      <button
+        onClick={() => useSettingsStore.getState().openTab("agent")}
+        className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/8 transition-colors electrobun-webkit-app-region-no-drag"
+        title="Vercel API key"
+      >
+        <KeyRound size={13} className="text-white/40 hover:text-white/70" />
+      </button>
     </div>
   );
 }

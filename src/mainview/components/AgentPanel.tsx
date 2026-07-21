@@ -705,7 +705,7 @@ export function AgentPanel() {
                       maxHeight: Math.min(400, rect.top - 20),
                     }}
                   >
-                    <div className="px-3 py-1 text-[9px] text-[#555577] border-b border-white/5 sticky top-0 bg-[#0A0A0A]">{AVAILABLE_MODELS.length} models</div>
+                    <div className="px-3 py-1.5 text-[9px] text-[#777799] border-b border-white/5 sticky top-0 bg-[#0A0A0A]">{AVAILABLE_MODELS.length} tool-call models · lower-cost first</div>
                     {AVAILABLE_MODELS.map((m) => (
                       <button
                         key={m.id}
@@ -714,9 +714,13 @@ export function AgentPanel() {
                           setShowModelPicker(false);
                         }}
                         className={`w-full px-3 py-1.5 text-left text-[11px] cursor-pointer truncate ${model === m.id ? "bg-white/10 text-[#e0e0ee]" : "text-[#aaaacc] hover:bg-white/5"}`}
-                        title={m.name}
+                        title={`${m.provider} · ${m.price}`}
                       >
-                        {m.name}
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className="w-4 h-4 shrink-0 rounded-sm bg-white/10 text-[8px] text-white/70 flex items-center justify-center">{m.provider[0]}</span>
+                          <span className="truncate">{m.name}</span>
+                          <span className="ml-auto shrink-0 text-[9px] text-[#666688]">tools</span>
+                        </span>
                       </button>
                     ))}
                   </div>

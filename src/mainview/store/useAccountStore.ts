@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { signInWithGoogle, fetchSubscription, createCheckoutSession, createPortalUrl } from "@/lib/authClient";
+import { signInWithGoogle, signInWithEmail, registerWithEmail, fetchSubscription, createCheckoutSession, createPortalUrl } from "@/lib/authClient";
 
 export type AuthMode = "direct" | "backend" | "none";
 
@@ -21,6 +21,8 @@ interface AccountState {
   signOut: () => void;
   isSignedIn: () => boolean;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  registerWithEmail: (email: string, password: string, name: string) => Promise<void>;
   loadSubscription: () => Promise<void>;
   checkout: (priceId: string) => Promise<void>;
   manageSubscription: () => Promise<void>;
@@ -114,6 +116,18 @@ export const useAccountStore = create<AccountState>((set, get) => ({
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(msg);
     }
+  },
+
+  signInWithEmail: async (email, password) => {
+    const result = await signInWithEmail(email, password);
+    get().setSession(result.token, result.email, result.name);
+    await get().loadSubscription();
+  },
+
+  registerWithEmail: async (email, password, name) => {
+    const result = await registerWithEmail(email, password, name);
+    get().setSession(result.token, result.email, result.name);
+    await get().loadSubscription();
   },
 
   loadSubscription: async () => {

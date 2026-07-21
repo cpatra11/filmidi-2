@@ -1,4 +1,6 @@
-const BACKEND_URL = "http://localhost:3000";
+import { FILMIDI_BACKEND_URL } from "./backendConfig";
+
+const BACKEND_URL = FILMIDI_BACKEND_URL;
 
 /**
  * Production Google Client ID.
@@ -13,6 +15,31 @@ interface GoogleSignInResult {
   name: string;
 }
 
+export interface EmailAuthResult {
+  token: string;
+  email: string;
+  name: string;
+}
+
+export async function signInWithEmail(email: string, password: string): Promise<EmailAuthResult> {
+  return emailAuth('/login', { email, password });
+}
+
+export async function registerWithEmail(email: string, password: string, name: string): Promise<EmailAuthResult> {
+  return emailAuth('/register', { email, password, name });
+}
+
+async function emailAuth(path: string, body: Record<string, string>): Promise<EmailAuthResult> {
+  const response = await fetch(`${BACKEND_URL}/api/v1/auth${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `Authentication failed (${response.status})`);
+  return data as EmailAuthResult;
+}
+
 function getGoogleClientId(): string {
   return localStorage.getItem("filmidi_google_client_id") || BUILTIN_GOOGLE_CLIENT_ID;
 }
@@ -24,7 +51,7 @@ export async function signInWithGoogle(): Promise<GoogleSignInResult> {
   }
 
   const state = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-  const redirectUri = "http://localhost:3000/api/v1/auth/callback";
+  const redirectUri = `${BACKEND_URL}/api/v1/auth/callback`;
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,

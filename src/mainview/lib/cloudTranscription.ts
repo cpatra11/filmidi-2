@@ -1,15 +1,10 @@
 /**
- * Cloud transcription via DashScope ASR API.
- * Matches Swift's DirectTranscriptionBackend + CloudTranscription.
- *
- * Supports paraformer-realtime-v2 (default, with diarization).
- * Routes through the Filmidi backend when the user is signed in.
+ * Cloud transcription through Vercel AI Gateway.
  */
 
-import { useAccountStore } from "@/store/useAccountStore";
-import { getSecureApiKey } from "./secureApiKey";
 import { logTranscript } from "./transcriptLogger";
 import { getNativeMediaBackend, requestNativeMedia } from "./nativeMediaBridge";
+import { getSecureApiKey } from "./secureApiKey";
 
 export interface TranscriptionWord {
   text: string;
@@ -32,13 +27,10 @@ export interface TranscriptionResult {
   segments: TranscriptionSegment[];
 }
 
-const DASHSCOPE_BASE = "https://dashscope-intl.aliyuncs.com";
-const BACKEND_URL = "http://localhost:3000";
-const ASR_MODEL = "qwen3-asr-flash-filetrans";
+const ASR_MODEL = "xai/grok-stt";
 
 /**
- * Transcribe audio from a URL using cloud ASR.
- * Routes through the Filmidi backend when signed in, otherwise calls DashScope directly.
+ * Transcribe audio from a URL using Vercel AI Gateway.
  */
 export async function transcribeAudio(
   audioUrl: string,
@@ -50,16 +42,16 @@ export async function transcribeAudio(
     diarization?: boolean;
   }
 ): Promise<TranscriptionResult> {
-  const effectiveApiKey = apiKey?.trim() || (await getSecureApiKey()) || "";
   logTranscript("info", "transcribeAudio", "request", {
     url: audioUrl.slice(0, 120),
-    hasApiKey: !!effectiveApiKey,
+    hasVercelKey: !!(apiKey?.trim() || await getSecureApiKey()),
     options,
   });
 
-  // Cloud ASR cannot fetch Filmidi's loopback media server. Upload local
-  // media-server files through the existing ASR bridge, just like blob URLs.
+  // Cloud transcription cannot fetch the editor's loopback media server. Upload local
+  // media-server files as multipart bytes directly to Vercel.
   let resolvedUrl = audioUrl;
+  let localBlob: Blob | null = null;
   let needsUpload = audioUrl.startsWith("blob:");
   try {
     const parsed = new URL(audioUrl);
@@ -68,19 +60,11 @@ export async function transcribeAudio(
     // File paths and custom app URLs are handled by the native fallback.
   }
   if (needsUpload) {
-    const { uploadAudioForASR } = await import("@/lib/agentIPC");
-    // Upload the bytes directly — DashScope ASR receives a public WAV/MP4 URL.
     const resp = await fetch(audioUrl);
     if (!resp.ok) throw new Error(`Could not read local audio source (${resp.status})`);
     const blob = await resp.blob();
-    const dataUrl: string = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    const [_, base64] = dataUrl.split(",");
-    resolvedUrl = await uploadAudioForASR(base64, blob.type || "video/mp4");
+    localBlob = blob;
+    resolvedUrl = "local-multipart-source";
     logTranscript("info", "transcribeAudio", "uploaded blob for ASR", {
       source: audioUrl.slice(0, 80),
       resolvedUrl: resolvedUrl.slice(0, 120),
@@ -89,105 +73,14 @@ export async function transcribeAudio(
     });
   }
 
-  const nativeResult = await requestNativeMedia<TranscriptionResult>("transcribe-audio", {
-    audioUrl: resolvedUrl,
-    apiKey: effectiveApiKey,
-    options,
-  });
-  if (nativeResult) {
-    logTranscript("info", "transcribeAudio", "route", { mode: getNativeMediaBackend(), resolvedUrl: resolvedUrl.slice(0, 120) });
-    const parsed = parseTranscriptionResult(nativeResult, options);
-    logTranscript("info", "transcribeAudio", "sidecar result parsed", {
-      transcriptCount: parsed.segments.length,
-      wordCount: parsed.words.length,
-    });
-    return parsed;
-  }
-
-  const account = useAccountStore.getState();
-  const isBackendUser = account.isSignedIn();
-
-  if (isBackendUser && account.sessionToken) {
-    logTranscript("info", "transcribeAudio", "route", { mode: "backend", resolvedUrl: resolvedUrl.slice(0, 120) });
-    return transcribeViaBackend(resolvedUrl, account.sessionToken, options);
-  }
-
-  if (!effectiveApiKey) {
-    throw new Error("No Qwen API key configured. Add one in Settings > Agent.");
-  }
-
-  logTranscript("info", "transcribeAudio", "route", { mode: "bun", resolvedUrl: resolvedUrl.slice(0, 120) });
-  return transcribeViaDashScope(resolvedUrl, effectiveApiKey, options);
+  const effectiveApiKey = apiKey?.trim() || (await getSecureApiKey()) || "";
+  if (!effectiveApiKey) throw new Error("vercel_api_key_required");
+  logTranscript("info", "transcribeAudio", "route", { mode: "vercel", resolvedUrl: resolvedUrl.slice(0, 120) });
+  return transcribeViaVercel(localBlob ?? resolvedUrl, effectiveApiKey, options);
 }
 
-async function transcribeViaBackend(
-  audioUrl: string,
-  sessionToken: string,
-  options?: {
-    language?: string;
-    startSeconds?: number;
-    endSeconds?: number;
-    diarization?: boolean;
-  },
-): Promise<TranscriptionResult> {
-  const submitResp = await fetch(`${BACKEND_URL}/api/v1/transcriptions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${sessionToken}`,
-    },
-    body: JSON.stringify({
-      fileUrl: audioUrl,
-      model: ASR_MODEL,
-      diarization: options?.diarization ?? true,
-    }),
-  });
-
-  if (!submitResp.ok) {
-    const err = await submitResp.text();
-    throw new Error(`Backend transcription submit failed (${submitResp.status}): ${err}`);
-  }
-
-  const submitData = await submitResp.json();
-  const taskId: string | undefined = submitData.taskId;
-  if (!taskId) throw new Error("No taskId in backend transcription response");
-  logTranscript("info", "transcribeAudio", "backend submitted", { taskId });
-
-  // Poll for completion
-  for (let attempt = 0; attempt < 150; attempt++) {
-    await new Promise((r) => setTimeout(r, 2000));
-
-    const pollResp = await fetch(
-      `${BACKEND_URL}/api/v1/transcriptions/${taskId}`,
-      { headers: { Authorization: `Bearer ${sessionToken}` } },
-    );
-
-    if (!pollResp.ok) continue;
-
-    const pollData = await pollResp.json();
-    const status: string = pollData.status;
-    logTranscript("debug", "transcribeAudio", "backend poll", { taskId, attempt: attempt + 1, status });
-
-    if (status === "succeeded") {
-      const parsed = parseTranscriptionResult(pollData.result, options);
-      logTranscript("info", "transcribeAudio", "backend result parsed", {
-        taskId,
-        transcriptCount: parsed.segments.length,
-        wordCount: parsed.words.length,
-      });
-      return parsed;
-    }
-
-    if (status === "failed") {
-      throw new Error(`Backend transcription failed: ${JSON.stringify(pollData)}`);
-    }
-  }
-
-  throw new Error("Backend transcription timed out");
-}
-
-async function transcribeViaDashScope(
-  audioUrl: string,
+async function transcribeViaVercel(
+  audioSource: string | Blob,
   apiKey: string,
   options?: {
     language?: string;
@@ -196,16 +89,36 @@ async function transcribeViaDashScope(
     diarization?: boolean;
   },
 ): Promise<TranscriptionResult> {
-  // Route through Bun IPC to avoid CORS issues
-  const { transcribeOnBun } = await import("@/lib/agentIPC");
-  const resultJson = await transcribeOnBun(audioUrl, apiKey);
-  const resultData = JSON.parse(resultJson) as Record<string, unknown>;
-  const parsed = parseTranscriptionResult(resultData, options);
-  logTranscript("info", "transcribeAudio", "bun result parsed", {
-    transcriptCount: parsed.segments.length,
-    wordCount: parsed.words.length,
+  const sourceBlob = audioSource instanceof Blob ? audioSource : await (async () => {
+    const sourceResp = await fetch(audioSource);
+    if (!sourceResp.ok) throw new Error(`Could not read audio source (${sourceResp.status})`);
+    return sourceResp.blob();
+  })();
+  const form = new FormData();
+  form.append("file", await sourceBlob, "filmidi-transcription-media");
+  form.append("model", ASR_MODEL);
+  form.append("response_format", "verbose_json");
+  form.append("timestamp_granularities[]", "word");
+
+  const response = await fetch("https://ai-gateway.vercel.sh/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
   });
-  return parsed;
+  if (!response.ok) throw new Error(`Vercel transcription failed (${response.status}): ${await response.text()}`);
+
+  const data = await response.json() as any;
+  const words = (data.words ?? []).map((word: any) => ({
+    text: String(word.word ?? word.text ?? ""),
+    start: Number(word.start ?? 0),
+    end: Number(word.end ?? word.start ?? 0),
+  }));
+  const segments = (data.segments ?? []).map((segment: any) => ({
+    text: String(segment.text ?? ""),
+    start: Number(segment.start ?? 0),
+    end: Number(segment.end ?? segment.start ?? 0),
+  }));
+  return { text: String(data.text ?? segments.map((segment: TranscriptionSegment) => segment.text).join(" ")), language: data.language, words, segments };
 }
 
 function parseTranscriptionResult(
@@ -226,7 +139,7 @@ function parseTranscriptionResult(
     const end = ((t.end_time as number) ?? (t.end as number) ?? 0) / 1000;
     const speaker = (t.speaker as string) ?? (t.speaker_id as string) ?? undefined;
 
-    // Words may be at transcript level or nested inside sentences (Fun-ASR format)
+    // Words may be at transcript level or nested inside sentence segments.
     let sentenceWords: Array<Record<string, unknown>> = [];
     const topWords = t.words as Array<Record<string, unknown>> | undefined;
     const sentences = t.sentences as Array<Record<string, unknown>> | undefined;
@@ -286,7 +199,7 @@ function parseTranscriptionResult(
 }
 /**
  * Upload audio blob to a temporary URL for ASR.
- * In web context, we pass the blob URL directly since DashScope accepts URLs.
+ * In web context, return a temporary local URL for native media handling.
  */
 export function audioBlobToUrl(blob: Blob): string {
   return URL.createObjectURL(blob);

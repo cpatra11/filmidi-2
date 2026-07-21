@@ -8,7 +8,7 @@ Filmidi is an AI-native desktop video editor built around a precise, multi-track
   <a href="https://github.com/cpatra11/filmidi-q/releases/latest">View all releases</a>
 </p>
 
-The downloadable build is a macOS Apple Silicon DMG. Add your Qwen Cloud API key from the welcome screen or Settings after installation.
+The downloadable build is a macOS Apple Silicon DMG. Sign in from **Settings > Account** with email/password or Google to connect the agent and AI generation features to the Filmidi backend and Vercel AI Gateway.
 
 ## What It Includes
 
@@ -20,6 +20,7 @@ The downloadable build is a macOS Apple Silicon DMG. Add your Qwen Cloud API key
 - VideoFlow rendering and editing primitives, including properties, keyframes, effects, and transitions where exposed by the editor UI.
 - Native macOS menu actions, optional Swift media sidecar support, and a Bun/VideoFlow fallback for other platforms.
 - Project saving as a self-contained `.filmidi` package.
+- Shared backend AI through the Vercel AI SDK and AI Gateway, with server-side model credentials.
 
 ## Architecture
 
@@ -58,6 +59,8 @@ bun run typecheck
 Use **Save As** to choose a destination folder. Filmidi writes a `.filmidi` project package there and stores the project path, timeline, media manifest, folders, generated assets, captions, generation history, and agent chat history. **Save Project** updates the current package after that. Exported media is written to the location selected in the export dialog and is independent of the project package.
 
 ## Agent Workflow
+
+The Electrobun app connects to the Filmidi backend at `VITE_FILMIDI_BACKEND_URL` during development, defaulting to `http://localhost:3000`. Start the backend with `npm run dev` from the `backend` folder and configure `AI_GATEWAY_API_KEY` in its environment. Production builds should set `VITE_FILMIDI_BACKEND_URL` to the deployed backend origin before packaging.
 
 The agent should inspect the timeline, transcript, and media library before editing. Tools are intended to operate on the project model rather than only the preview, so edits remain visible in the timeline and are included in export. For external media, search results must be imported into the media panel first, then placed on an appropriate track and verified in the timeline. Users are responsible for checking licenses before publishing downloaded media.
 

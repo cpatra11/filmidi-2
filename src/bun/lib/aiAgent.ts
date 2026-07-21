@@ -105,7 +105,7 @@ function toSDKMessages(
 ): Array<{ role: "user" | "assistant" | "tool"; content: any }> {
   const result: Array<{ role: "user" | "assistant" | "tool"; content: any }> = [];
 
-  // Inject context as first user message (like current buildQwenMessages)
+  // Inject context as the first user message.
   result.push({
     role: "user",
     content: [
@@ -278,7 +278,7 @@ export async function runAgentLoop(params: AgentLoopParams, signal?: AbortSignal
 
   try {
     const anthropic = createAnthropic({
-      baseURL: "https://dashscope-intl.aliyuncs.com/apps/anthropic/v1",
+      baseURL: "https://ai-gateway.vercel.sh/v1",
       apiKey,
       headers: { "anthropic-version": "2023-06-01" },
     });

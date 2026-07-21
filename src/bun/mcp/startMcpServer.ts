@@ -171,17 +171,19 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "move_clips",
-    description: "Reposition clips on the timeline — change their startFrame and/or track. Can move multiple clips at once.",
+    description: "Reposition clips on the timeline. mode='move' moves into free space, mode='reorder' swaps/reflows when crossing another same-track clip, and mode='swap' exchanges two clips. Linked audio/video partners follow safely.",
     inputSchema: {
       type: "object", properties: {
+        mode: { type: "string", enum: ["move", "reorder", "swap"] },
         clips: {
           type: "array", items: {
             type: "object", properties: {
               layerId: { type: "string" },
+              targetLayerId: { type: "string", description: "For mode='swap', the other clip to exchange with." },
               startTime: { type: "number", description: "New timeline time in seconds." },
               track: { type: "integer", description: "Optional — new track index." },
             },
-            required: ["layerId", "startTime"],
+            required: ["layerId"],
           },
         },
       }, required: ["clips"],

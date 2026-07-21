@@ -3,6 +3,13 @@ import { layerTimelineBounds } from "@videoflow/react-video-editor";
 export const AUDIO_TRACK_BASE = 0;
 export const VIDEO_TRACK_BASE = 10;
 export type TimelineTrackKind = "audio" | "video";
+export type TimelineMoveMode = "move" | "swap";
+
+export type TimelineMoveUpdate = {
+  id: string;
+  startTime: number;
+  track?: number;
+};
 
 export function getTimelineTrackKind(layer: any): TimelineTrackKind {
   return layer?.type === "audio" ? "audio" : "video";
@@ -73,6 +80,46 @@ function getTrackIndex(layer: any): number {
   return typeof track === "number" && Number.isFinite(track) ? Math.max(0, Math.floor(track)) : 0;
 }
 
+export function getLayerTrackIndex(layer: any): number {
+  return getTrackIndex(layer);
+}
+
+export function getLayerDuration(layer: any): number {
+  const bounds = layerTimelineBounds(layer);
+  return Math.max(0, bounds.end - bounds.start);
+}
+
+export function getLayerStart(layer: any): number {
+  const bounds = layerTimelineBounds(layer);
+  return Number.isFinite(bounds.start) ? bounds.start : 0;
+}
+
+export function expandLinkedLayerIds(layers: any[], ids: string[]): string[] {
+  const expanded = new Set(ids);
+  for (const id of ids) {
+    const layer = layers.find((candidate) => candidate.id === id);
+    const linkId = layer?.settings?.linkId;
+    if (!linkId) continue;
+    for (const candidate of layers) {
+      if (candidate.id !== id && candidate?.settings?.linkId === linkId) {
+        expanded.add(candidate.id);
+      }
+    }
+  }
+  return Array.from(expanded);
+}
+
+export function normalizeMoveUpdates(layers: any[], updates: TimelineMoveUpdate[]): TimelineMoveUpdate[] {
+  return updates.map((update) => {
+    const layer = layers.find((candidate) => candidate.id === update.id);
+    if (!layer || update.track === undefined) return update;
+    return {
+      ...update,
+      track: normalizeTrackForKind(update.track, getTimelineTrackKind(layer)),
+    };
+  });
+}
+
 export function readLayerTracks(layers: any[]): number[] {
   return layers.map((layer) => getTrackIndex(layer));
 }
@@ -100,10 +147,11 @@ export function wouldOverlap(
 
 export function validateMoveUpdates(
   layers: any[],
-  updates: Array<{ id: string; startTime: number; track?: number }>,
+  updates: TimelineMoveUpdate[],
 ): { ok: true } | { ok: false; layerId: string; reason: string } {
-  const selectedIds = new Set(updates.map((update) => update.id));
-  for (const update of updates) {
+  const normalizedUpdates = normalizeMoveUpdates(layers, updates);
+  const selectedIds = new Set(normalizedUpdates.map((update) => update.id));
+  for (const update of normalizedUpdates) {
     const layer = layers.find((candidate) => candidate.id === update.id);
     if (!layer) return { ok: false, layerId: update.id, reason: "Layer not found" };
     const bounds = layerTimelineBounds(layer);
@@ -118,6 +166,125 @@ export function validateMoveUpdates(
     }
   }
   return { ok: true };
+}
+
+export function buildLinkedMoveUpdates(
+  layers: any[],
+  primaryId: string,
+  startTime: number,
+  track?: number,
+): TimelineMoveUpdate[] {
+  const primary = layers.find((layer) => layer.id === primaryId);
+  if (!primary) return [];
+  const primaryStart = getLayerStart(primary);
+  const primaryTrack = getTrackIndex(primary);
+  const timeDelta = Math.max(0, startTime) - primaryStart;
+  const kind = getTimelineTrackKind(primary);
+  const trackDelta = track === undefined
+    ? 0
+    : localTrackForKind(track, kind) - localTrackForKind(primaryTrack, kind);
+  const ids = expandLinkedLayerIds(layers, [primaryId]);
+
+  return normalizeMoveUpdates(
+    layers,
+    ids.map((id) => {
+      const layer = layers.find((candidate) => candidate.id === id);
+      const itemKind = getTimelineTrackKind(layer);
+      const itemTrack = getTrackIndex(layer);
+      return {
+        id,
+        startTime: Math.max(0, getLayerStart(layer) + timeDelta),
+        track: track === undefined
+          ? undefined
+          : normalizeTrackForKind(localTrackForKind(itemTrack, itemKind) + trackDelta, itemKind),
+      };
+    }),
+  );
+}
+
+export function findSwapTarget(
+  layers: any[],
+  primaryId: string,
+  targetTrack: number,
+  desiredStart: number,
+): any | null {
+  const primary = layers.find((layer) => layer.id === primaryId);
+  if (!primary) return null;
+  const kind = getTimelineTrackKind(primary);
+  const primaryUnitIds = new Set(expandLinkedLayerIds(layers, [primaryId]));
+  const duration = getLayerDuration(primary);
+  const desiredMid = desiredStart + duration / 2;
+  const candidates = layers
+    .filter((layer) => layer.id !== primaryId)
+    .filter((layer) => !primaryUnitIds.has(layer.id))
+    .filter((layer) => getTimelineTrackKind(layer) === kind)
+    .filter((layer) => getTrackIndex(layer) === targetTrack)
+    .map((layer) => ({ layer, bounds: layerTimelineBounds(layer) }))
+    .filter(({ bounds }) => desiredMid >= bounds.start && desiredMid <= bounds.end)
+    .sort((a, b) => Math.abs(desiredMid - ((a.bounds.start + a.bounds.end) / 2)) - Math.abs(desiredMid - ((b.bounds.start + b.bounds.end) / 2)));
+
+  return candidates[0]?.layer ?? null;
+}
+
+export function buildSwapMoveUpdates(
+  layers: any[],
+  primaryId: string,
+  targetId: string,
+): TimelineMoveUpdate[] {
+  const primary = layers.find((layer) => layer.id === primaryId);
+  const target = layers.find((layer) => layer.id === targetId);
+  if (!primary || !target) return [];
+  if (getTimelineTrackKind(primary) !== getTimelineTrackKind(target)) return [];
+
+  const primaryIds = expandLinkedLayerIds(layers, [primaryId]);
+  const targetIds = expandLinkedLayerIds(layers, [targetId]);
+  const primaryStart = getLayerStart(primary);
+  const targetStart = getLayerStart(target);
+  const primaryDelta = targetStart - primaryStart;
+  const targetDelta = primaryStart - targetStart;
+
+  const updates: TimelineMoveUpdate[] = [];
+  for (const id of primaryIds) {
+    const layer = layers.find((candidate) => candidate.id === id);
+    if (!layer) continue;
+    updates.push({ id, startTime: Math.max(0, getLayerStart(layer) + primaryDelta) });
+  }
+  for (const id of targetIds) {
+    const layer = layers.find((candidate) => candidate.id === id);
+    if (!layer) continue;
+    updates.push({ id, startTime: Math.max(0, getLayerStart(layer) + targetDelta) });
+  }
+
+  return updates;
+}
+
+export function buildTimelineMovePlan(
+  layers: any[],
+  primaryId: string,
+  desiredStart: number,
+  targetTrack?: number,
+  mode: TimelineMoveMode = "move",
+): { mode: TimelineMoveMode; updates: TimelineMoveUpdate[]; swapTargetId?: string; error?: string } {
+  const primary = layers.find((layer) => layer.id === primaryId);
+  if (!primary) return { mode, updates: [], error: "Layer not found" };
+  const kind = getTimelineTrackKind(primary);
+  const normalizedTrack = targetTrack === undefined
+    ? getTrackIndex(primary)
+    : normalizeTrackForKind(targetTrack, kind);
+
+  if (mode === "swap" && normalizedTrack === getTrackIndex(primary)) {
+    const swapTarget = findSwapTarget(layers, primaryId, normalizedTrack, Math.max(0, desiredStart));
+    if (swapTarget) {
+      return {
+        mode: "swap",
+        swapTargetId: swapTarget.id,
+        updates: buildSwapMoveUpdates(layers, primaryId, swapTarget.id),
+      };
+    }
+  }
+
+  const updates = buildLinkedMoveUpdates(layers, primaryId, Math.max(0, desiredStart), normalizedTrack);
+  return { mode: "move", updates };
 }
 
 export function clampMoveToTrack(

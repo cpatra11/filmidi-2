@@ -7,7 +7,7 @@ import { useSettingsStore, type SettingsTab } from "@/store/useSettingsStore";
 import { useAccountStore } from "@/store/useAccountStore";
 import { useMediaPanelStore } from "@/store/useMediaPanelStore";
 import { THIRD_PARTY_MODELS } from "@/store/useGenerationStore";
-import { getSecureApiKey, setSecureApiKey, validateApiKey } from "@/lib/secureApiKey";
+import { getSecureApiKey, setSecureApiKey, clearSecureApiKey, validateApiKey } from "@/lib/secureApiKey";
 
 /* ------------------------------------------------------------------ */
 /*  Model catalog (matches useGenerationStore)                         */
@@ -20,28 +20,24 @@ interface ModelEntry {
 }
 
 const ALL_MODELS: ModelEntry[] = [
-  { id: "qwen3.7-max", name: "Qwen 3.7 Max", category: "chat" },
-  { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", category: "chat" },
-  { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", category: "chat" },
-  { id: "qwen3.6-flash", name: "Qwen 3.6 Flash", category: "chat" },
-  { id: "qwen-turbo", name: "Qwen Turbo", category: "chat" },
-  { id: "qwen-image-2.0-pro", name: "Qwen-Image 2.0 Pro", category: "image" },
-  { id: "qwen-image-2.0-turbo", name: "Qwen-Image 2.0 Turbo", category: "image" },
-  { id: "wan2.7-image-pro", name: "Wan 2.7 Image Pro", category: "image" },
-  { id: "wan2.6-t2i", name: "Wan 2.6 T2I", category: "image" },
-  { id: "wan2.7-t2v", name: "Wan 2.7 T2V", category: "video" },
-  { id: "wan2.7-i2v", name: "Wan 2.7 I2V", category: "video" },
-  { id: "wan2.7-r2v", name: "Wan 2.7 R2V", category: "video" },
-  { id: "wan2.7-videoedit", name: "Wan 2.7 Video Edit", category: "video" },
-  { id: "happyhorse-1.1-t2v", name: "HappyHorse 1.1 T2V", category: "video" },
-  { id: "happyhorse-1.1-i2v", name: "HappyHorse 1.1 I2V", category: "video" },
-  { id: "happyhorse-1.1-r2v", name: "HappyHorse 1.1 R2V", category: "video" },
-  { id: "qwen3-tts-flash", name: "Qwen3 TTS Flash", category: "audio" },
-  { id: "qwen3-tts-instruct-flash", name: "Qwen3 TTS Instruct", category: "audio" },
-  { id: "cosyvoice-v3-plus", name: "CosyVoice v3 Plus", category: "audio" },
-  { id: "cosyvoice-v3-flash", name: "CosyVoice v3 Flash", category: "audio" },
-  { id: "fun-music-v1", name: "FunMusic v1", category: "audio" },
-  { id: "fun-music-preview", name: "FunMusic Preview", category: "audio" },
+  { id: "openai/gpt-5.4-mini", name: "GPT-5.4 mini (tool calls, lower cost)", category: "chat" },
+  { id: "openai/gpt-5.4-nano", name: "GPT-5.4 nano (tool calls, lowest cost)", category: "chat" },
+  { id: "openai/gpt-4.1-mini", name: "GPT-4.1 mini (tool calls)", category: "chat" },
+  { id: "openai/gpt-4.1-nano", name: "GPT-4.1 nano (tool calls)", category: "chat" },
+  { id: "google/gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite (tool calls)", category: "chat" },
+  { id: "xai/grok-4.1-fast", name: "Grok 4.1 Fast (tool calls)", category: "chat" },
+  { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5 (tool calls)", category: "chat" },
+  { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", category: "chat" },
+  { id: "openai/gpt-5.4", name: "GPT-5.4", category: "chat" },
+  { id: "xai/grok-4.5", name: "Grok 4.5", category: "chat" },
+  { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", category: "chat" },
+  { id: "google/imagen-4.0-generate-001", name: "Imagen 4", category: "image" },
+  { id: "bfl/flux-2-pro", name: "Flux 2 Pro", category: "image" },
+  { id: "google/veo-3.1-generate-001", name: "Veo 3.1", category: "video" },
+  { id: "klingai/kling-v2.6-i2v", name: "Kling v2.6 I2V", category: "video" },
+  { id: "google/veo-3.1-fast-generate-001", name: "Veo 3.1 Fast", category: "video" },
+  { id: "openai/sora-2", name: "Sora 2", category: "video" },
+  { id: "xai/grok-tts", name: "Grok TTS", category: "audio" },
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -57,7 +53,6 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: "general", label: "General", icon: Monitor },
-  { id: "account", label: "Account", icon: User },
   { id: "models", label: "Models", icon: Cpu },
   { id: "agent", label: "Agent", icon: Bot },
   { id: "storage", label: "Storage", icon: HardDrive },
@@ -208,14 +203,14 @@ function GeneralPane() {
                 </Select.Item>
                 <Select.Item value="cloud" className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-[#aaaacc] rounded cursor-pointer outline-none data-[highlighted]:bg-white/10 data-[state=checked]:text-[#e0e0ee]">
                   <Select.ItemIndicator><Check className="w-3 h-3 text-white/70" /></Select.ItemIndicator>
-                  <Select.ItemText>Qwen Cloud (requires key)</Select.ItemText>
+                  <Select.ItemText>Vercel AI Gateway</Select.ItemText>
                 </Select.Item>
               </Select.Viewport>
             </Select.Content>
           </Select.Portal>
         </Select.Root>
         <span className="text-[9px] text-[#555577]">
-          Local: offline denoising + energy-based VAD. Cloud: fun-asr transcription + speaker diarization.
+          Local: offline denoising + energy-based VAD. Cloud: Vercel-hosted transcription and speaker diarization.
         </span>
       </div>
 
@@ -244,7 +239,7 @@ function GeneralPane() {
 
 function ModelsPane() {
   const { disabledModelIds, toggleModelDisabled } = useSettingsStore();
-  const isDirect = !useAccountStore.getState().isSignedIn();
+  const isDirect = true;
 
   const categories = ["chat", "image", "video", "audio"] as const;
 
@@ -329,6 +324,10 @@ function AccountPane() {
   const account = useAccountStore();
   const [signingIn, setSigningIn] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const signedIn = account.isSignedIn();
 
   const handleSignIn = async () => {
@@ -336,6 +335,31 @@ function AccountPane() {
     setCheckoutError(null);
     try {
       await account.signInWithGoogle();
+    } catch (err: unknown) {
+      setCheckoutError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const handleEmailAuth = async () => {
+    if (!email.trim() || !password) {
+      setCheckoutError("Enter your email and password.");
+      return;
+    }
+    if (authMode === "register" && !name.trim()) {
+      setCheckoutError("Enter your name to create an account.");
+      return;
+    }
+
+    setSigningIn(true);
+    setCheckoutError(null);
+    try {
+      if (authMode === "login") {
+        await account.signInWithEmail(email.trim(), password);
+      } else {
+        await account.registerWithEmail(email.trim(), password, name.trim());
+      }
     } catch (err: unknown) {
       setCheckoutError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -400,9 +424,57 @@ function AccountPane() {
       </p>
       <GoogleClientIdInput />
 
-      <SectionHeader title="Sign In" />
+      <SectionHeader title="Email sign in" />
       <p className="text-[11px] text-[#8888aa] mb-1">
-        Sign in with Google to buy a subscription and use cloud features without your own API key.
+        Use an email and password to access cloud features without your own API key.
+      </p>
+      {authMode === "register" && (
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name"
+          autoComplete="name"
+          className="w-full bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-2 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
+        />
+      )}
+      <input
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") void handleEmailAuth(); }}
+        type="email"
+        placeholder="Email"
+        autoComplete="email"
+        className="w-full bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-2 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
+      />
+      <input
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") void handleEmailAuth(); }}
+        type="password"
+        placeholder={authMode === "register" ? "Password (8+ characters)" : "Password"}
+        autoComplete={authMode === "register" ? "new-password" : "current-password"}
+        className="w-full bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-2 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => void handleEmailAuth()}
+          disabled={signingIn}
+          className="self-start flex items-center gap-2 px-4 py-2 rounded-lg bg-white hover:bg-white/90 text-[12px] text-black font-medium cursor-pointer disabled:opacity-50 transition-colors"
+        >
+          {signingIn ? "Please wait..." : authMode === "login" ? "Sign in with email" : "Create account"}
+        </button>
+        <button
+          onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setCheckoutError(null); }}
+          disabled={signingIn}
+          className="px-2 py-1.5 text-[11px] text-[#aaaacc] hover:text-white cursor-pointer disabled:opacity-50"
+        >
+          {authMode === "login" ? "Create an account" : "Use email sign in"}
+        </button>
+      </div>
+
+      <SectionHeader title="Google sign in" />
+      <p className="text-[11px] text-[#8888aa] mb-1">
+        Or use Google to access cloud features without your own API key.
       </p>
       <button
         onClick={handleSignIn}
@@ -475,124 +547,46 @@ function AgentPane() {
     agentAutoExecute, setAgentAutoExecute,
     agentContextSize, setAgentContextSize,
   } = useSettingsStore();
+  const [apiKey, setApiKey] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
 
-  const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [hasKey, setHasKey] = useState(false);
-  const [showInput, setShowInput] = useState(false);
-  const [savedIndicator, setSavedIndicator] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  // Load the API key from secure storage on mount
   useEffect(() => {
-    getSecureApiKey().then((key) => {
-      if (key) {
-        setApiKeyDraft(key);
-        setHasKey(true);
-        setShowInput(false);
-      } else {
-        setShowInput(true);
-      }
-      setLoading(false);
-    });
+    getSecureApiKey().then((key) => setApiKey(key ?? ""));
   }, []);
 
-  const handleSaveKey = async () => {
-    const trimmed = apiKeyDraft.trim();
-    if (!trimmed) return;
-    // Validate before saving
-    const validationError = await validateApiKey(trimmed);
-    if (validationError) {
-      useMediaPanelStore.getState().showToast(validationError, "warning");
-      return;
-    }
-    setSecureApiKey(trimmed);
-    setHasKey(true);
-    setShowInput(false);
-    setSavedIndicator(true);
-    setTimeout(() => setSavedIndicator(false), 2000);
-  };
-
-  const handleChangeKey = () => {
-    setShowInput(true);
-  };
-
-  const handleRemoveKey = () => {
-    setSecureApiKey("");
-    setHasKey(false);
-    setShowInput(true);
-    setApiKeyDraft("");
+  const saveKey = async () => {
+    setStatus(null);
+    const error = await validateApiKey(apiKey);
+    if (error) { setStatus(error); return; }
+    setSecureApiKey(apiKey.trim());
+    setSaved(true);
+    setStatus("Vercel API key saved securely.");
+    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
     <div className="flex flex-col gap-1">
       <SectionHeader title="API Connection" />
       <div className="flex flex-col gap-1.5">
-        <span className="text-[10px] font-medium text-[#8888aa]">Qwen API Key</span>
-
-        {loading ? (
-          <div className="h-8 flex items-center">
-            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          </div>
-        ) : showInput ? (
-          <div className="flex items-center gap-2">
-            <input
-              type="password"
-              value={apiKeyDraft}
-              onChange={(e) => setApiKeyDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && apiKeyDraft.trim()) handleSaveKey(); }}
-              placeholder="Enter your Qwen API key..."
-              className="flex-1 bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-1.5 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
-            />
-            <button
-              onClick={handleSaveKey}
-              disabled={!apiKeyDraft.trim()}
-              className="px-3 py-1.5 rounded-lg bg-white hover:bg-white/90 text-[11px] text-black font-medium cursor-pointer disabled:opacity-30 disabled:cursor-default transition-colors"
-            >
-              Save
-            </button>
-            {hasKey && (
-              <button
-                onClick={() => { setShowInput(false); setApiKeyDraft(""); }}
-                className="px-3 py-1.5 rounded-lg border border-white/10 text-[11px] text-[#aaaacc] hover:text-[#e0e0ee] cursor-pointer transition-colors"
-              >
-                Cancel
-              </button>
-            )}
-            <span
-              className={`text-[11px] text-green-400 font-medium transition-opacity duration-300 ${savedIndicator ? "opacity-100" : "opacity-0"}`}
-            >
-              ✓ Saved
-            </span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <div className="flex-1 flex items-center gap-2 px-2.5 py-1.5 bg-[#141414] border border-[#1C1C1C] rounded-lg">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-[12px] text-[#8888aa]">API key is set</span>
-            </div>
-            <button
-              onClick={handleChangeKey}
-              className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/20 text-[11px] text-[#e0e0ee] hover:bg-white/15 cursor-pointer transition-colors"
-            >
-              Change
-            </button>
-            <button
-              onClick={handleRemoveKey}
-              className="px-3 py-1.5 rounded-lg border border-red-500/30 text-[11px] text-red-400 hover:bg-red-500/10 cursor-pointer transition-colors"
-            >
-              Remove
-            </button>
-            <span
-              className={`text-[11px] text-green-400 font-medium transition-opacity duration-300 ${savedIndicator ? "opacity-100" : "opacity-0"}`}
-            >
-              ✓ Saved
-            </span>
-          </div>
-        )}
-
-        <span className="text-[9px] text-[#555577]">
-          Your own Qwen API key from dashscope.aliyuncs.com. Required for the AI agent and cloud features.
-        </span>
+        <span className="text-[10px] font-medium text-[#8888aa]">Vercel AI Gateway API key</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(event) => { setApiKey(event.target.value); setSaved(false); setStatus(null); }}
+            placeholder="Paste your Vercel AI Gateway key"
+            className="flex-1 bg-[#141414] border border-[#1C1C1C] rounded-lg px-2.5 py-1.5 text-[12px] text-[#e0e0ee] placeholder:text-[#555577] outline-none focus:border-white/20"
+          />
+          <button onClick={() => void saveKey()} className="px-3 py-1.5 rounded-lg bg-white text-[11px] text-black font-medium cursor-pointer">
+            {saved ? "Saved" : "Save"}
+          </button>
+          <button onClick={() => { clearSecureApiKey(); setApiKey(""); setStatus("Vercel API key removed."); }} className="px-2 py-1.5 rounded-lg border border-white/10 text-[11px] text-[#aaaacc] cursor-pointer">
+            Clear
+          </button>
+        </div>
+        <span className="text-[9px] text-[#555577]">Timeline editing and MCP work locally without a key. Chat, generation, and transcription use this key directly with Vercel AI Gateway.</span>
+        {status && <span className="text-[10px] text-[#aaaacc]">{status}</span>}
       </div>
 
       <SectionHeader title="Behavior" />
@@ -710,7 +704,7 @@ export function SettingsDialog() {
             {/* Content */}
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
               {activeTab === "general" && <GeneralPane />}
-              {activeTab === "account" && <AccountPane />}
+              {activeTab === "account" && <AgentPane />}
               {activeTab === "models" && <ModelsPane />}
               {activeTab === "agent" && <AgentPane />}
               {activeTab === "storage" && <StoragePane />}

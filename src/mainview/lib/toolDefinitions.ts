@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "./qwenClient";
+import type { ToolDefinition } from "./aiGatewayClient";
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   // ─── TIMELINE INSPECTION (5) ─────────────────────────────────────
@@ -188,20 +188,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "move_clips",
     description:
-      "Reposition clips on the timeline - change their startFrame and/or track. Use for drag-style moves. Can move multiple clips at once. Linked partners follow the frame delta.",
+      "Reposition clips on the timeline. mode='move' moves into free space, mode='reorder' swaps/reflows when crossing another same-track clip, and mode='swap' exchanges two clips. Linked audio/video partners follow safely and stay on compatible tracks.",
     input_schema: {
       type: "object",
       properties: {
+        mode: { type: "string", enum: ["move", "reorder", "swap"], description: "Optional — default move. Use reorder/swap for same-track position changes." },
         clips: {
           type: "array",
           items: {
             type: "object",
             properties: {
               layerId: { type: "string" },
+              targetLayerId: { type: "string", description: "For mode='swap', the other clip to exchange with." },
               startTime: { type: "number", description: "New timeline time in seconds." },
               track: { type: "integer", description: "Optional — new track index." },
             },
-            required: ["layerId", "startTime"],
+            required: ["layerId"],
           },
         },
       },
@@ -487,7 +489,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           items: { type: "string" },
           description: "Optional — clip ids to transcribe. Omit for entire timeline.",
         },
-        mode: { type: "string", enum: ["local", "cloud"], description: "Optional — processing mode: 'local' (free, energy-based VAD) or 'cloud' (requires API key, fun-asr with diarization). Defaults to user settings." },
+        mode: { type: "string", enum: ["local", "cloud"], description: "Optional — processing mode. Cloud uses the user's Vercel AI Gateway key; local uses offline analysis." },
         language: { type: "string", description: "Optional — BCP-47 language tag." },
         centerX: { type: "number", description: "Optional — horizontal position 0-1." },
         centerY: { type: "number", description: "Optional — vertical position 0-1." },
@@ -721,7 +723,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         endFrame: { type: "integer", description: "Optional — end of transcript window." },
         clipId: { type: "string", description: "Optional — scope to specific clip." },
         language: { type: "string", description: "Optional — BCP-47 tag for local transcription." },
-        mode: { type: "string", enum: ["local", "cloud"], description: "Optional — processing mode. 'local' uses Web Speech API (free, no key needed). 'cloud' uses Qwen ASR (higher quality, requires API key). Defaults to user settings." },
+        mode: { type: "string", enum: ["local", "cloud"], description: "Optional — processing mode. Cloud uses Vercel AI Gateway transcription. Defaults to the user's settings." },
       },
       required: [],
     },
