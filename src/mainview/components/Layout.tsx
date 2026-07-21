@@ -397,8 +397,15 @@ export function Layout() {
         const id = `asset-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const stored = await storeImportedFile(file, id);
         let url = stored?.url ?? URL.createObjectURL(file);
-        const audioUrl = type === "video" ? await getAudioSourceForPlayback(file, id, url) : null;
-        mediaStore.addAsset({ id, name: file.name, type, url, audioUrl: audioUrl && audioUrl !== url ? audioUrl : undefined, sourcePath: stored?.path, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
+        // Do not block the drop on MOV/audio companion extraction. Place the
+        // clip immediately, then swap the audio source in when it is ready.
+        const audioPromise = type === "video"
+          ? getAudioSourceForPlayback(file, id, url).catch((error) => {
+              console.warn("[timeline-import] companion audio deferred", error);
+              return null;
+            })
+          : Promise.resolve<string | null>(null);
+        mediaStore.addAsset({ id, name: file.name, type, url, sourcePath: stored?.path, duration, isGenerated: false, folderId: mediaStore.currentFolderId, createdAt: Date.now() });
         const isVideoFile = type === "video";
         if (isVideoFile) {
           const { generateLinkId, setLayerLinkId } = await import("@/lib/linkUtils");
@@ -412,12 +419,25 @@ export function Layout() {
           const audioTrack = findAvailableTrack(
             useEditorStore.getState().video.layers ?? [], "audio", startTime, duration, trackAtDrop("audio"),
           );
-          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: audioUrl ?? url, sourceDuration: duration, startTime });
+          const audioLayerId = await addLayerCommand(editor.commit, { type: "audio", source: url, sourceDuration: duration, startTime });
           setLayerTrack(editor.commit, audioLayerId, audioTrack);
           await cmds.setSettingCommand(editor.commit, audioLayerId, "name", `${clipName} Audio`);
           await cmds.setPropertyCommand(editor.commit, audioLayerId, "mute", false);
           await cmds.setPropertyCommand(editor.commit, audioLayerId, "volume", 1);
           await setLayerLinkId(editor.commit, audioLayerId, linkId, setSettingCommand);
+          void audioPromise.then((audioSource) => {
+            if (!audioSource || audioSource === url) return;
+            editor.commit((draft: any) => {
+              const audioLayer = draft.layers?.find((layer: any) => layer.id === audioLayerId);
+              if (audioLayer) {
+                audioLayer.settings = { ...(audioLayer.settings ?? {}), source: audioSource };
+                audioLayer.source = audioSource;
+              }
+            }, { label: "Attach companion audio" });
+            const currentMedia = useMediaPanelStore.getState();
+            currentMedia.setAssets(currentMedia.assets.map((asset) => asset.id === id ? { ...asset, audioUrl: audioSource } : asset));
+            useEditorStore.getState().bridge?.seek(useEditorStore.getState().currentFrame);
+          });
           const layerId = await addLayerCommand(editor.commit, { type, source: url, sourceDuration: duration, startTime });
           setLayerTrack(editor.commit, layerId, videoTrack);
           await cmds.setSettingCommand(editor.commit, layerId, "name", clipName);
