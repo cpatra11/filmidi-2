@@ -24,6 +24,7 @@ import {
   VIDEO_TRACK_BASE,
   clampMoveToTrack,
   clampTimeDeltaToFreeSpace,
+  findAvailableTrack,
   buildTimelineMovePlan,
   getTimelineTrackKind,
   localTrackForKind,
@@ -32,6 +33,7 @@ import {
   validateMoveUpdates,
   type TimelineTrackKind,
 } from "@/lib/timelineMove";
+import { getTimelineDuration } from "@/lib/timelineMetrics";
 import { useAppStore } from "@/store/useAppStore";
 import { Lock, Unlock } from "lucide-react";
 import "./CustomTimeline.css";
@@ -432,12 +434,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
   // VideoFlow normally maintains video.duration, but older imported projects
   // can have a stale value. Always include the furthest layer edge so a long
   // source is never clipped by the ruler or drag clamps.
-  const layerContentDuration = useMemo(() => {
-    return (video.layers ?? []).reduce((max, layer) => {
-      const bounds = layerTimelineBounds(layer);
-      return Math.max(max, Number.isFinite(bounds.end) ? bounds.end : 0);
-    }, 0);
-  }, [video.layers]);
+  const layerContentDuration = useMemo(() => getTimelineDuration(video), [video]);
 
   // Available duration inside current group
   const availableDuration = useMemo(() => {
@@ -543,7 +540,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
 
   // Playhead
   const playheadTime = currentFrame / fps - groupOffset;
-  const playheadLeft = playheadTime * scale;
+  const playheadLeft = Math.max(0, playheadTime * scale);
 
   // Total scrollable width
   const totalWidth = Math.max(
@@ -1064,6 +1061,21 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
             );
             return;
           }
+
+          // If the requested lane is occupied, place the clip in the nearest
+          // compatible free lane instead of making the drag appear to fail.
+          const freeTrack = findAvailableTrack(
+            liveLayers.filter((candidate: any) => !selectedSet.has(candidate.id)),
+            item.kind,
+            desiredStart,
+            item.duration,
+            desiredTrack,
+          );
+          const freeTrackDelta = localTrackForKind(freeTrack, item.kind) - localTrackForKind(item.track, item.kind);
+          if (fits(timeOnly, freeTrackDelta)) {
+            previewMove(timeOnly, freeTrackDelta);
+            return;
+          }
         }
 
         setSnapGuide(null);
@@ -1375,6 +1387,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
               onClick={(e) => { e.stopPropagation(); if (confirm(`Remove marker "${m.label}"?`)) setMarkers((prev) => prev.filter((_, j) => j !== i)); }}
             />
           ))}
+          <div className="ct-ruler-playhead" style={{ left: playheadLeft }} aria-hidden="true" />
         </div>
       </div>
 
@@ -1405,7 +1418,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
                 onToggleLock={() => handleTrackLock(trackIdx, (meta as any)?.locked === true)}
               />
             );
-          })}
+            })}
           <div className="ct-track-separator" />
           {audioRows.slice().reverse().map(({ trackIdx }) => {
             const meta = trackMeta[trackIdx];
@@ -1539,6 +1552,7 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
           <div
             className="ct-playhead"
             style={{ left: playheadLeft }}
+            aria-hidden="true"
           />
 
           {/* Empty timeline state */}

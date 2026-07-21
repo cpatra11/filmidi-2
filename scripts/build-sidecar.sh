@@ -20,7 +20,12 @@ export HOME="$CACHE_ROOT/home"
 export CLANG_MODULE_CACHE_PATH="$CACHE_ROOT/clang"
 
 swift build --package-path "$PACKAGE_DIR" -c release
-cp "$PACKAGE_DIR/.build/release/FilmidiSidecar" "$OUTPUT_BIN"
+BUILT_BIN="$(find "$PACKAGE_DIR/.build" -type f -path '*/release/FilmidiSidecar' -print -quit)"
+if [[ -z "$BUILT_BIN" ]]; then
+  echo "[sidecar] release executable was not produced" >&2
+  exit 1
+fi
+cp "$BUILT_BIN" "$OUTPUT_BIN"
 chmod +x "$OUTPUT_BIN"
 
 echo "[sidecar] built $OUTPUT_BIN"

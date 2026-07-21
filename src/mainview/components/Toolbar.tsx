@@ -44,6 +44,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { useExportStore } from "@/store/useExportStore";
 import { useProjectStore } from "@/store/useProjectStore";
 import { useEditorStore } from "@videoflow/react-video-editor";
+import { clampTimelineFrame, getTimelineDuration } from "@/lib/timelineMetrics";
 import { cn } from "@/lib/utils";
 import { splitAtPlayhead, removeLeftAtPlayhead, removeRightAtPlayhead } from "@/hooks/useKeyboardShortcuts";
 import { importMediaFromPicker } from "@/lib/menuActions";
@@ -208,7 +209,7 @@ export function Toolbar() {
       <ToolButton icon={StepForward} label="Step Forward" shortcut="→" onClick={() => {
         const s = useEditorStore.getState();
         const fps = s.video.fps || 30;
-        const f = Math.min(Math.max(0, Math.floor(s.video.duration * fps) - 1), s.currentFrame + 1);
+        const f = Math.min(clampTimelineFrame(s.video, Math.ceil(getTimelineDuration(s.video) * fps)), s.currentFrame + 1);
         s.setCurrentFrame(f);
         s.bridge?.seek(f);
       }} />

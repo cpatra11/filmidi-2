@@ -4,6 +4,7 @@ import { layerTimelineBounds, useEditorStore } from "@videoflow/react-video-edit
 import { commands } from "@videoflow/react-video-editor";
 import { findAvailableTrack, localTrackForKind, normalizeTrackForKind, validateMoveUpdates } from "@/lib/timelineMove";
 import { generateLinkId, setLayerLinkId } from "@/lib/linkUtils";
+import { clampTimelineFrame, getTimelineDuration } from "@/lib/timelineMetrics";
 
 const { addLayerCommand } = commands;
 
@@ -130,7 +131,7 @@ export function useKeyboardShortcuts() {
             e.preventDefault();
             const lState = useEditorStore.getState();
             const lFps = lState.video.fps || 30;
-            const lMax = Math.max(0, Math.floor(lState.video.duration * lFps) - 1);
+            const lMax = clampTimelineFrame(lState.video, Math.ceil(getTimelineDuration(lState.video) * lFps));
             const lFrame = Math.min(lMax, lState.currentFrame + lFps * 2);
             lState.setCurrentFrame(lFrame);
             lState.bridge?.seek(lFrame);
@@ -150,7 +151,7 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           const s = useEditorStore.getState();
           const fps = s.video.fps || 30;
-          const maxFrame = Math.max(0, Math.floor(s.video.duration * fps) - 1);
+          const maxFrame = clampTimelineFrame(s.video, Math.ceil(getTimelineDuration(s.video) * fps));
           const f = Math.min(maxFrame, s.currentFrame + 1);
           s.setCurrentFrame(f);
           s.bridge?.seek(f);
@@ -166,7 +167,7 @@ export function useKeyboardShortcuts() {
         if (e.key === "End") {
           e.preventDefault();
           const s = useEditorStore.getState();
-          const f = Math.max(0, Math.floor(s.video.duration * (s.video.fps || 30)) - 1);
+          const f = clampTimelineFrame(s.video, Math.ceil(getTimelineDuration(s.video) * (s.video.fps || 30)));
           s.setCurrentFrame(f);
           s.bridge?.seek(f);
           return;
@@ -192,7 +193,7 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           const s = useEditorStore.getState();
           const fps = s.video.fps || 30;
-          const maxFrame = Math.max(0, Math.floor(s.video.duration * fps) - 1);
+          const maxFrame = clampTimelineFrame(s.video, Math.ceil(getTimelineDuration(s.video) * fps));
           const f = Math.min(maxFrame, s.currentFrame + fps);
           s.setCurrentFrame(f);
           s.bridge?.seek(f);

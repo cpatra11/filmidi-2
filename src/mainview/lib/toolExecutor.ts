@@ -31,6 +31,7 @@ import type { LayerJSON, VideoJSON } from "@videoflow/core";
 import { normalizeVideoFlowDocument, validateVideoFlowDocument } from "./videoFlowDocument";
 import { getVideoFlowCapabilities } from "./videoFlowCapabilities";
 import { getSecureApiKey } from "./secureApiKey";
+import { getTimelineDuration } from "./timelineMetrics";
 
 const {
   addLayerCommand,
@@ -215,8 +216,8 @@ export function getTimelineContext(): string {
     fps: v.fps,
     width: v.width,
     height: v.height,
-    duration: v.duration,
-    totalFrames: Math.round((v.duration ?? 0) * (v.fps ?? 30)),
+    duration: getTimelineDuration(v),
+    totalFrames: Math.ceil(getTimelineDuration(v) * (v.fps ?? 30)),
     currentFrame: s.currentFrame,
     canGenerate: true,
     layerCount: layers.length,

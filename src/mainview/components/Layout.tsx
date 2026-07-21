@@ -31,6 +31,7 @@ import { findAvailableTrack, normalizeTrackForKind } from "@/lib/timelineMove";
 import { storeImportedFile } from "@/lib/mediaStorage";
 import { getImportedMediaType } from "@/lib/mediaType";
 import { getAudioSourceForPlayback } from "@/lib/movAudio";
+import { getTimelineDuration, clampTimelineFrame } from "@/lib/timelineMetrics";
 import { addMatteLayerAtPlayhead, addTextLayerAtPlayhead } from "@/lib/timelineAddActions";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -703,6 +704,7 @@ function EditorPlaybar() {
   const { playing } = usePlayhead();
   const currentFrame = useEditorStore((s) => s.currentFrame);
   const fps = video.fps || 30;
+  const timelineDuration = getTimelineDuration(video);
   const timeStr = formatTime(currentFrame / fps, fps);
   const selection = useEditorStore((s) => s.selection);
   const [volume, setVolume] = useState(1);
@@ -734,10 +736,12 @@ function EditorPlaybar() {
 
   const goToEnd = () => {
     const s = useEditorStore.getState();
-    const f = Math.max(0, timeToFrame(video.duration, fps) - 1);
+    const f = clampTimelineFrame(s.video, timeToFrame(getTimelineDuration(s.video), fps));
     s.setCurrentFrame(f);
     s.bridge?.seek(f);
   };
+
+  const seekValue = Math.max(0, Math.min(timelineDuration, currentFrame / fps));
 
   const zoomBy = (factor: number) => {
     const s = useEditorStore.getState();
@@ -772,6 +776,13 @@ function EditorPlaybar() {
       </button>
 
       <span style={{ fontFamily: "var(--vf-font-mono)", minWidth: 70, textAlign: "center", fontSize: 11 }}>{timeStr}</span>
+
+      <input className="vf-preview-seek" type="range" min="0" max={Math.max(0.001, timelineDuration)} step={1 / fps} value={seekValue} aria-label="Seek preview" title="Seek preview" onChange={(e) => {
+        const s = useEditorStore.getState();
+        const frame = clampTimelineFrame(s.video, timeToFrame(Number(e.target.value), fps));
+        s.setCurrentFrame(frame);
+        s.bridge?.seek(frame);
+      }} />
 
       {/* Volume control */}
       <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}>
