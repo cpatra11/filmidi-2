@@ -36,11 +36,37 @@ function run(command: string, args: string[], timeoutMs = 120_000): Promise<Proc
 }
 
 async function gstreamerAvailable(): Promise<boolean> {
-  const [launch, discoverer] = await Promise.all([
+  const [launch, discoverer, inspect] = await Promise.all([
     commandPath("gst-launch-1.0"),
     commandPath("gst-discoverer-1.0"),
+    commandPath("gst-inspect-1.0"),
   ]);
-  return Boolean(launch && discoverer);
+  return Boolean(launch && discoverer && inspect);
+}
+
+export async function getGStreamerStatus(): Promise<Record<string, unknown>> {
+  const [launch, discoverer, inspect] = await Promise.all([
+    commandPath("gst-launch-1.0"),
+    commandPath("gst-discoverer-1.0"),
+    commandPath("gst-inspect-1.0"),
+  ]);
+  if (!launch || !discoverer || !inspect) {
+    return {
+      available: false,
+      backend: "gstreamer",
+      missing: [
+        !launch ? "gst-launch-1.0" : null,
+        !discoverer ? "gst-discoverer-1.0" : null,
+        !inspect ? "gst-inspect-1.0" : null,
+      ].filter(Boolean),
+    };
+  }
+  const plugins = ["decodebin", "videoconvert", "audioconvert", "mp4mux", "x264enc", "voaacenc", "avenc_h264", "avenc_aac"];
+  const pluginChecks = await Promise.all(plugins.map(async (plugin) => ({
+    plugin,
+    available: (await run(inspect, [plugin], 10_000)).code === 0,
+  })));
+  return { available: true, backend: "gstreamer", executables: { launch, discoverer, inspect }, plugins: pluginChecks };
 }
 
 /** Normalize a browser-imported media file through GStreamer when installed. */
@@ -61,20 +87,28 @@ export async function normalizeWithGStreamer(payload: Record<string, unknown>): 
 
     // Use standard plugins first, then the libav encoders commonly shipped
     // with desktop GStreamer distributions.
+    const hasAudio = /audio\//i.test(probe.stdout) || /audio stream/i.test(probe.stdout);
+    const hasVideo = /video\//i.test(probe.stdout) || /video stream/i.test(probe.stdout);
+    if (!hasVideo) throw new Error("GStreamer found no video stream to normalize");
     const pipelines = [
-      ["x264enc", "voaacenc"],
-      ["avenc_h264", "avenc_aac"],
+      { video: ["x264enc", "tune=zerolatency", "speed-preset=veryfast"], audio: ["voaacenc", "bitrate=192000"] },
+      { video: ["avenc_h264", "bitrate=8000000"], audio: ["avenc_aac", "bitrate=192000"] },
     ];
     let lastError = "GStreamer normalization failed";
-    for (const [videoEncoder, audioEncoder] of pipelines) {
-      const result = await run("gst-launch-1.0", [
+    for (const pipeline of pipelines) {
+      const launch = await commandPath("gst-launch-1.0");
+      if (!launch) return null;
+      const args = [
         "-e", "filesrc", `location=${inputPath}`,
         "!", "decodebin", "name=decode",
-        "decode.", "!", "queue", "!", "videoconvert", "!", videoEncoder,
-        "tune=zerolatency", "speed-preset=veryfast", "!", "h264parse", "!", "mp4mux", "name=mux", "faststart=true", "!", "filesink", `location=${outputPath}`,
-        "decode.", "!", "queue", "!", "audioconvert", "!", "audioresample", "!", audioEncoder,
-        "!", "aacparse", "!", "mux.",
-      ], 300_000);
+        "decode.", "!", "queue", "!", "videoconvert", "!", ...pipeline.video,
+        "!", "h264parse", "!", "mp4mux", "name=mux", "faststart=true",
+        "!", "filesink", `location=${outputPath}`,
+      ];
+      if (hasAudio) {
+        args.push("decode.", "!", "queue", "!", "audioconvert", "!", "audioresample", "!", ...pipeline.audio, "!", "aacparse", "!", "mux.");
+      }
+      const result = await run(launch, args, 300_000);
       if (result.code === 0) {
         const bytes = readFileSync(outputPath);
         return {
@@ -91,4 +125,3 @@ export async function normalizeWithGStreamer(payload: Record<string, unknown>): 
     rmSync(workDir, { recursive: true, force: true });
   }
 }
-

@@ -148,12 +148,14 @@ export async function importMediaFiles(files: File[] | FileList): Promise<void> 
         if (normalized?.dataUrl) {
           url = normalized.dataUrl;
           normalizedBy = normalized.backend ?? "gstreamer";
+        } else {
+          console.info("[media-import] GStreamer runtime unavailable; keeping original source", file.name);
         }
       } catch (error) {
         console.info("[media-import] GStreamer normalization unavailable; using original source", error);
       }
     }
-    const audioUrl = type === "video" ? await extractMovAudio(file) : null;
+    const audioUrl = type === "video" && !normalizedBy ? await extractMovAudio(file) : null;
     mediaStore.addAsset({
       id,
       name: file.name,

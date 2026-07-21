@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { runAgentLoop, resolveToolResult } from "./lib/aiAgent";
 import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftSidecar";
-import { normalizeWithGStreamer } from "./lib/gstreamer";
+import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -393,13 +393,15 @@ transport.registerHandler((msg: any) => {
       (async () => {
         try {
           const { task, payload, requestId } = msg;
-          if (task === "gstreamer-normalize") {
-            const result = await normalizeWithGStreamer(payload ?? {});
+          if (task === "gstreamer-status" || task === "gstreamer-normalize") {
+            const result = task === "gstreamer-status"
+              ? await getGStreamerStatus()
+              : await normalizeWithGStreamer(payload ?? {});
             transport.send({
               type: "native-media-response",
               requestId,
               backend: result ? "gstreamer" : "bun-fallback",
-              ok: Boolean(result),
+              ok: task === "gstreamer-status" ? Boolean((result as any)?.available) : Boolean(result),
               result,
               error: result ? null : "GStreamer runtime or required plugins are unavailable",
             });

@@ -6,7 +6,8 @@ export type NativeMediaTask =
   | "extract-audio"
   | "export-video"
   | "sample-frames"
-  | "gstreamer-normalize";
+  | "gstreamer-normalize"
+  | "gstreamer-status";
 
 export interface NativeMediaRequest {
   task: NativeMediaTask;
