@@ -65,30 +65,27 @@ The agent should inspect the timeline, transcript, and media library before edit
 
 On macOS, the optional Swift sidecar can provide Apple-specific media and hardware capabilities when its binary is packaged with the app. When it is unavailable, Filmidi logs the fallback and continues through Bun and VideoFlow. Production packaging includes the sidecar only when it has been built for the target architecture; non-macOS builds do not require it.
 
-How Codex & GPT-5.6 Accelerated Filmidi
-AI-assisted development was central to bringing Filmidi from concept to a working native desktop app in record time—both as a development accelerator and as the product's core intelligence:
+## How Codex & GPT-5.6 Accelerated Filmidi
 
-Codex: Accelerating the Engineering Loop
-Generated 50+ MCP Tool Architecture: Codex Agent generated, refactored, and validated the entire TypeScript schema definition (toolDefinitions.ts) and execution dispatchers (toolExecutor.ts) across 50+ media tools (clip cutting, keyframes, color grading, layout presets, beat detection).
+AI-assisted development was central to bringing Filmidi from concept to a working desktop app in record time.
 
-Architected IPC & State Management: Codex designed the low-latency Electrobun IPC handlers and Zustand store integrations, enabling real-time timeline state syncing between the Bun backend and React WebViews.
+### Codex: Our Engineering Partner
 
-Implemented Complex Algorithms: Codex implemented waveform cross-correlation mathematics, beat detection, and RNNoise noise suppression logic (sync_audio, detect_beats, denoise_audio) using WebAudio APIs and WASM modules.
+Codex handled the heavy lifting that would have taken weeks of manual coding. It generated all 50+ MCP tools from scratch, writing clean TypeScript schemas and execution logic for everything from clip cutting to color grading and beat detection. When we needed real-time sync between the backend and UI, Codex architected the IPC handlers and Zustand stores that made it work smoothly. It even implemented the complex math behind waveform correlation and noise suppression, saving us from diving deep into audio processing research.
 
-Shortened Debugging Loop: It inspected Electrobun, Bun, and VideoFlow implementations; traced issues through timeline, MCP, media, export, and native-menu paths; made focused changes; ran type checks/builds; and exercised the live MCP server against real timeline state—shortening the report → diagnosis → patch → verification loop.
+But perhaps most valuable was how Codex accelerated our debugging. Instead of spending hours tracing issues manually, we could ask Codex to inspect the codebase, identify problems in the timeline or MCP layers, and suggest focused fixes. This turned what could have been days of frustration into quick, iterative improvements.
 
-GPT-5.6: High-Level Technical & Agent Orchestration
-Supported Technical Decisions: Helped compare editor foundations, identify FableCut as the reliable timeline engine, design the agent-tool architecture, define sequential dependencies (transcription → silence removal → captions), and shape Qwen Cloud integration and MCP contract.
+### GPT-5.6: The Brain Behind the Co-Pilot
 
-Acts as Primary Reasoning Engine: Processes complex visual context, timeline state snapshots, and natural language instructions to issue precise, non-overlapping tool call sequences inside Filmidi's conversational co-pilot.
+While Codex handled the engineering, GPT-5.6 became the intelligence powering Filmidi's conversational co-pilot. It helped us make critical early decisions, like choosing FableCut as our timeline engine and designing the agent architecture. More importantly, it understands what users actually want when they say "trim the silence" or "add cinematic color"—breaking down natural language into precise, sequential tool calls that the system can execute.
 
-Auditable & Reliable Workflow
-Tool calls, transcript logs, project revisions, and MCP results make it possible to see what the agent changed and reproduce edits.
+### Built for Trust and Transparency
 
-Dependent operations run in order—failed transcription cannot silently trigger incorrect captions or ripple edits.
+Every action the AI takes is logged and auditable. Tool calls, transcripts, and project revisions are all tracked, so you can see exactly what changed and why. Critical operations run in sequence, meaning a failed transcription won't silently break caption generation or ripple edits.
 
-Result: Less time rebuilding basic NLE behavior, more time implementing agent-native editing: timeline inspection, media placement, captions, silence removal, effects, transitions, keyframes, and export.
+### The Bottom Line
 
+Filmidi exists because AI helped us move fast. Instead of getting bogged down rebuilding basic video editor behavior, we focused on what matters: building an editor that truly understands natural language and makes video creation feel intuitive, not mechanical.
 
 ## License
 
