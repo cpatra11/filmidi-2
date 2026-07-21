@@ -65,34 +65,30 @@ The agent should inspect the timeline, transcript, and media library before edit
 
 On macOS, the optional Swift sidecar can provide Apple-specific media and hardware capabilities when its binary is packaged with the app. When it is unavailable, Filmidi logs the fallback and continues through Bun and VideoFlow. Production packaging includes the sidecar only when it has been built for the target architecture; non-macOS builds do not require it.
 
-## How Codex And GPT-5.6 Accelerated Filmidi
+How Codex & GPT-5.6 Accelerated Filmidi
+AI-assisted development was central to bringing Filmidi from concept to a working native desktop app in record time—both as a development accelerator and as the product's core intelligence:
 
-AI-assisted development was part of the implementation workflow, not just a
-feature of the product:
+Codex: Accelerating the Engineering Loop
+Generated 50+ MCP Tool Architecture: Codex Agent generated, refactored, and validated the entire TypeScript schema definition (toolDefinitions.ts) and execution dispatchers (toolExecutor.ts) across 50+ media tools (clip cutting, keyframes, color grading, layout presets, beat detection).
 
-- **Codex accelerated the engineering loop.** It inspected the Electrobun,
-  Bun, VideoFlow, and FableCut implementations; traced issues through the
-  timeline, MCP, media, export, and native-menu paths; made focused changes;
-  ran type checks/builds; and exercised the live MCP server against real
-  timeline state. This shortened the report → diagnosis → patch → verification
-  loop, especially for linked audio/video edits and transcription failures.
-- **GPT-5.6 supported the high-level technical decisions.** It helped compare
-  the editor foundations, identify FableCut as the more reliable timeline
-  engine, design the agent-tool architecture, define sequential dependencies
-  such as transcription → silence removal → captions, and shape the Qwen Cloud
-  integration and MCP contract.
-- **The key implementation decision was to separate the editor from the
-  agent.** FableCut's JSON project remains the canonical timeline model;
-  Filmidi's agent reads that model, applies atomic patches, and verifies the
-  result instead of manipulating preview-only state.
-- **The workflow is auditable.** Tool calls, transcript logs, project
-  revisions, and MCP results make it possible to see what the agent changed and
-  reproduce the edit. Dependent operations run in order so failed
-  transcription cannot silently trigger incorrect captions or ripple edits.
+Architected IPC & State Management: Codex designed the low-latency Electrobun IPC handlers and Zustand store integrations, enabling real-time timeline state syncing between the Bun backend and React WebViews.
 
-This let us spend less time rebuilding basic NLE behavior and more time
-implementing agent-native editing: timeline inspection, media placement,
-captions, silence removal, effects, transitions, keyframes, and export.
+Implemented Complex Algorithms: Codex implemented waveform cross-correlation mathematics, beat detection, and RNNoise noise suppression logic (sync_audio, detect_beats, denoise_audio) using WebAudio APIs and WASM modules.
+
+Shortened Debugging Loop: It inspected Electrobun, Bun, and VideoFlow implementations; traced issues through timeline, MCP, media, export, and native-menu paths; made focused changes; ran type checks/builds; and exercised the live MCP server against real timeline state—shortening the report → diagnosis → patch → verification loop.
+
+GPT-5.6: High-Level Technical & Agent Orchestration
+Supported Technical Decisions: Helped compare editor foundations, identify FableCut as the reliable timeline engine, design the agent-tool architecture, define sequential dependencies (transcription → silence removal → captions), and shape Qwen Cloud integration and MCP contract.
+
+Acts as Primary Reasoning Engine: Processes complex visual context, timeline state snapshots, and natural language instructions to issue precise, non-overlapping tool call sequences inside Filmidi's conversational co-pilot.
+
+Auditable & Reliable Workflow
+Tool calls, transcript logs, project revisions, and MCP results make it possible to see what the agent changed and reproduce edits.
+
+Dependent operations run in order—failed transcription cannot silently trigger incorrect captions or ripple edits.
+
+Result: Less time rebuilding basic NLE behavior, more time implementing agent-native editing: timeline inspection, media placement, captions, silence removal, effects, transitions, keyframes, and export.
+
 
 ## License
 
