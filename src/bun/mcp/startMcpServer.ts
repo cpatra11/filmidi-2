@@ -54,6 +54,21 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "get_capabilities",
+    description: "List Filmidi and VideoFlow capabilities available in this build.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "validate_timeline",
+    description: "Validate timeline timing, sources, duration, and track placement.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "diagnose_media",
+    description: "Probe a media asset for codec and audio compatibility.",
+    inputSchema: { type: "object", properties: { mediaRef: { type: "string" } }, required: ["mediaRef"] },
+  },
+  {
     name: "inspect_media",
     description: "View media metadata: storyboard frames, duration, resolution, codec, file size, audio channels. Optionally return word-level transcript.",
     inputSchema: {

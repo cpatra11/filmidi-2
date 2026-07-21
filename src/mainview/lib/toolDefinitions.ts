@@ -46,6 +46,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "get_capabilities",
+    description: "List Filmidi and VideoFlow capabilities currently available in this build, including effects, transitions, keyframes, renderers, and groups.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "validate_timeline",
+    description: "Validate the current VideoFlow timeline for invalid timing, missing sources, duration errors, and audio/video track placement before editing or export.",
+    input_schema: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "diagnose_media",
+    description: "Probe a media asset for codec, duration, dimensions, and audio compatibility. Call get_media first and pass its exact asset id.",
+    input_schema: { type: "object", properties: { mediaRef: { type: "string" } }, required: ["mediaRef"] },
+  },
+  {
     name: "inspect_media",
     description:
       "Inspect a SINGLE media asset by its id (from get_media). Returns storyboard frames, duration, resolution, codec, audio channels, and optionally word-level transcript. You MUST provide mediaRef — call get_media first to get asset ids.",

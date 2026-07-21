@@ -19,6 +19,8 @@ import { validateMoveUpdates } from "./timelineMove";
 import { findAvailableTrack, localTrackForKind, normalizeTrackForKind, VIDEO_TRACK_BASE } from "./timelineMove";
 import { storeDataUrl, storeRemoteMedia } from "./mediaStorage";
 import type { LayerJSON, VideoJSON } from "@videoflow/core";
+import { normalizeVideoFlowDocument, validateVideoFlowDocument } from "./videoFlowDocument";
+import { getVideoFlowCapabilities } from "./videoFlowCapabilities";
 
 const {
   addLayerCommand,
@@ -913,6 +915,27 @@ async function executeToolInternal(
       case "get_timeline": return getTimelineContext();
       case "get_media": return getMediaContext(input.filterTypes);
 
+      case "get_capabilities":
+        return JSON.stringify(getVideoFlowCapabilities());
+
+      case "validate_timeline": {
+        const normalized = normalizeVideoFlowDocument(editor.video);
+        const validation = validateVideoFlowDocument(normalized);
+        const trackIssues = (editor.video.layers ?? [])
+          .filter((layer: any) => layer.type === "audio" ? Number(layer.track) >= VIDEO_TRACK_BASE : Number(layer.track) < VIDEO_TRACK_BASE)
+          .map((layer: any) => ({ id: layer.id, type: layer.type, track: layer.track }));
+        return JSON.stringify({ ...validation, trackIssues, normalizedDuration: normalized.duration });
+      }
+
+      case "diagnose_media": {
+        const resolved = resolveMediaTarget(input.mediaRef as string | undefined);
+        const asset = resolved.asset ?? useMediaPanelStore.getState().assets.find((item) => item.id === resolved.mediaRef || item.url === resolved.sourceUrl);
+        const source = asset?.url ?? resolved.sourceUrl;
+        if (!source) return JSON.stringify({ error: "mediaRef is required. Call get_media first." });
+        const probe = await requestNativeMedia<Record<string, unknown>>("probe-media", { url: source });
+        return JSON.stringify({ mediaRef: resolved.mediaRef ?? asset?.id ?? source, name: asset?.name ?? "Media", source, probe, audioPlayback: probe ? "probe-ok" : "probe-unavailable" });
+      }
+
       case "inspect_timeline": {
         const maxFrames = (input.maxFrames as number) ?? 4;
         const startFrame = (input.startFrame as number) ?? editor.currentFrame;
@@ -1094,7 +1117,7 @@ async function executeToolInternal(
             startFrame,
             durationFrames,
             trackIndex: requestedTrack === undefined ? undefined : Number(requestedTrack),
-          });
+          } as any);
           if (!placement) {
             results.push({ error: `Unable to place asset: ${mediaRef}` });
             continue;
@@ -1106,7 +1129,7 @@ async function executeToolInternal(
             startFrame: placement.startFrame,
             durationFrames: placement.durationFrames,
             track: placement.track,
-          });
+          } as any);
         }
         refreshPreview();
         return JSON.stringify({ added: results });
@@ -1598,7 +1621,7 @@ async function executeToolInternal(
                 (t.centerY as number) ?? 0.5,
               ],
             },
-          });
+          } as any);
           await setTrack(commit, layerId, track);
           results.push(layerId);
         }
@@ -1633,7 +1656,7 @@ async function executeToolInternal(
               position: [(shape.centerX as number) ?? 0.5, (shape.centerY as number) ?? 0.5],
             },
             extraSettings: { shapeType: (shape.shapeType as string) ?? "rectangle" },
-          });
+          } as any);
           await setTrack(commit, layerId, track);
           results.push(layerId);
         }
@@ -2347,7 +2370,7 @@ async function executeToolInternal(
             beats: result.beats.map((b) => Math.round(b * 1000) / 1000),
             downbeats: result.downbeats.map((d) => Math.round(d * 1000) / 1000),
             bpm: result.bpm,
-          });
+          } as any);
         } catch (e) {
           return JSON.stringify({ error: `Beat detection failed: ${e instanceof Error ? e.message : String(e)}` });
         }
@@ -3373,7 +3396,7 @@ async function executeToolInternal(
 
 const READ_ONLY_AGENT_TOOLS = new Set([
   "get_timeline", "get_media", "inspect_timeline", "inspect_media", "inspect_color",
-  "list_models", "list_transitions", "list_effects", "list_multicam_sources", "get_projects",
+  "get_capabilities", "validate_timeline", "diagnose_media", "list_models", "list_transitions", "list_effects", "list_multicam_sources", "get_projects",
 ]);
 
 function timelineVerificationSnapshot() {

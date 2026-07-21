@@ -28,6 +28,7 @@ import {
   localTrackForKind,
   normalizeTrackForKind,
   wouldOverlap,
+  validateMoveUpdates,
   type TimelineTrackKind,
 } from "@/lib/timelineMove";
 import { useAppStore } from "@/store/useAppStore";
@@ -1040,14 +1041,14 @@ export function CustomTimeline({ onContextMenuTarget }: { onContextMenuTarget?: 
         const preview = dragPreviewRef.current;
         const firstPreview = preview.get(moveIdArray[0]);
         if (firstPreview) {
-          void commands.moveLayersCommand(
-            editor.commit,
-            moveItemsForCommit.map((item) => ({
+          const updates = moveItemsForCommit.map((item) => ({
               id: item.id,
               startTime: Math.max(0, item.startTime + firstPreview.timeDelta),
               track: Math.max(0, item.track + firstPreview.trackDelta),
-            })),
-          );
+            }));
+          const validation = validateMoveUpdates(useEditorStore.getState().video.layers ?? [], updates);
+          if (validation.ok) void commands.moveLayersCommand(editor.commit, updates);
+          else console.warn("[timeline] prevented invalid move commit", validation);
         }
         dragPreviewRef.current = new Map();
         setDragPreview(new Map());
