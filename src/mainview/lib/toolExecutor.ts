@@ -482,6 +482,22 @@ function selectTranscriptTargets(layers: any[], targetClipIds: string[] | undefi
   return Array.from(grouped.values()).sort((a, b) => getLayerTiming(a).startTime - getLayerTiming(b).startTime);
 }
 
+function selectVideoExtractionTargets(layers: any[], targetClipIds: string[] | undefined): any[] {
+  const candidates = targetClipIds?.length
+    ? layers.filter((layer: any) => targetClipIds.includes(layer.id) && layer.type === "video")
+    : layers.filter((layer: any) => layer.type === "video");
+  return candidates.slice().sort((a, b) => getLayerTiming(a).startTime - getLayerTiming(b).startTime);
+}
+
+function selectSilenceTargets(layers: any[], targetClipIds: string[] | undefined, fps: number): any[] {
+  if (targetClipIds?.length) return selectTranscriptTargets(layers, targetClipIds, fps);
+  // Prefer original video sources. Extracted audio mirrors can be upload-only
+  // URLs and are not always suitable for another ASR request.
+  const videos = selectTranscriptTargets(layers.filter((layer: any) => layer.type === "video"), undefined, fps);
+  if (videos.length > 0) return videos;
+  return selectTranscriptTargets(layers, undefined, fps);
+}
+
 function getCaptionTrackIndex(layers: any[], tracks: any[]): number {
   const generatedCaptionTracks = layers
     .filter((l: any) => l.type === "text" && (l.settings as any)?.generatedBy === "add_captions")
@@ -1436,7 +1452,7 @@ async function executeToolInternal(
         const { getCachedTranscript, setCachedTranscript } = await import("./transcriptCache");
 
         const allLayers = editor.video.layers ?? [];
-        const targets = selectTranscriptTargets(allLayers, clipIds, fps);
+        const targets = selectSilenceTargets(allLayers, clipIds, fps);
 
         if (targets.length === 0) {
           return JSON.stringify({ error: "No audio/video clips found for silence removal." });
@@ -1444,10 +1460,14 @@ async function executeToolInternal(
 
         const minPauseFrames = Math.max(1, Math.round(minPauseSeconds * fps));
         const ranges: Array<Record<string, unknown>> = [];
+        const skipped: Array<{ clipId: string; reason: string }> = [];
 
         for (const layer of targets) {
           const source = getLayerSource(layer);
-          if (!source) continue;
+          if (!source) {
+            skipped.push({ clipId: layer.id, reason: "Clip has no media source" });
+            continue;
+          }
 
           let transcript = await getCachedTranscript(source, language);
           if (!transcript) {
@@ -1459,12 +1479,16 @@ async function executeToolInternal(
                 clipId: layer.id,
                 error: err instanceof Error ? err.message : String(err),
               });
+              skipped.push({ clipId: layer.id, reason: `Transcription failed: ${err instanceof Error ? err.message : String(err)}` });
               continue;
             }
           }
 
           const mapped = mapTranscriptWordsToTimeline(layer, transcript, fps);
-          if (mapped.words.length === 0) continue;
+          if (mapped.words.length === 0) {
+            skipped.push({ clipId: layer.id, reason: "Transcript contained no timed words" });
+            continue;
+          }
 
           const addRange = (startFrame: number, endFrame: number) => {
             if (endFrame - startFrame >= minPauseFrames) {
@@ -1485,7 +1509,11 @@ async function executeToolInternal(
         if (ranges.length === 0) {
           return JSON.stringify({
             removedRanges: 0,
-            note: `No silence longer than ${minPauseSeconds.toFixed(2)}s was found.`,
+            note: skipped.length > 0
+              ? `No silence was removed because ${skipped.length} clip(s) could not be analyzed.`
+              : `No silence longer than ${minPauseSeconds.toFixed(2)}s was found.`,
+            analyzedClipIds: targets.filter((layer: any) => !skipped.some((item) => item.clipId === layer.id)).map((layer: any) => layer.id),
+            skipped,
           });
         }
 
@@ -1493,6 +1521,7 @@ async function executeToolInternal(
         return JSON.stringify({
           ...result,
           note: `Removed pauses longer than ${minPauseSeconds.toFixed(2)}s and closed the gaps.`,
+          skipped,
         });
       }
 
@@ -1532,14 +1561,15 @@ async function executeToolInternal(
         }
 
         const allLayers = editor.video.layers ?? [];
-        const selectedTargets = selectTranscriptTargets(allLayers, targetIds, fps).filter((l: any) => l.type === "video");
+        const selectedTargets = selectVideoExtractionTargets(allLayers, targetIds);
 
         let extracted = 0;
         let skipped = 0;
         for (const layer of selectedTargets) {
+          const liveLayers = useEditorStore.getState().video.layers ?? [];
           const source = getLayerSource(layer);
           if (!source) continue;
-          if (hasExistingAudioMirror(layer, allLayers)) {
+          if (hasExistingAudioMirror(layer, liveLayers)) {
             skipped++;
             continue;
           }

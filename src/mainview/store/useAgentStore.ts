@@ -787,6 +787,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 - For transitions, call list_transitions when the preset name is uncertain, then use set_transition with edge=in or out, duration, easing, and params. Use clear=true to remove a transition. The tool accepts clipIds and legacy clipId input.
 - After every mutating edit, inspect the returned verification object. If it reports missingClipIds or changed=false for an operation that should alter the timeline, call get_timeline and correct the edit before reporting success.
 - Transcript-driven cuts (filler words, duplicate/retake removal): read the WORD-level get_transcript end-to-end as prose at least once, then cut with remove_words. After a cut, indices shift - re-read get_transcript before the next remove_words.
+- Silence removal: call get_timeline first, then get_transcript to confirm the spoken-word timing. Call remove_silence with no clipIds to scan the whole timeline; do not call extract_audio when a linked audio layer already exists. Treat a result with analyzedClipIds empty or skipped entries as a failed analysis, not as proof that the video has no silence.
 
 # Generation
 - Costs real money and is not undoable. Propose the prompt, model, duration, and aspect ratio, then wait for confirmation before calling generate_video, generate_image, or generate_audio.
