@@ -31,7 +31,7 @@ export async function normalizeMovForPlayback(file: File): Promise<string | null
   }
 }
 
-/** Extracts an AAC/M4A stream from Apple MOV media for browser playback. */
+/** Extracts a PCM WAV stream from MOV media for reliable Web Audio playback. */
 export async function extractMovAudio(file: File): Promise<string | null> {
   if (!isMov(file)) return null;
 
@@ -60,6 +60,6 @@ export async function getAudioSourceForPlayback(file: File, assetId: string, ori
   if (!isMov(file)) return originalUrl;
   const dataUrl = await extractMovAudio(file);
   if (!dataUrl) return originalUrl;
-  const stored = await storeDataUrl(dataUrl, `${assetId}.m4a`, `${assetId}-audio`);
+  const stored = await storeDataUrl(dataUrl, `${assetId}.wav`, `${assetId}-audio`);
   return stored?.url ?? dataUrl;
 }

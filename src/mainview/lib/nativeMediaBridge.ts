@@ -62,7 +62,7 @@ export async function requestNativeMedia<T = unknown>(
 ): Promise<T | null> {
   // GStreamer is a Bun-hosted backend; do not route this task to the
   // optional Swift sidecar even when that sidecar is available.
-  if (task !== "gstreamer-normalize" && task !== "probe-media" && task !== "normalize-media" && task !== "store-media" && task !== "media-status" && task !== "render-video-server" && hasSwiftSidecarBridge()) {
+  if (task !== "gstreamer-normalize" && task !== "probe-media" && task !== "normalize-media" && task !== "extract-audio" && task !== "store-media" && task !== "media-status" && task !== "render-video-server" && hasSwiftSidecarBridge()) {
     try {
       const response = await window.__filmidiSwiftSidecar!.request({ task, payload });
       if (response == null) return null;

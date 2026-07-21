@@ -104,20 +104,19 @@ export async function extractAudioWithFfmpeg(payload: Record<string, unknown>): 
   if (!ffmpeg || !base64Data) return null;
   const workDir = mkdtempSync(join(tmpdir(), "filmidi-audio-"));
   const inputPath = join(workDir, "input");
-  const outputPath = join(workDir, "audio.m4a");
+  const outputPath = join(workDir, "audio.wav");
   try {
     writeFileSync(inputPath, Buffer.from(base64Data, "base64"));
     const result = await run(ffmpeg, [
       "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
-      "-vn", "-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k",
-      "-movflags", "+faststart", outputPath,
+      "-vn", "-map", "0:a:0?", "-c:a", "pcm_s16le", "-ar", "44100", "-ac", "2", outputPath,
     ]);
     if (result.code !== 0 || !existsSync(outputPath)) return null;
     const bytes = readFileSync(outputPath);
     return {
       backend: "ffmpeg",
-      dataUrl: `data:audio/mp4;base64,${bytes.toString("base64")}`,
-      mimeType: "audio/mp4",
+      dataUrl: `data:audio/wav;base64,${bytes.toString("base64")}`,
+      mimeType: "audio/wav",
     };
   } finally {
     rmSync(workDir, { recursive: true, force: true });
