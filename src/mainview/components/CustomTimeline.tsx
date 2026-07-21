@@ -76,7 +76,10 @@ function niceStep(rawStep: number): number {
 
 function generateTicks(duration: number, scale: number) {
   const rawMinor = 40 / scale;
-  const minorInterval = niceStep(rawMinor);
+  // Bound ruler DOM work for long-form projects at high zoom.
+  const maxTickCount = 1200;
+  const durationInterval = duration > 0 ? duration / maxTickCount : rawMinor;
+  const minorInterval = Math.max(niceStep(rawMinor), niceStep(durationInterval));
   const majorInterval = minorInterval * 5;
   const ticks: Array<{ time: number; major: boolean }> = [];
   for (let t = 0; t <= duration + minorInterval; t += minorInterval) {
