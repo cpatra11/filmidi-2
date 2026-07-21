@@ -96,6 +96,15 @@ async function readSource(audioUrl: string): Promise<{ bytes: Uint8Array; mediaT
   return { bytes: new Uint8Array(await response.arrayBuffer()), mediaType };
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export async function transcribeAudio(
   audioUrl: string,
   apiKey: string,
@@ -134,6 +143,10 @@ export async function transcribeAudio(
     });
   }
 
+  const source = sourceBlob
+    ? { bytes: new Uint8Array(await sourceBlob.arrayBuffer()), mediaType: sourceBlob.type || "audio/wav" }
+    : await readSource(sourceUrl);
+
   // Desktop CEF can reject Gateway transcription requests before returning an
   // HTTP response. Use Bun as a transport proxy there, while keeping the same
   // AI SDK Gateway model and response normalization. Web builds fall through
@@ -148,6 +161,8 @@ export async function transcribeAudio(
     provider?: string;
   }>("transcribe-audio", {
     audioUrl,
+    audioBase64: bytesToBase64(source.bytes),
+    mediaType: source.mediaType,
     apiKey: effectiveApiKey,
     language: options?.language,
     model,
@@ -178,9 +193,6 @@ export async function transcribeAudio(
     return filtered;
   }
 
-  const source = sourceBlob
-    ? { bytes: new Uint8Array(await sourceBlob.arrayBuffer()), mediaType: sourceBlob.type || "audio/wav" }
-    : await readSource(sourceUrl);
   const gateway = createFilmidiGateway(effectiveApiKey);
 
   try {

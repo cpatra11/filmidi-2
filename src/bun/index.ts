@@ -493,16 +493,25 @@ transport.registerHandler((msg: any) => {
             let backend = "bun-fallback";
             if (task === "transcribe-audio") {
               const audioUrl = typeof payload?.audioUrl === "string" ? payload.audioUrl : "";
+              const audioBase64 = typeof payload?.audioBase64 === "string" ? payload.audioBase64 : "";
+              const mediaType = typeof payload?.mediaType === "string" ? payload.mediaType : "audio/wav";
               const apiKey = typeof payload?.apiKey === "string" ? payload.apiKey : secureStore.get("vercel_api_key") ?? "";
               const model = typeof payload?.model === "string" && payload.model ? payload.model : DEFAULT_TRANSCRIPTION_MODEL;
-              if (!audioUrl || !apiKey) throw new Error("Transcription requires an audio source and Vercel AI Gateway key");
-              const response = await fetch(audioUrl);
-              if (!response.ok) throw new Error(`Could not read audio source (${response.status})`);
-              const audio = new Uint8Array(await response.arrayBuffer());
+              if ((!audioUrl && !audioBase64) || !apiKey) throw new Error("Transcription requires an audio source and Vercel AI Gateway key");
+              const audio = audioBase64
+                ? new Uint8Array(Buffer.from(audioBase64, "base64"))
+                : await (async () => {
+                    const response = await fetch(audioUrl);
+                    if (!response.ok) throw new Error(`Could not read audio source (${response.status})`);
+                    return new Uint8Array(await response.arrayBuffer());
+                  })();
               const gateway = createGateway({ apiKey, baseURL: AI_GATEWAY_SDK_BASE_URL });
               const transcription = await transcribe({
                 model: gateway.transcription(model),
                 audio,
+                // AI SDK detects common containers from bytes. Keep the source
+                // MIME available in logs/payloads for formats without a magic
+                // signature, while the provider receives the byte content.
                 providerOptions: typeof payload?.language === "string" && payload.language
                   ? { [model.split("/")[0]]: { language: payload.language } }
                   : undefined,

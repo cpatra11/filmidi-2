@@ -133,6 +133,7 @@ export async function requestNativeMedia<T = unknown>(
     if (!response) return null;
     if (response.backend) lastKnownBackend = response.backend;
     if (response.error) {
+      if (task === "transcribe-audio") throw new Error(response.error);
       return null;
     }
     // Bun forwards the complete Swift response inside `result`, while the
