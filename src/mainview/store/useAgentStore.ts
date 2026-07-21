@@ -91,7 +91,9 @@ const AVAILABLE_MODELS = [
   { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", provider: "Google", price: "Higher cost", toolCalls: true },
 ];
 
-const DEFAULT_AGENT_MODEL = "openai/gpt-5.4-mini";
+// Keep the default on the lowest-cost tool-capable model. Users can still
+// explicitly select a larger model from Settings when they have credits.
+const DEFAULT_AGENT_MODEL = "openai/gpt-4.1-nano";
 
 // Read-only snapshots can be fetched together. Analysis and every edit are
 // intentionally sent in model order so transcript-dependent operations cannot
@@ -132,7 +134,8 @@ async function executePendingAgentTools(
 
 function getInitialAgentModel(): string {
   const stored = localStorage.getItem("filmidi_agent_model");
-  return stored && AVAILABLE_MODELS.some((entry) => entry.id === stored)
+  const expensiveDefaults = new Set(["openai/gpt-5.4-mini", "openai/gpt-5.4", "anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro-preview"]);
+  return stored && AVAILABLE_MODELS.some((entry) => entry.id === stored) && !expensiveDefaults.has(stored)
     ? stored
     : DEFAULT_AGENT_MODEL;
 }
