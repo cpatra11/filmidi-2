@@ -4,6 +4,7 @@ import { experimental_transcribe as transcribe } from "ai";
 import { logTranscript } from "./transcriptLogger";
 import { getSecureApiKey } from "./secureApiKey";
 import { createFilmidiGateway, DEFAULT_TRANSCRIPTION_MODEL, gatewayModelProvider } from "./aiGateway";
+import { requestNativeMedia } from "./nativeMediaBridge";
 
 export interface TranscriptionWord {
   text: string;
@@ -131,6 +132,50 @@ export async function transcribeAudio(
       bytes: sourceBlob.size,
       mediaType: sourceBlob.type || "audio/wav",
     });
+  }
+
+  // Desktop CEF can reject Gateway transcription requests before returning an
+  // HTTP response. Use Bun as a transport proxy there, while keeping the same
+  // AI SDK Gateway model and response normalization. Web builds fall through
+  // to the renderer request below when no Bun bridge exists.
+  const nativeResult = await requestNativeMedia<{
+    text?: string;
+    language?: string;
+    segments?: Array<Record<string, unknown>>;
+    providerMetadata?: unknown;
+    warnings?: unknown[];
+    model?: string;
+    provider?: string;
+  }>("transcribe-audio", {
+    audioUrl,
+    apiKey: effectiveApiKey,
+    language: options?.language,
+    model,
+  });
+  if (nativeResult) {
+    const segments: TranscriptionSegment[] = (nativeResult.segments ?? []).map((segment) => ({
+      text: String(segment.text ?? "").trim(),
+      start: Number(segment.startSecond ?? segment.start ?? 0),
+      end: Number(segment.endSecond ?? segment.end ?? segment.startSecond ?? 0),
+    })).filter((segment) => segment.text && segment.end >= segment.start);
+    const words = wordsFromProviderMetadata(nativeResult.providerMetadata, gatewayModelProvider(model));
+    const normalized: TranscriptionResult = {
+      text: String(nativeResult.text ?? segments.map((segment) => segment.text).join(" ")).trim(),
+      language: nativeResult.language,
+      words: words.length > 0 ? words : wordsFromSegments(segments),
+      segments,
+      model: nativeResult.model || model,
+      provider: nativeResult.provider || gatewayModelProvider(model),
+      warnings: (nativeResult.warnings ?? []).map((warning) => String((warning as any)?.message ?? warning)),
+    };
+    const filtered = filterResult(normalized, options);
+    logTranscript("info", "transcribeAudio", "success via Bun Gateway transport", {
+      model,
+      provider: filtered.provider,
+      wordCount: filtered.words.length,
+      segmentCount: filtered.segments.length,
+    });
+    return filtered;
   }
 
   const source = sourceBlob

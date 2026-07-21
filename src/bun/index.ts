@@ -9,7 +9,9 @@ import { requestNativeMediaThroughSidecar, pingSwiftSidecar } from "./lib/swiftS
 import { getGStreamerStatus, normalizeWithGStreamer } from "./lib/gstreamer";
 import { extractAudioWithFfmpeg, normalizeMediaWithFfmpeg, probeMedia } from "./lib/mediaTools";
 import { startMediaServer } from "./lib/mediaServer";
-import { AI_GATEWAY_OPENAI_BASE_URL } from "./lib/aiGateway";
+import { AI_GATEWAY_OPENAI_BASE_URL, AI_GATEWAY_SDK_BASE_URL, DEFAULT_TRANSCRIPTION_MODEL } from "./lib/aiGateway";
+import { createGateway } from "@ai-sdk/gateway";
+import { experimental_transcribe as transcribe } from "ai";
 
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_URL = `http://localhost:${DEV_SERVER_PORT}`;
@@ -486,10 +488,36 @@ transport.registerHandler((msg: any) => {
             }
             return;
           }
-          if (task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media" || task === "extract-audio" || task === "store-media" || task === "media-status") {
+          if (task === "transcribe-audio" || task === "gstreamer-status" || task === "gstreamer-normalize" || task === "probe-media" || task === "normalize-media" || task === "extract-audio" || task === "store-media" || task === "media-status") {
             let result: Record<string, unknown> | null;
             let backend = "bun-fallback";
-            if (task === "gstreamer-status") {
+            if (task === "transcribe-audio") {
+              const audioUrl = typeof payload?.audioUrl === "string" ? payload.audioUrl : "";
+              const apiKey = typeof payload?.apiKey === "string" ? payload.apiKey : secureStore.get("vercel_api_key") ?? "";
+              const model = typeof payload?.model === "string" && payload.model ? payload.model : DEFAULT_TRANSCRIPTION_MODEL;
+              if (!audioUrl || !apiKey) throw new Error("Transcription requires an audio source and Vercel AI Gateway key");
+              const response = await fetch(audioUrl);
+              if (!response.ok) throw new Error(`Could not read audio source (${response.status})`);
+              const audio = new Uint8Array(await response.arrayBuffer());
+              const gateway = createGateway({ apiKey, baseURL: AI_GATEWAY_SDK_BASE_URL });
+              const transcription = await transcribe({
+                model: gateway.transcription(model),
+                audio,
+                providerOptions: typeof payload?.language === "string" && payload.language
+                  ? { [model.split("/")[0]]: { language: payload.language } }
+                  : undefined,
+              });
+              result = {
+                text: transcription.text,
+                language: transcription.language,
+                segments: transcription.segments,
+                providerMetadata: transcription.providerMetadata,
+                warnings: transcription.warnings,
+                model,
+                provider: model.includes("/") ? model.slice(0, model.indexOf("/")) : "unknown",
+              };
+              backend = "bun-fallback";
+            } else if (task === "gstreamer-status") {
               result = await getGStreamerStatus();
               backend = "gstreamer";
             } else if (task === "gstreamer-normalize") {
