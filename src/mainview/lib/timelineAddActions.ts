@@ -31,7 +31,7 @@ export async function addTextLayerAtPlayhead(text = "Text"): Promise<void> {
       textAlign: "center",
       position: [0.5, 0.5],
     },
-  });
+  } as any);
 
   if (!layerId) return;
   await forceLayerTrack(editor.commit, layerId, track);
@@ -59,7 +59,7 @@ export async function addMatteLayerAtPlayhead(shapeType: string = "rectangle"): 
       position: [0.5, 0.5],
     },
     extraSettings: { shapeType },
-  });
+  } as any);
 
   if (!layerId) return;
   await forceLayerTrack(editor.commit, layerId, track);
